@@ -1,0 +1,49 @@
+# JavaScript
+node_modules/
+.pnpm-store/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+apps/desktop/dist-electron/
+
+# Rust
+target/
+
+# Go
+bin/
+*.test
+*.exe
+
+# Windows release outputs
+*.msix
+*.msixbundle
+
+# Nix
+result
+result-*
+.direnv/
+
+# Runtime data and secrets
+.env
+.env.*
+!.env.example
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.pem
+*.pfx
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local agent and browser state
+.bcode/
+.agent-browser/
+.playwright/
