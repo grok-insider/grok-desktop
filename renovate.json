@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "7 days",
+  "prConcurrentLimit": 6,
+  "rangeStrategy": "pin",
+  "packageRules": [
+    {
+      "description": "Qualify the Electron runtime and build tooling together",
+      "matchPackageNames": ["electron", "@electron/**", "electron-builder"],
+      "groupName": "electron runtime"
+    },
+    {
+      "description": "Keep React runtime packages aligned",
+      "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-dom"],
+      "groupName": "react runtime"
+    },
+    {
+      "description": "Rust patch and minor updates may be grouped after CI qualification",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "rust dependencies"
+    },
+    {
+      "description": "Major runtime and protocol changes require an explicit ADR",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}
+
