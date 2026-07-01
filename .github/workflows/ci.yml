@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high
+      - name: Verify generated daemon protocol
+        run: |
+          pnpm --filter @grok-desktop/desktop generate:proto
+          git diff --exit-code -- apps/desktop/electron/generated
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop --command cargo fmt --all --check
+      - run: nix develop --command buf lint
+      - run: nix develop --command buf format --diff --exit-code
+      - name: Verify generated guest channel protocol
+        run: |
+          nix develop --command buf generate --template buf.gen.go.yaml --path proto/guest/v2/channel.proto
+          git diff --exit-code -- native/windows-vm-service/guestchannel/v2/channel.pb.go
+      - run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+      - run: nix develop --command cargo test --workspace
+      - run: nix develop --command cargo deny check
+      - run: nix develop --command scripts/check-integration-schemas.sh
+      - run: nix develop --command sh -c 'cd native/windows-vm-service && govulncheck ./...'
+      - run: nix develop --command sh -c 'cd guest/runner && govulncheck ./...'
+      - run: nix flake check --print-build-logs
+      - run: nix develop --command actionlint
+      - run: nix develop --command shellcheck scripts/*.sh
+
+  go-service:
+    name: Windows service contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: native/windows-vm-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: native/windows-vm-service/go.mod
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Cross-check Windows x64 and ARM64 release trust binding
+        env:
+          CI_GUEST_CATALOG_TRUST: eyJjaS1yZWxlYXNlIjoiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQT0ifQ==
+          CI_GUEST_CATALOG_BINDING: grok-guest-catalog-trust-v1:f2cbd35a1b982b08490fd5c3dfb894156c5df507cdab4f85820f66b8a42d4b01
+        run: |
+          ldflags="-s -w -X=main.version=0.0.0-ci -X=main.guestCatalogTrust=$CI_GUEST_CATALOG_TRUST -X=main.guestCatalogTrustBinding=$CI_GUEST_CATALOG_BINDING"
+          GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "$ldflags" -o "$RUNNER_TEMP/grok-vm-service-amd64.exe" ./cmd/grok-vm-service
+          GOOS=windows GOARCH=arm64 go vet ./...
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "$ldflags" -o "$RUNNER_TEMP/grok-vm-service-arm64.exe" ./cmd/grok-vm-service
+          grep -aF "$CI_GUEST_CATALOG_TRUST" "$RUNNER_TEMP/grok-vm-service-amd64.exe" >/dev/null
+          grep -aF "$CI_GUEST_CATALOG_BINDING" "$RUNNER_TEMP/grok-vm-service-amd64.exe" >/dev/null
+          grep -aF "$CI_GUEST_CATALOG_TRUST" "$RUNNER_TEMP/grok-vm-service-arm64.exe" >/dev/null
+          grep -aF "$CI_GUEST_CATALOG_BINDING" "$RUNNER_TEMP/grok-vm-service-arm64.exe" >/dev/null
+
+  guest-runner:
+    name: Isolated guest runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: guest/runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: guest/runner/go.sum
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/grok-integration-runner ./cmd/grok-workspace-mounter
+
+  windows-contract:
+    name: Windows compile and contract tests
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: |
+            native/windows-vm-service/go.sum
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Cross-check audited Windows boundaries on ARM64
+        shell: pwsh
+        run: |
+          rustup target add aarch64-pc-windows-msvc
+          cargo check -p grok-credential-enrollment --all-targets --target aarch64-pc-windows-msvc
+          cargo check -p grok-vm-service-client --all-targets --target aarch64-pc-windows-msvc
+      - run: go test ./...
+        working-directory: native/windows-vm-service
