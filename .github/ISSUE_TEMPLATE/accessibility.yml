@@ -1,0 +1,31 @@
+name: Accessibility report
+description: Report a keyboard, assistive technology, contrast, motion, or scaling problem
+title: "a11y: "
+labels: ["accessibility", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+    validations:
+      required: true
+  - type: input
+    id: technology
+    attributes:
+      label: Assistive technology or setting
+      placeholder: Narrator 2026.1, keyboard only, High Contrast, 200% scaling
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Affected workflow
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Observed result
+    validations:
+      required: true
+
