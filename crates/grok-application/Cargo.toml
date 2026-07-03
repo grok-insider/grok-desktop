@@ -1,0 +1,20 @@
+[package]
+name = "grok-application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+grok-domain = { path = "../grok-domain", version = "0.1.0" }
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
