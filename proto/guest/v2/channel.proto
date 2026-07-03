@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package grok.desktop.guest.v2;
+
+option go_package = "github.com/grok-insider/grok-desktop/native/windows-vm-service/guestchannel/v2;guestchannelv2";
+
+// ProvisionChannel is delivered once over a LocalSystem-only Hyper-V socket.
+// The channel key and nonces are generated with the operating-system CSPRNG and
+// exist only for one VM boot. They are never persisted or placed in HCS JSON.
+message ProvisionChannel {
+  uint32 protocol_version = 1;
+  bytes boot_id = 2;
+  bytes channel_key = 3;
+  bytes host_nonce = 4;
+}
+
+// ProvisionChannelAck proves the guest received the ephemeral channel key.
+message ProvisionChannelAck {
+  uint32 protocol_version = 1;
+  bytes boot_id = 2;
+  bytes guest_nonce = 3;
+  bytes hmac_sha256 = 4;
+}
+
+// ProvisionChannelProof is the deterministic protobuf body authenticated by
+// ProvisionChannelAck. It deliberately excludes the channel key and the proof
+// itself while binding both independently generated nonces to the boot.
+message ProvisionChannelProof {
+  uint32 protocol_version = 1;
+  bytes boot_id = 2;
+  bytes host_nonce = 3;
+  bytes guest_nonce = 4;
+}
+
+enum ChannelDirection {
+  CHANNEL_DIRECTION_UNSPECIFIED = 0;
+  CHANNEL_DIRECTION_HOST_TO_GUEST = 1;
+  CHANNEL_DIRECTION_GUEST_TO_HOST = 2;
+}
+
+// AuthenticatedPayload deliberately contains no maps. Implementations use
+// deterministic protobuf serialization and a protocol-domain prefix as the MAC
+// input. control_frame is the exact bounded guest-control payload during the v2
+// migration; it is authenticated before JSON decoding.
+message AuthenticatedPayload {
+  uint32 protocol_version = 1;
+  bytes boot_id = 2;
+  ChannelDirection direction = 3;
+  uint64 sequence = 4;
+  string request_id = 5;
+  uint64 deadline_unix_ms = 6;
+  bytes control_frame = 7;
+}
+
+message AuthenticatedFrame {
+  AuthenticatedPayload payload = 1;
+  bytes hmac_sha256 = 2;
+}
