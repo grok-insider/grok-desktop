@@ -1,0 +1,1091 @@
+syntax = "proto3";
+
+package grok.desktop.daemon.v1;
+
+// Every local IPC frame is self-describing and reconnect-safe.
+message Envelope {
+  uint32 protocol_version = 1;
+  string request_id = 2;
+  bytes startup_nonce = 3;
+  uint64 deadline_unix_ms = 4;
+  string idempotency_key = 5;
+
+  oneof payload {
+    Request request = 10;
+    Response response = 11;
+    Event event = 12;
+  }
+}
+
+message Request {
+  reserved 3, 4, 6, 18, 19, 20, 23, 24, 25, 36, 38;
+  reserved "create_run", "transition_run", "request_approval", "create_message", "update_message", "delete_message", "create_artifact", "update_artifact", "delete_artifact", "configure_xai_api_key", "execute_conversation_turn";
+
+  oneof operation {
+    HealthRequest health = 1;
+    ResolveCapabilitiesRequest resolve_capabilities = 2;
+    EventsSinceRequest events_since = 5;
+    DecideApprovalRequest decide_approval = 7;
+    CreateProjectRequest create_project = 8;
+    UpdateProjectRequest update_project = 9;
+    ArchiveProjectRequest archive_project = 10;
+    GetProjectRequest get_project = 11;
+    ListProjectsRequest list_projects = 12;
+    CreateThreadRequest create_thread = 13;
+    UpdateThreadRequest update_thread = 14;
+    ArchiveThreadRequest archive_thread = 15;
+    GetThreadRequest get_thread = 16;
+    ListThreadsRequest list_threads = 17;
+    GetMessageRequest get_message = 21;
+    ListMessagesRequest list_messages = 22;
+    GetArtifactRequest get_artifact = 26;
+    ListArtifactsRequest list_artifacts = 27;
+    CreateAutomationRequest create_automation = 28;
+    UpdateAutomationRequest update_automation = 29;
+    ArchiveAutomationRequest archive_automation = 30;
+    GetAutomationRequest get_automation = 31;
+    ListAutomationsRequest list_automations = 32;
+    ListAutomationHistoryRequest list_automation_history = 33;
+    SearchWorkspaceRequest search_workspace = 34;
+    GetAccountStateRequest get_account_state = 35;
+    DeleteXaiApiKeyRequest delete_xai_api_key = 37;
+    ListConversationTurnsRequest list_conversation_turns = 39;
+    EnrollXaiApiKeyRequest enroll_xai_api_key = 40;
+    GetDesktopPreferencesRequest get_desktop_preferences = 41;
+    UpdateDesktopPreferencesRequest update_desktop_preferences = 42;
+    PollRunEventsRequest poll_run_events = 43;
+    GetChatModelCatalogRequest get_chat_model_catalog = 44;
+    SelectChatModelRequest select_chat_model = 45;
+    StartConversationTurnRequest start_conversation_turn = 46;
+    CancelConversationTurnRequest cancel_conversation_turn = 47;
+    PollConversationTurnEventsRequest poll_conversation_turn_events = 48;
+    RetryConversationTurnRequest retry_conversation_turn = 49;
+    BranchConversationThreadRequest branch_conversation_thread = 50;
+    EditAndBranchConversationTurnRequest edit_and_branch_conversation_turn = 51;
+    RegenerateConversationTurnRequest regenerate_conversation_turn = 52;
+    GetConversationForkMetadataRequest get_conversation_fork_metadata = 53;
+    AcknowledgeConversationForkDeliveryRequest acknowledge_conversation_fork_delivery = 54;
+    ImportArtifactRequest import_artifact = 55;
+    OpenArtifactRequest open_artifact = 56;
+    RemoveArtifactRequest remove_artifact = 57;
+  }
+}
+
+message Response {
+  reserved 3;
+  reserved "run";
+
+  oneof result {
+    HealthResponse health = 1;
+    ResolveCapabilitiesResponse capabilities = 2;
+    EventsSinceResponse events = 4;
+    Approval approval = 5;
+    Project project = 6;
+    ProjectList projects = 7;
+    Thread thread = 8;
+    ThreadList threads = 9;
+    Message message = 10;
+    MessageList messages = 11;
+    Artifact artifact = 12;
+    ArtifactList artifacts = 13;
+    Automation automation = 14;
+    ErrorResponse error = 15;
+    AutomationHistoryList automation_history = 16;
+    AutomationList automations = 17;
+    WorkspaceSearchResults search_results = 18;
+    AccountState account_state = 19;
+    ConversationTurnResult conversation_turn = 20;
+    ConversationTurnList conversation_turns = 21;
+    DesktopPreferences desktop_preferences = 22;
+    RunEventBatch run_event_batch = 23;
+    ChatModelCatalog chat_model_catalog = 24;
+    ChatModelPreference chat_model_preference = 25;
+    ConversationTurnEventBatch conversation_turn_event_batch = 26;
+    ConversationForkResult conversation_fork = 27;
+    ConversationForkMetadata conversation_fork_metadata = 28;
+    ConversationForkDelivery conversation_fork_delivery = 29;
+    ArtifactOperationResult artifact_operation = 30;
+  }
+}
+
+// Reserved for a future unsolicited server-push contract. Epochs 7 through 10 use
+// correlated long-poll responses instead; peers must not send this payload.
+message Event {
+  RunEvent run_event = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string service_version = 1;
+  uint32 protocol_version = 2;
+  string instance_id = 3;
+  AgentRuntimeHealth agent_runtime = 4;
+  AutomationSchedulerHealth automation_scheduler = 5;
+}
+
+enum AutomationSchedulerHealth {
+  AUTOMATION_SCHEDULER_HEALTH_UNSPECIFIED = 0;
+  AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_DISABLED = 1;
+  AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED = 2;
+  AUTOMATION_SCHEDULER_HEALTH_DEGRADED_EXECUTION_DISABLED = 3;
+}
+
+message AgentRuntimeHealth {
+  bool configured = 1;
+  bool healthy = 2;
+  uint32 protocol_version = 3;
+  string agent_name = 4;
+  string agent_version = 5;
+  repeated AgentAuthenticationMethod auth_methods = 6;
+  AgentRuntimeCapabilities capabilities = 7;
+  string reason_code = 8;
+}
+
+message AgentAuthenticationMethod {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message AgentRuntimeCapabilities {
+  bool load_session = 1;
+  bool embedded_context = 2;
+  bool image_input = 3;
+  bool audio_input = 4;
+  bool mcp_http = 5;
+  bool mcp_sse = 6;
+}
+
+message ResolveCapabilitiesRequest {
+  CapabilityFacts facts = 1 [deprecated = true];
+}
+
+message CapabilityFacts {
+  bool subscription_authenticated = 1;
+  bool xai_api_key_configured = 2;
+  bool online = 3;
+  bool strong_isolation_ready = 4;
+  bool managed_browser_ready = 5;
+  bool computer_use_ready = 6;
+}
+
+message ResolveCapabilitiesResponse {
+  repeated CapabilityStatus statuses = 1;
+}
+
+message GetAccountStateRequest {}
+
+message EnrollXaiApiKeyRequest {
+  uint64 parent_window_token = 1;
+}
+
+message DeleteXaiApiKeyRequest {}
+
+message AccountState {
+  bool xai_api_key_configured = 1;
+  bool xai_capabilities_resolved = 2;
+}
+
+message GetDesktopPreferencesRequest {}
+
+message UpdateDesktopPreferencesRequest {
+  uint64 expected_revision = 1;
+  bool keep_running_in_notification_area = 2;
+}
+
+message DesktopPreferences {
+  bool keep_running_in_notification_area = 1;
+  uint64 revision = 2;
+  uint64 updated_at_unix_ms = 3;
+}
+
+message GetChatModelCatalogRequest {}
+
+message SelectChatModelRequest {
+  uint64 expected_revision = 1;
+  string model_id = 2;
+}
+
+message ChatModelPreference {
+  string selected_model_id = 1;
+  uint64 revision = 2;
+  uint64 updated_at_unix_ms = 3;
+}
+
+message ChatModelDescriptor {
+  string id = 1;
+  repeated string aliases = 2;
+  repeated string input_modalities = 3;
+  repeated string output_modalities = 4;
+  bool text_conversation_ready = 5;
+}
+
+message ChatModelCatalog {
+  repeated ChatModelDescriptor models = 1;
+  ChatModelPreference preference = 2;
+  string default_model_id = 3;
+  bool selected_model_ready = 4;
+  bool default_model_ready = 5;
+}
+
+// Starts or exactly replays one durable turn reservation. The response is the
+// current ConversationTurnResult; provider work continues independently.
+message StartConversationTurnRequest {
+  string thread_id = 1;
+  string content = 2;
+}
+
+// Exact optimistic cancellation intent for one observed durable turn.
+message CancelConversationTurnRequest {
+  string turn_id = 1;
+  uint64 expected_revision = 2;
+}
+
+// Dedicated correlated long poll over one durable turn-local event stream.
+message PollConversationTurnEventsRequest {
+  string turn_id = 1;
+  uint64 after_sequence = 2;
+  uint32 limit = 3;
+  uint32 wait_timeout_ms = 4;
+}
+
+// Explicitly requests a new attempt from one canonically loaded safe terminal
+// turn. Prompt, model, provider state, and credentials are daemon-owned.
+message RetryConversationTurnRequest {
+  string source_turn_id = 1;
+  uint64 expected_revision = 2;
+}
+
+// Creates a child thread at a completed source without starting provider work.
+// The daemon selects the project, parent, fork point, context, and identity.
+message BranchConversationThreadRequest {
+  string source_turn_id = 1;
+  uint64 expected_revision = 2;
+}
+
+// Creates a child thread and a new billable turn from validated edited content.
+// The source's recorded model and daemon-loaded context remain authoritative.
+message EditAndBranchConversationTurnRequest {
+  string source_turn_id = 1;
+  uint64 expected_revision = 2;
+  string content = 3;
+}
+
+// Creates a child thread and another billable attempt from the exact source
+// prompt, recorded model, and daemon-loaded immutable context.
+message RegenerateConversationTurnRequest {
+  string source_turn_id = 1;
+  uint64 expected_revision = 2;
+}
+
+// Loads bounded immutable fork metadata for one canonical thread. The request
+// cannot select a root, parent, context, account, model, or copied outcome.
+message GetConversationForkMetadataRequest {
+  string thread_id = 1;
+}
+
+// Marks one exact fork mutation response as handed off across the presentation
+// boundary. This is not approval, authorization, or proof that a user viewed
+// the result. The daemon owns delivery identity and request correlation.
+message AcknowledgeConversationForkDeliveryRequest {
+  string child_thread_id = 1;
+  uint64 expected_revision = 2;
+}
+
+// Canonical result of one fork mutation. Pure Branch has no started_turn;
+// Edit-and-branch and Regenerate always return a child-owned started_turn.
+message ConversationForkResult {
+  Thread child_thread = 1;
+  ConversationTurnResult started_turn = 2;
+  ConversationForkDelivery delivery = 3;
+}
+
+// Daemon-owned response-delivery journal for one canonical child thread.
+// Request keys and fingerprints never cross this projection.
+message ConversationForkDelivery {
+  string child_thread_id = 1;
+  ConversationForkDeliveryState state = 2;
+  uint64 revision = 3;
+}
+
+enum ConversationForkDeliveryState {
+  CONVERSATION_FORK_DELIVERY_STATE_UNSPECIFIED = 0;
+  CONVERSATION_FORK_DELIVERY_STATE_PENDING = 1;
+  CONVERSATION_FORK_DELIVERY_STATE_ACKNOWLEDGED = 2;
+}
+
+// Reload projection for one forked conversation. Family threads are bounded to
+// the root-family maximum and inherited outcomes are keyed by child message ID.
+message ConversationForkMetadata {
+  ConversationThreadLineage lineage = 1;
+  repeated ConversationInheritedAssistantOutcome inherited_assistant_outcomes = 2;
+  repeated Thread family_threads = 3;
+}
+
+// Presentation outcome copied from one canonical completed source turn. This
+// record does not clone provider response identity, a run, an effect, or billing.
+message ConversationInheritedAssistantOutcome {
+  string child_assistant_message_id = 1;
+  string source_turn_id = 2;
+  string model_id = 3;
+  repeated ConversationCitation citations = 4;
+  ConversationUsage usage = 5;
+  optional bool zero_data_retention = 6;
+}
+
+message ListConversationTurnsRequest {
+  string thread_id = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+message ConversationTurnList {
+  repeated ConversationTurnResult turns = 1;
+  string next_cursor = 2;
+}
+
+message ConversationTurnResult {
+  string turn_id = 1;
+  ConversationTurnState state = 2;
+  string model_id = 3;
+  Message user_message = 4;
+  Message assistant_message = 5;
+  Run run = 6;
+  ConversationFailure failure = 7;
+  repeated ConversationCitation citations = 8;
+  ConversationUsage usage = 9;
+  optional bool zero_data_retention = 10;
+  uint64 revision = 11;
+  ConversationTurnLineage lineage = 12;
+  ConversationRetryEligibility retry_eligibility = 13;
+}
+
+// Non-secret immutable ancestry. Local credential-generation binding remains
+// daemon-internal and is deliberately not part of this wire contract.
+message ConversationTurnLineage {
+  ConversationTurnOrigin origin = 1;
+  string source_turn_id = 2;
+  uint32 retry_depth = 3;
+}
+
+enum ConversationTurnOrigin {
+  CONVERSATION_TURN_ORIGIN_UNSPECIFIED = 0;
+  CONVERSATION_TURN_ORIGIN_ORIGINAL = 1;
+  CONVERSATION_TURN_ORIGIN_RETRY = 2;
+  CONVERSATION_TURN_ORIGIN_EDIT_AND_BRANCH = 3;
+  CONVERSATION_TURN_ORIGIN_REGENERATE = 4;
+}
+
+// Dynamic daemon projection. Eligibility is revalidated atomically when the
+// retry command is handled; the renderer cannot grant it.
+enum ConversationRetryEligibility {
+  CONVERSATION_RETRY_ELIGIBILITY_UNSPECIFIED = 0;
+  CONVERSATION_RETRY_ELIGIBILITY_ALLOWED = 1;
+  CONVERSATION_RETRY_ELIGIBILITY_NOT_NEWEST = 2;
+  CONVERSATION_RETRY_ELIGIBILITY_SOURCE_IN_PROGRESS = 3;
+  CONVERSATION_RETRY_ELIGIBILITY_SOURCE_COMPLETED = 4;
+  CONVERSATION_RETRY_ELIGIBILITY_SOURCE_INTERRUPTED_NEEDS_REVIEW = 5;
+  CONVERSATION_RETRY_ELIGIBILITY_FAILURE_NOT_RETRYABLE = 6;
+  CONVERSATION_RETRY_ELIGIBILITY_SOURCE_ACCOUNT_UNAVAILABLE = 7;
+  CONVERSATION_RETRY_ELIGIBILITY_DEPTH_EXHAUSTED = 8;
+  CONVERSATION_RETRY_ELIGIBILITY_SOURCE_READ_ONLY = 9;
+}
+
+message ConversationTurnEventBatch {
+  repeated ConversationTurnEvent events = 1;
+  uint64 next_sequence = 2;
+  bool has_more = 3;
+}
+
+message ConversationTurnEvent {
+  uint64 sequence = 1;
+  string turn_id = 2;
+  ConversationTurnEventKind kind = 3;
+  ConversationTurnState from_state = 4;
+  ConversationTurnState to_state = 5;
+  uint64 start_utf8_offset = 6;
+  string text_appended = 7;
+}
+
+enum ConversationTurnEventKind {
+  CONVERSATION_TURN_EVENT_KIND_UNSPECIFIED = 0;
+  CONVERSATION_TURN_EVENT_KIND_CREATED = 1;
+  CONVERSATION_TURN_EVENT_KIND_STATE_CHANGED = 2;
+  CONVERSATION_TURN_EVENT_KIND_TEXT_APPENDED = 3;
+}
+
+enum ConversationTurnState {
+  CONVERSATION_TURN_STATE_UNSPECIFIED = 0;
+  CONVERSATION_TURN_STATE_RESERVED = 1;
+  CONVERSATION_TURN_STATE_PROVIDER_STARTED = 2;
+  CONVERSATION_TURN_STATE_COMPLETED = 3;
+  CONVERSATION_TURN_STATE_FAILED = 4;
+  CONVERSATION_TURN_STATE_CANCELLED = 5;
+  CONVERSATION_TURN_STATE_INTERRUPTED_NEEDS_REVIEW = 6;
+}
+
+message ConversationFailure {
+  ConversationFailureKind kind = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+enum ConversationFailureKind {
+  CONVERSATION_FAILURE_KIND_UNSPECIFIED = 0;
+  CONVERSATION_FAILURE_KIND_AUTHENTICATION = 1;
+  CONVERSATION_FAILURE_KIND_FORBIDDEN = 2;
+  CONVERSATION_FAILURE_KIND_INVALID_REQUEST = 3;
+  CONVERSATION_FAILURE_KIND_RATE_LIMITED = 4;
+  CONVERSATION_FAILURE_KIND_UNAVAILABLE = 5;
+  CONVERSATION_FAILURE_KIND_PROTOCOL = 6;
+}
+
+message ConversationCitation {
+  string title = 1;
+  string url = 2;
+}
+
+message ConversationUsage {
+  uint64 input_tokens = 1;
+  uint64 output_tokens = 2;
+  uint64 cost_in_usd_ticks = 3;
+}
+
+message CapabilityStatus {
+  Capability capability = 1;
+  CapabilitySurface surface = 2;
+  AuthMethod authentication = 3;
+  CapabilityAvailability availability = 4;
+  string reason_code = 5;
+  string reason = 6;
+}
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_CHAT = 1;
+  CAPABILITY_WORK = 2;
+  CAPABILITY_FILES = 3;
+  CAPABILITY_SHELL = 4;
+  CAPABILITY_MCP = 5;
+  CAPABILITY_BROWSER_AUTOMATION = 6;
+  CAPABILITY_COMPUTER_USE = 7;
+  CAPABILITY_SEARCH = 8;
+  CAPABILITY_RESEARCH = 9;
+  CAPABILITY_IMAGINE_IMAGE = 10;
+  CAPABILITY_IMAGINE_VIDEO = 11;
+  CAPABILITY_REALTIME_VOICE = 12;
+  CAPABILITY_AUTOMATIONS = 13;
+}
+
+enum CapabilitySurface {
+  CAPABILITY_SURFACE_UNSPECIFIED = 0;
+  CAPABILITY_SURFACE_SUBSCRIPTION_ACP = 1;
+  CAPABILITY_SURFACE_XAI_API = 2;
+  CAPABILITY_SURFACE_DESKTOP = 3;
+  CAPABILITY_SURFACE_MANAGED_ADDON = 4;
+  CAPABILITY_SURFACE_WEB_HANDOFF = 5;
+}
+
+enum AuthMethod {
+  AUTH_METHOD_UNSPECIFIED = 0;
+  AUTH_METHOD_NONE = 1;
+  AUTH_METHOD_SUBSCRIPTION_OAUTH = 2;
+  AUTH_METHOD_XAI_API_KEY = 3;
+  AUTH_METHOD_EITHER = 4;
+}
+
+enum CapabilityAvailability {
+  CAPABILITY_AVAILABILITY_UNSPECIFIED = 0;
+  CAPABILITY_AVAILABILITY_AVAILABLE = 1;
+  CAPABILITY_AVAILABILITY_LIMITED = 2;
+  CAPABILITY_AVAILABILITY_UNAVAILABLE = 3;
+}
+
+message Run {
+  string id = 1;
+  string project_id = 2;
+  string thread_id = 3;
+  RunState state = 4;
+  uint64 revision = 5;
+  uint64 created_at_unix_ms = 6;
+  uint64 updated_at_unix_ms = 7;
+}
+
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_QUEUED = 1;
+  RUN_STATE_PLANNING = 2;
+  RUN_STATE_AWAITING_APPROVAL = 3;
+  RUN_STATE_RUNNING = 4;
+  RUN_STATE_PAUSED = 5;
+  RUN_STATE_COMPLETED = 6;
+  RUN_STATE_FAILED = 7;
+  RUN_STATE_CANCELLED = 8;
+  RUN_STATE_INTERRUPTED_NEEDS_REVIEW = 9;
+}
+
+message EventsSinceRequest {
+  string run_id = 1;
+  uint64 after_sequence = 2;
+  uint32 limit = 3;
+}
+
+message EventsSinceResponse {
+  repeated RunEvent events = 1;
+}
+
+// Bounded read-only long poll over the durable per-run audit stream. The
+// caller resumes with next_sequence after it has successfully consumed the
+// entire batch. This operation never starts or replays run side effects.
+message PollRunEventsRequest {
+  string run_id = 1;
+  uint64 after_sequence = 2;
+  uint32 limit = 3;
+  uint32 wait_timeout_ms = 4;
+}
+
+message RunEventBatch {
+  repeated RunEvent events = 1;
+  uint64 next_sequence = 2;
+  bool has_more = 3;
+}
+
+message RunEvent {
+  uint64 sequence = 1;
+  string run_id = 2;
+  uint64 occurred_at_unix_ms = 3;
+  RunEventKind kind = 4;
+  RunState from_state = 5;
+  RunState to_state = 6;
+  string related_id = 7;
+}
+
+enum RunEventKind {
+  RUN_EVENT_KIND_UNSPECIFIED = 0;
+  RUN_EVENT_KIND_CREATED = 1;
+  RUN_EVENT_KIND_STATE_CHANGED = 2;
+  RUN_EVENT_KIND_APPROVAL_REQUESTED = 3;
+  RUN_EVENT_KIND_EFFECT_PREPARED = 4;
+  RUN_EVENT_KIND_EFFECT_NEEDS_REVIEW = 5;
+}
+
+message RequestedAction {
+  string action = 1;
+  string target = 2;
+  string data_summary = 3;
+  ApprovalRisk risk = 4;
+}
+
+enum ApprovalRisk {
+  APPROVAL_RISK_UNSPECIFIED = 0;
+  APPROVAL_RISK_LOW = 1;
+  APPROVAL_RISK_ELEVATED = 2;
+  APPROVAL_RISK_HIGH = 3;
+  APPROVAL_RISK_CRITICAL = 4;
+}
+
+enum ApprovalScope {
+  APPROVAL_SCOPE_UNSPECIFIED = 0;
+  APPROVAL_SCOPE_ONCE = 1;
+  APPROVAL_SCOPE_RUN = 2;
+  APPROVAL_SCOPE_RESOURCE = 3;
+}
+
+message DecideApprovalRequest {
+  string approval_id = 1;
+  uint64 expected_revision = 2;
+  ApprovalDecision decision = 3;
+}
+
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  APPROVAL_DECISION_GRANT = 1;
+  APPROVAL_DECISION_DENY = 2;
+}
+
+message Approval {
+  string id = 1;
+  string run_id = 2;
+  RequestedAction action = 3;
+  ApprovalScope scope = 4;
+  string resource_id = 5;
+  ApprovalStatus status = 6;
+  uint64 revision = 7;
+  uint64 created_at_unix_ms = 8;
+  uint64 expires_at_unix_ms = 9;
+  optional uint64 decided_at_unix_ms = 10;
+}
+
+message CreateProjectRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message UpdateProjectRequest {
+  string project_id = 1;
+  uint64 expected_revision = 2;
+  string name = 3;
+  string description = 4;
+}
+
+message ArchiveProjectRequest {
+  string project_id = 1;
+  uint64 expected_revision = 2;
+}
+
+message GetProjectRequest {
+  string project_id = 1;
+}
+
+message ListProjectsRequest {
+  string cursor = 1;
+  uint32 limit = 2;
+}
+
+message Project {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  ProjectState state = 4;
+  uint64 revision = 5;
+  uint64 created_at_unix_ms = 6;
+  uint64 updated_at_unix_ms = 7;
+}
+
+message ProjectList {
+  repeated Project projects = 1;
+  string next_cursor = 2;
+}
+
+enum ProjectState {
+  PROJECT_STATE_UNSPECIFIED = 0;
+  PROJECT_STATE_ACTIVE = 1;
+  PROJECT_STATE_ARCHIVED = 2;
+}
+
+message CreateThreadRequest {
+  string project_id = 1;
+  string title = 2;
+}
+
+message UpdateThreadRequest {
+  string thread_id = 1;
+  uint64 expected_revision = 2;
+  string title = 3;
+}
+
+message ArchiveThreadRequest {
+  string thread_id = 1;
+  uint64 expected_revision = 2;
+}
+
+message GetThreadRequest {
+  string thread_id = 1;
+}
+
+message ListThreadsRequest {
+  string project_id = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+message Thread {
+  string id = 1;
+  string project_id = 2;
+  string title = 3;
+  ThreadState state = 4;
+  uint64 revision = 5;
+  uint64 created_at_unix_ms = 6;
+  uint64 updated_at_unix_ms = 7;
+  ConversationThreadLineage lineage = 8;
+}
+
+// Immutable ancestry of one canonical thread. Original and forked origins are
+// a closed union; the daemon never accepts this structure from a renderer.
+message ConversationThreadLineage {
+  string root_thread_id = 1;
+  uint32 fork_depth = 2;
+
+  oneof origin {
+    ConversationOriginalThreadOrigin original = 3;
+    ConversationForkedThreadOrigin fork = 4;
+  }
+}
+
+message ConversationOriginalThreadOrigin {}
+
+message ConversationForkedThreadOrigin {
+  string parent_thread_id = 1;
+  string source_turn_id = 2;
+  string source_message_id = 3;
+  ConversationForkKind kind = 4;
+}
+
+enum ConversationForkKind {
+  CONVERSATION_FORK_KIND_UNSPECIFIED = 0;
+  CONVERSATION_FORK_KIND_BRANCH = 1;
+  CONVERSATION_FORK_KIND_EDIT_AND_BRANCH = 2;
+  CONVERSATION_FORK_KIND_REGENERATE = 3;
+}
+
+message ThreadList {
+  repeated Thread threads = 1;
+  string next_cursor = 2;
+}
+
+enum ThreadState {
+  THREAD_STATE_UNSPECIFIED = 0;
+  THREAD_STATE_OPEN = 1;
+  THREAD_STATE_ARCHIVED = 2;
+}
+
+message GetMessageRequest {
+  string message_id = 1;
+}
+
+message ListMessagesRequest {
+  string thread_id = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+message Message {
+  string id = 1;
+  string thread_id = 2;
+  uint64 sequence = 3;
+  MessageRole role = 4;
+  string content = 5;
+  MessageState state = 6;
+  uint64 revision = 7;
+  uint64 created_at_unix_ms = 8;
+  uint64 updated_at_unix_ms = 9;
+  ConversationMessageDerivation derivation = 10;
+}
+
+// Immutable origin of one canonical message. Forked messages always receive a
+// new child-owned identity; the source IDs are ancestry, never shared ownership.
+message ConversationMessageDerivation {
+  oneof origin {
+    ConversationOriginalMessageDerivation original = 1;
+    ConversationForkedMessageDerivation fork = 2;
+  }
+}
+
+message ConversationOriginalMessageDerivation {}
+
+message ConversationForkedMessageDerivation {
+  string source_message_id = 1;
+  string source_turn_id = 2;
+  optional uint32 context_position = 3;
+  ConversationMessageDerivationKind kind = 4;
+}
+
+enum ConversationMessageDerivationKind {
+  CONVERSATION_MESSAGE_DERIVATION_KIND_UNSPECIFIED = 0;
+  CONVERSATION_MESSAGE_DERIVATION_KIND_CONTEXT_COPY = 1;
+  CONVERSATION_MESSAGE_DERIVATION_KIND_SOURCE_ASSISTANT_COPY = 2;
+  CONVERSATION_MESSAGE_DERIVATION_KIND_EDITED_USER = 3;
+}
+
+message MessageList {
+  repeated Message messages = 1;
+  string next_cursor = 2;
+}
+
+enum MessageRole {
+  MESSAGE_ROLE_UNSPECIFIED = 0;
+  MESSAGE_ROLE_SYSTEM = 1;
+  MESSAGE_ROLE_USER = 2;
+  MESSAGE_ROLE_ASSISTANT = 3;
+}
+
+enum MessageState {
+  MESSAGE_STATE_UNSPECIFIED = 0;
+  MESSAGE_STATE_ACTIVE = 1;
+  MESSAGE_STATE_DELETED = 2;
+}
+
+message GetArtifactRequest {
+  string artifact_id = 1;
+}
+
+message ListArtifactsRequest {
+  string project_id = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+// Imports one Electron-main-selected local file into daemon-owned artifact
+// storage. source_path is an ephemeral trusted-UI handoff which must never be
+// persisted, logged, or returned in any response.
+message ImportArtifactRequest {
+  string project_id = 1;
+  optional string thread_id = 2;
+  string display_name = 3;
+  string media_type = 4;
+  string source_path = 5;
+}
+
+// Requests opening one exact immutable artifact content version. The daemon
+// derives every storage or object locator; none may be supplied by the caller.
+message OpenArtifactRequest {
+  string artifact_id = 1;
+  uint32 content_version = 2;
+}
+
+// Removes the daemon-owned local copy of one exact current artifact. This is a
+// new closed operation and deliberately does not resurrect the permanently
+// reserved delete_artifact producer. The daemon reloads every private content
+// locator and digest; the caller supplies only optimistic metadata identity.
+message RemoveArtifactRequest {
+  string artifact_id = 1;
+  uint64 expected_revision = 2;
+  uint32 expected_content_version = 3;
+}
+
+// Closed result union for artifact side effects. Import returns only the
+// canonical projection, while open returns a path-free replayable receipt.
+message ArtifactOperationResult {
+  oneof result {
+    Artifact imported_artifact = 1;
+    ArtifactOpenReceipt open_receipt = 2;
+    Artifact removed_artifact = 3;
+    ArtifactRemovalPendingReceipt removal_pending = 4;
+  }
+}
+
+// Confirms that the exact command was durably reserved and its tombstone is
+// canonical, while daemon-owned namespace cleanup is still continuing. The
+// response envelope echoes the command's idempotency key; this exact tuple and
+// tombstone let trusted clients reconcile without paths, digests, or locators.
+message ArtifactRemovalPendingReceipt {
+  string artifact_id = 1;
+  uint64 expected_revision = 2;
+  uint32 expected_content_version = 3;
+  Artifact tombstone = 4;
+}
+
+message ArtifactOpenReceipt {
+  string artifact_id = 1;
+  uint32 content_version = 2;
+  ArtifactOpenReceiptStatus status = 3;
+  // Present exactly when status is FAILED. The closed code is safe to project
+  // to renderer feedback and never contains a path, digest, or object locator.
+  optional ArtifactOpenFailureCode failure_code = 4;
+}
+
+enum ArtifactOpenReceiptStatus {
+  ARTIFACT_OPEN_RECEIPT_STATUS_UNSPECIFIED = 0;
+  ARTIFACT_OPEN_RECEIPT_STATUS_OPENED = 1;
+  ARTIFACT_OPEN_RECEIPT_STATUS_FAILED = 2;
+  ARTIFACT_OPEN_RECEIPT_STATUS_INTERRUPTED_NEEDS_REVIEW = 3;
+}
+
+enum ArtifactOpenFailureCode {
+  ARTIFACT_OPEN_FAILURE_CODE_UNSPECIFIED = 0;
+  ARTIFACT_OPEN_FAILURE_CODE_CONTENT_UNAVAILABLE = 1;
+  ARTIFACT_OPEN_FAILURE_CODE_PLATFORM_UNAVAILABLE = 2;
+  ARTIFACT_OPEN_FAILURE_CODE_DEADLINE_EXCEEDED = 3;
+  ARTIFACT_OPEN_FAILURE_CODE_INTEGRITY_FAILURE = 4;
+  ARTIFACT_OPEN_FAILURE_CODE_INTERRUPTED_BEFORE_DISPATCH = 5;
+}
+
+message Artifact {
+  reserved 5;
+  reserved "relative_path";
+
+  string id = 1;
+  string project_id = 2;
+  string thread_id = 3;
+  string name = 4;
+  string media_type = 6;
+  uint64 byte_size = 7;
+  ArtifactState state = 8;
+  uint64 revision = 9;
+  uint64 created_at_unix_ms = 10;
+  uint64 updated_at_unix_ms = 11;
+  optional uint32 content_version = 12;
+}
+
+message ArtifactList {
+  repeated Artifact artifacts = 1;
+  string next_cursor = 2;
+}
+
+enum ArtifactState {
+  ARTIFACT_STATE_UNSPECIFIED = 0;
+  ARTIFACT_STATE_AVAILABLE = 1;
+  ARTIFACT_STATE_DELETED = 2;
+  ARTIFACT_STATE_UNAVAILABLE = 3;
+}
+
+message CreateAutomationRequest {
+  reserved 8;
+  reserved "enabled";
+
+  string project_id = 1;
+  string title = 2;
+  string prompt = 3;
+  string schedule = 4;
+  string timezone = 5;
+  MissedRunPolicy missed_run_policy = 6;
+  OverlapPolicy overlap_policy = 7;
+}
+
+message UpdateAutomationRequest {
+  reserved 9;
+  reserved "enabled";
+
+  string automation_id = 1;
+  uint64 expected_revision = 2;
+  string title = 3;
+  string prompt = 4;
+  string schedule = 5;
+  string timezone = 6;
+  MissedRunPolicy missed_run_policy = 7;
+  OverlapPolicy overlap_policy = 8;
+}
+
+message ArchiveAutomationRequest {
+  string automation_id = 1;
+  uint64 expected_revision = 2;
+}
+
+message GetAutomationRequest {
+  string automation_id = 1;
+}
+
+message ListAutomationsRequest {
+  string project_id = 1;
+  string cursor = 2;
+  uint32 limit = 3;
+}
+
+message Automation {
+  string id = 1;
+  string project_id = 2;
+  string title = 3;
+  string prompt = 4;
+  string schedule = 5;
+  string timezone = 6;
+  MissedRunPolicy missed_run_policy = 7;
+  OverlapPolicy overlap_policy = 8;
+  AutomationState state = 9;
+  uint64 revision = 10;
+  uint64 created_at_unix_ms = 11;
+  uint64 updated_at_unix_ms = 12;
+}
+
+message AutomationList {
+  repeated Automation automations = 1;
+  string next_cursor = 2;
+}
+
+enum MissedRunPolicy {
+  MISSED_RUN_POLICY_UNSPECIFIED = 0;
+  MISSED_RUN_POLICY_RUN_ONCE = 1;
+  MISSED_RUN_POLICY_SKIP = 2;
+}
+
+enum OverlapPolicy {
+  OVERLAP_POLICY_UNSPECIFIED = 0;
+  OVERLAP_POLICY_QUEUE_ONE = 1;
+  OVERLAP_POLICY_SKIP = 2;
+}
+
+enum AutomationState {
+  AUTOMATION_STATE_UNSPECIFIED = 0;
+  AUTOMATION_STATE_ENABLED = 1;
+  AUTOMATION_STATE_DISABLED = 2;
+  AUTOMATION_STATE_ARCHIVED = 3;
+}
+
+message ListAutomationHistoryRequest {
+  string automation_id = 1;
+  uint64 after_sequence = 2;
+  uint32 limit = 3;
+}
+
+message AutomationHistoryEntry {
+  string automation_id = 1;
+  uint64 sequence = 2;
+  uint64 scheduled_for_unix_ms = 3;
+  uint64 recorded_at_unix_ms = 4;
+  AutomationHistoryStatus status = 5;
+  string summary = 6;
+}
+
+message AutomationHistoryList {
+  repeated AutomationHistoryEntry entries = 1;
+}
+
+enum AutomationHistoryStatus {
+  AUTOMATION_HISTORY_STATUS_UNSPECIFIED = 0;
+  AUTOMATION_HISTORY_STATUS_SUCCEEDED = 1;
+  AUTOMATION_HISTORY_STATUS_FAILED = 2;
+  AUTOMATION_HISTORY_STATUS_SKIPPED_MISSED = 3;
+  AUTOMATION_HISTORY_STATUS_SKIPPED_OVERLAP = 4;
+}
+
+message SearchWorkspaceRequest {
+  string project_id = 1;
+  string query = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+}
+
+message WorkspaceSearchHit {
+  string id = 1;
+  string project_id = 2;
+  WorkspaceSearchKind kind = 3;
+  string title = 4;
+  string snippet = 5;
+  uint64 updated_at_unix_ms = 6;
+  // Canonical conversation route for thread, message, and thread-owned artifact hits.
+  string thread_id = 7;
+}
+
+message WorkspaceSearchResults {
+  repeated WorkspaceSearchHit hits = 1;
+  uint32 next_offset = 2;
+  bool has_more = 3;
+}
+
+enum WorkspaceSearchKind {
+  WORKSPACE_SEARCH_KIND_UNSPECIFIED = 0;
+  WORKSPACE_SEARCH_KIND_PROJECT = 1;
+  WORKSPACE_SEARCH_KIND_THREAD = 2;
+  WORKSPACE_SEARCH_KIND_MESSAGE = 3;
+  WORKSPACE_SEARCH_KIND_ARTIFACT = 4;
+  WORKSPACE_SEARCH_KIND_AUTOMATION = 5;
+}
+
+enum ApprovalStatus {
+  APPROVAL_STATUS_UNSPECIFIED = 0;
+  APPROVAL_STATUS_PENDING = 1;
+  APPROVAL_STATUS_GRANTED = 2;
+  APPROVAL_STATUS_DENIED = 3;
+  APPROVAL_STATUS_EXPIRED = 4;
+  APPROVAL_STATUS_CANCELLED = 5;
+}
+
+message ErrorResponse {
+  ErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_ARGUMENT = 1;
+  ERROR_CODE_NOT_FOUND = 2;
+  ERROR_CODE_CONFLICT = 3;
+  ERROR_CODE_INVALID_STATE = 4;
+  ERROR_CODE_UNAVAILABLE = 5;
+  ERROR_CODE_DEADLINE_EXCEEDED = 6;
+  ERROR_CODE_UNAUTHORIZED = 7;
+  ERROR_CODE_INTERNAL = 8;
+  ERROR_CODE_CANCELLED = 9;
+  ERROR_CODE_INTEGRITY_FAILURE = 10;
+}
