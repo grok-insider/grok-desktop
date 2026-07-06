@@ -5,6 +5,7 @@ members = [
     "crates/grok-application",
     "crates/grok-windows-acl",
     "crates/grok-vault",
+    "crates/grok-xai",
 ]
 
 [workspace.package]
