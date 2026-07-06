@@ -1,0 +1,310 @@
+use grok_domain::{
+    AuthMethod, Capability, CapabilityAvailability, CapabilityStatus, CapabilitySurface,
+};
+
+/// Current authentication, connectivity, and local-runtime facts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct CapabilityFacts {
+    /// Official Grok Build CLI has an active subscription session.
+    pub subscription_authenticated: bool,
+    /// A user-owned xAI API key is configured.
+    pub xai_api_key_configured: bool,
+    /// The daemon validated its selected xAI model for the configured key.
+    pub xai_capabilities_resolved: bool,
+    /// Provider network calls may be attempted; each call still enforces live reachability.
+    pub online: bool,
+    /// Static packaged VM broker identity and contract checks passed.
+    ///
+    /// This does not prove guest health, caller authorization, or execution readiness.
+    pub isolation_broker_qualified: bool,
+    /// HCS utility-VM readiness checks passed.
+    pub strong_isolation_ready: bool,
+    /// Dedicated managed browser is installed and healthy.
+    pub managed_browser_ready: bool,
+    /// Native platform computer-use broker is healthy.
+    pub computer_use_ready: bool,
+    /// Private immutable artifact storage and native exact-version open are qualified.
+    pub artifact_content_ready: bool,
+}
+
+/// Deterministic product capability policy shared by UI and daemon workflows.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CapabilityResolver;
+
+impl CapabilityResolver {
+    /// Resolves all product capabilities with stable reason codes.
+    #[must_use]
+    pub fn resolve(facts: CapabilityFacts) -> Vec<CapabilityStatus> {
+        let mut statuses = Vec::with_capacity(13);
+        statuses.extend(local_definition_capabilities(facts));
+        statuses.push(chat_capability(facts));
+        statuses.extend(unavailable_execution_capabilities());
+        statuses.extend(unavailable_provider_capabilities(facts));
+        statuses
+    }
+}
+
+fn local_definition_capabilities(facts: CapabilityFacts) -> [CapabilityStatus; 2] {
+    [
+        status(
+            Capability::Files,
+            CapabilitySurface::Desktop,
+            AuthMethod::None,
+            facts.artifact_content_ready,
+            CapabilityAvailability::Limited,
+            "artifact_content_unavailable",
+            "Artifact metadata is available, but private import and local open are not qualified on this runtime.",
+        ),
+        status(
+            Capability::Automations,
+            CapabilitySurface::Desktop,
+            AuthMethod::None,
+            false,
+            CapabilityAvailability::Limited,
+            "automation_scheduler_unavailable",
+            "Automation definitions are available, but scheduled execution is not yet qualified.",
+        ),
+    ]
+}
+
+fn chat_capability(facts: CapabilityFacts) -> CapabilityStatus {
+    status(
+        Capability::Chat,
+        CapabilitySurface::XaiApi,
+        AuthMethod::XaiApiKey,
+        facts.xai_api_key_configured && facts.xai_capabilities_resolved && facts.online,
+        CapabilityAvailability::Limited,
+        "xai_conversation_unavailable",
+        "Direct Chat requires a validated xAI API key, selected model, and network access.",
+    )
+}
+
+fn unavailable_execution_capabilities() -> [CapabilityStatus; 5] {
+    [
+        unavailable(
+            Capability::Work,
+            CapabilitySurface::SubscriptionAcp,
+            AuthMethod::SubscriptionOAuth,
+            "work_execution_unavailable",
+            "Work requires the qualified guest proxy and subscription session lifecycle.",
+        ),
+        unavailable(
+            Capability::Shell,
+            CapabilitySurface::Desktop,
+            AuthMethod::SubscriptionOAuth,
+            "strong_isolation_unavailable",
+            "Shell tools require the qualified guest execution backend.",
+        ),
+        unavailable(
+            Capability::Mcp,
+            CapabilitySurface::Desktop,
+            AuthMethod::None,
+            "mcp_sandbox_unavailable",
+            "MCP servers require the qualified guest execution backend.",
+        ),
+        unavailable(
+            Capability::BrowserAutomation,
+            CapabilitySurface::ManagedAddon,
+            AuthMethod::None,
+            "managed_browser_unavailable",
+            "Browser automation requires the qualified managed browser broker.",
+        ),
+        unavailable(
+            Capability::ComputerUse,
+            CapabilitySurface::Desktop,
+            AuthMethod::None,
+            "computer_use_broker_unavailable",
+            "Computer use requires the qualified native broker and guest proxy.",
+        ),
+    ]
+}
+
+fn unavailable_provider_capabilities(facts: CapabilityFacts) -> [CapabilityStatus; 5] {
+    let setup_reason = if facts.xai_api_key_configured {
+        "The xAI credential is configured, but this provider workflow is not yet exposed."
+    } else {
+        "This workflow requires native xAI credential enrollment and a qualified daemon command."
+    };
+    [
+        unavailable(
+            Capability::Search,
+            CapabilitySurface::XaiApi,
+            AuthMethod::XaiApiKey,
+            "search_operation_unavailable",
+            setup_reason,
+        ),
+        unavailable(
+            Capability::Research,
+            CapabilitySurface::XaiApi,
+            AuthMethod::XaiApiKey,
+            "research_operation_unavailable",
+            setup_reason,
+        ),
+        unavailable(
+            Capability::ImagineImage,
+            CapabilitySurface::XaiApi,
+            AuthMethod::XaiApiKey,
+            "image_operation_unavailable",
+            setup_reason,
+        ),
+        unavailable(
+            Capability::ImagineVideo,
+            CapabilitySurface::XaiApi,
+            AuthMethod::XaiApiKey,
+            "video_operation_unavailable",
+            setup_reason,
+        ),
+        unavailable(
+            Capability::RealtimeVoice,
+            CapabilitySurface::XaiApi,
+            AuthMethod::XaiApiKey,
+            "voice_operation_unavailable",
+            setup_reason,
+        ),
+    ]
+}
+
+fn unavailable(
+    capability: Capability,
+    surface: CapabilitySurface,
+    authentication: AuthMethod,
+    reason_code: &str,
+    reason: &str,
+) -> CapabilityStatus {
+    status(
+        capability,
+        surface,
+        authentication,
+        false,
+        CapabilityAvailability::Unavailable,
+        reason_code,
+        reason,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn status(
+    capability: Capability,
+    surface: CapabilitySurface,
+    authentication: AuthMethod,
+    ready: bool,
+    fallback: CapabilityAvailability,
+    reason_code: &str,
+    reason: &str,
+) -> CapabilityStatus {
+    CapabilityStatus {
+        capability,
+        surface,
+        authentication,
+        availability: if ready {
+            CapabilityAvailability::Available
+        } else {
+            fallback
+        },
+        reason_code: if ready { "ready" } else { reason_code }.into(),
+        reason: if ready { "Available." } else { reason }.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limited_mode_never_enables_execution() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts::default());
+        let chat = statuses
+            .iter()
+            .find(|item| item.capability == Capability::Chat)
+            .expect("chat");
+        let work = statuses
+            .iter()
+            .find(|item| item.capability == Capability::Work)
+            .expect("work");
+        assert_eq!(chat.availability, CapabilityAvailability::Limited);
+        assert_eq!(work.availability, CapabilityAvailability::Unavailable);
+    }
+
+    #[test]
+    fn api_key_enables_only_the_implemented_direct_chat_path() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts {
+            xai_api_key_configured: true,
+            xai_capabilities_resolved: true,
+            online: true,
+            strong_isolation_ready: true,
+            ..CapabilityFacts::default()
+        });
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Chat)
+                .expect("chat")
+                .availability,
+            CapabilityAvailability::Available
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Work)
+                .expect("work")
+                .availability,
+            CapabilityAvailability::Unavailable
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Research)
+                .expect("research")
+                .availability,
+            CapabilityAvailability::Unavailable
+        );
+    }
+
+    #[test]
+    fn qualified_artifact_content_enables_only_the_files_capability() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts {
+            artifact_content_ready: true,
+            ..CapabilityFacts::default()
+        });
+        let files = statuses
+            .iter()
+            .find(|item| item.capability == Capability::Files)
+            .expect("files");
+        assert_eq!(files.availability, CapabilityAvailability::Available);
+        assert_eq!(files.reason_code, "ready");
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Automations)
+                .expect("automations")
+                .availability,
+            CapabilityAvailability::Limited
+        );
+    }
+
+    #[test]
+    fn static_broker_qualification_never_enables_work() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts {
+            subscription_authenticated: true,
+            isolation_broker_qualified: true,
+            strong_isolation_ready: false,
+            ..CapabilityFacts::default()
+        });
+        for capability in [
+            Capability::Work,
+            Capability::Shell,
+            Capability::Mcp,
+            Capability::ComputerUse,
+        ] {
+            assert_eq!(
+                statuses
+                    .iter()
+                    .find(|status| status.capability == capability)
+                    .expect("execution capability")
+                    .availability,
+                CapabilityAvailability::Unavailable
+            );
+        }
+    }
+}
