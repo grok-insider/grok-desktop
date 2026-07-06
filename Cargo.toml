@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/grok-domain",
     "crates/grok-application",
+    "crates/grok-windows-acl",
 ]
 
 [workspace.package]
