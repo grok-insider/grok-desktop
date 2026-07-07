@@ -1,0 +1,33 @@
+[package]
+name = "grok-sqlcipher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+fs2.workspace = true
+grok-application = { path = "../grok-application", version = "0.1.0" }
+grok-domain = { path = "../grok-domain", version = "0.1.0" }
+hex = "0.4.3"
+rusqlite = { version = "0.38.0", features = ["backup", "bundled-sqlcipher-vendored-openssl"] }
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+futures-util.workspace = true
+grok-memory = { path = "../grok-memory", version = "0.1.0" }
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
