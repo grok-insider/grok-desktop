@@ -1,0 +1,22 @@
+[package]
+name = "grok-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+grok-application = { path = "../grok-application", version = "0.1.0" }
+grok-domain = { path = "../grok-domain", version = "0.1.0" }
+prost.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+prost-build = "0.14.3"
+protoc-bin-vendored = "3.2.0"
+
+[lints]
+workspace = true
+
