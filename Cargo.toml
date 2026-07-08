@@ -11,6 +11,7 @@ members = [
     "crates/grok-protocol",
     "crates/grok-credential-enrollment",
     "crates/grok-artifact-storage",
+    "crates/grok-vm-service-client",
 ]
 
 [workspace.package]
