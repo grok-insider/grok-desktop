@@ -1,0 +1,26 @@
+[package]
+name = "grok-artifact-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+grok-application = { path = "../grok-application", version = "0.1.0" }
+grok-domain = { path = "../grok-domain", version = "0.1.0" }
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13.12", features = ["open_uri"] }
+rustix = { workspace = true, features = ["fs"] }
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

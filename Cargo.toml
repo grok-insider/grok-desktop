@@ -10,6 +10,7 @@ members = [
     "crates/grok-sqlcipher",
     "crates/grok-protocol",
     "crates/grok-credential-enrollment",
+    "crates/grok-artifact-storage",
 ]
 
 [workspace.package]
