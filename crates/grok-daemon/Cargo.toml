@@ -1,0 +1,46 @@
+[package]
+name = "grok-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[features]
+debug-acp-descriptor = []
+
+[dependencies]
+directories.workspace = true
+grok-acp = { path = "../grok-acp", version = "0.1.0" }
+grok-artifact-storage = { path = "../grok-artifact-storage", version = "0.1.0" }
+grok-application = { path = "../grok-application", version = "0.1.0" }
+grok-credential-enrollment = { path = "../grok-credential-enrollment", version = "0.1.0" }
+grok-domain = { path = "../grok-domain", version = "0.1.0" }
+grok-memory = { path = "../grok-memory", version = "0.1.0" }
+grok-protocol = { path = "../grok-protocol", version = "0.1.0" }
+grok-sqlcipher = { path = "../grok-sqlcipher", version = "0.1.0" }
+grok-vault = { path = "../grok-vault", version = "0.1.0" }
+grok-vm-service-client = { path = "../grok-vm-service-client", version = "0.1.0" }
+grok-xai = { path = "../grok-xai", version = "0.1.0" }
+hex = "0.4.3"
+prost.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+base64 = "0.22.1"
+ed25519-dalek = "2.2.0"
+serde_json.workspace = true
+tempfile = "3.27.0"

@@ -13,6 +13,7 @@ members = [
     "crates/grok-artifact-storage",
     "crates/grok-vm-service-client",
     "crates/grok-acp",
+    "crates/grok-daemon",
 ]
 
 [workspace.package]
