@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/grok-domain",
-    "crates/grok-application",
-    "crates/grok-windows-acl",
-    "crates/grok-vault",
-    "crates/grok-xai",
-    "crates/grok-memory",
-    "crates/grok-sqlcipher",
-    "crates/grok-protocol",
-    "crates/grok-credential-enrollment",
     "crates/grok-artifact-storage",
-    "crates/grok-vm-service-client",
+    "crates/grok-application",
     "crates/grok-acp",
     "crates/grok-daemon",
+    "crates/grok-credential-enrollment",
+    "crates/grok-domain",
+    "crates/grok-memory",
+    "crates/grok-protocol",
+    "crates/grok-sqlcipher",
+    "crates/grok-vault",
+    "crates/grok-vm-service-client",
+    "crates/grok-windows-acl",
+    "crates/grok-xai",
 ]
 
 [workspace.package]
