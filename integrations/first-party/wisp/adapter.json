@@ -1,0 +1,30 @@
+{
+  "$schema": "../../schema/managed-adapter.schema.json",
+  "adapterVersion": 1,
+  "transport": {
+    "kind": "stdio",
+    "encoding": "utf-8",
+    "framing": "json-lines"
+  },
+  "protocol": {
+    "minInclusive": "1.0.0",
+    "maxExclusive": "2.0.0"
+  },
+  "methods": {
+    "lifecycle": [
+      "lifecycle.initialize",
+      "lifecycle.health",
+      "lifecycle.shutdown"
+    ],
+    "computerUse": [
+      "computer-use.observe",
+      "computer-use.act"
+    ]
+  },
+  "limits": {
+    "maxMessageBytes": 8388608,
+    "maxInflightRequests": 1,
+    "initializeTimeoutMs": 10000
+  },
+  "stderr": "diagnostics-only"
+}

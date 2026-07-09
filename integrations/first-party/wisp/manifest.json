@@ -1,0 +1,60 @@
+{
+  "$schema": "../../schema/integration-manifest.schema.json",
+  "manifestVersion": 1,
+  "id": "desktop.grok.wisp",
+  "version": "0.1.0-development",
+  "protocol": {
+    "minInclusive": "1.0.0",
+    "maxExclusive": "2.0.0"
+  },
+  "entrypoint": {
+    "command": "bin/wisp-managed-adapter",
+    "arguments": ["--stdio"],
+    "adapter": "adapter.json"
+  },
+  "publisher": {
+    "id": "grok-insider",
+    "name": "Grok Desktop maintainers",
+    "trust": "first-party"
+  },
+  "signature": {
+    "algorithm": "none",
+    "keyId": null,
+    "value": null
+  },
+  "capabilities": [
+    "computer-use.observe",
+    "computer-use.pointer",
+    "computer-use.keyboard",
+    "computer-use.wait"
+  ],
+  "configSchema": "config.schema.json",
+  "permissions": {
+    "filesystem": {
+      "readOnlyRoots": ["/run/grok-desktop/workspaces"],
+      "readWriteRoots": ["/var/lib/grok-integrations/desktop.grok.wisp"]
+    },
+    "network": {
+      "outbound": [],
+      "listen": []
+    },
+    "process": {
+      "spawn": ["wisp-mcp"]
+    },
+    "devices": ["wayland-virtual-display", "virtual-input"],
+    "secrets": [],
+    "hostCapabilities": ["guest-socket:computer-use-v1"]
+  },
+  "updateChannel": "development",
+  "lifecycle": {
+    "scope": "integration",
+    "restartPolicy": "on-failure",
+    "shutdownTimeoutMs": 5000,
+    "healthCheck": {
+      "method": "lifecycle.health",
+      "intervalMs": 10000,
+      "timeoutMs": 2000,
+      "failureThreshold": 3
+    }
+  }
+}
