@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.grok.desktop/integrations/managed-adapter-v1.schema.json",
+  "title": "Grok Desktop managed integration adapter descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "adapterVersion",
+    "transport",
+    "protocol",
+    "methods",
+    "limits",
+    "stderr"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri-reference" },
+    "adapterVersion": { "const": 1 },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "encoding", "framing"],
+      "properties": {
+        "kind": { "const": "stdio" },
+        "encoding": { "const": "utf-8" },
+        "framing": { "const": "json-lines" }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minInclusive", "maxExclusive"],
+      "properties": {
+        "minInclusive": { "$ref": "#/$defs/semver" },
+        "maxExclusive": { "$ref": "#/$defs/semver" }
+      }
+    },
+    "methods": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle", "computerUse"],
+      "properties": {
+        "lifecycle": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "lifecycle.initialize" },
+            { "const": "lifecycle.health" },
+            { "const": "lifecycle.shutdown" }
+          ],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "computerUse": {
+          "type": "array",
+          "items": {
+            "enum": ["computer-use.observe", "computer-use.act"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxMessageBytes", "maxInflightRequests", "initializeTimeoutMs"],
+      "properties": {
+        "maxMessageBytes": { "type": "integer", "minimum": 4096, "maximum": 16777216 },
+        "maxInflightRequests": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "initializeTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 }
+      }
+    },
+    "stderr": { "const": "diagnostics-only" }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    }
+  }
+}

@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.grok.desktop/integrations/computer-use-v1.schema.json",
+  "title": "Grok Desktop computer-use protocol v1",
+  "description": "Revision-bound observations and application-scoped actions. There is no process execution action.",
+  "oneOf": [
+    { "$ref": "#/$defs/observation" },
+    { "$ref": "#/$defs/actionRequest" },
+    { "$ref": "#/$defs/actionResult" }
+  ],
+  "$defs": {
+    "protocol": { "const": "grok.computer-use/v1" },
+    "messageId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicationId", "instanceId"],
+      "properties": {
+        "applicationId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,256}$"
+        },
+        "instanceId": { "$ref": "#/$defs/messageId" },
+        "processId": { "type": "integer", "minimum": 1 },
+        "windowId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "title": { "type": "string", "maxLength": 1024 }
+      }
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0, "maximum": 32767 },
+        "y": { "type": "integer", "minimum": 0, "maximum": 32767 }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0, "maximum": 32767 },
+        "y": { "type": "integer", "minimum": 0, "maximum": 32767 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 32768 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 32768 }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "type", "observationId", "revision", "application", "capturedAt", "viewport"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "type": { "const": "observation" },
+        "observationId": { "$ref": "#/$defs/messageId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "application": { "$ref": "#/$defs/application" },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "viewport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height", "scale"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1, "maximum": 32768 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 32768 },
+            "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 8 }
+          }
+        },
+        "frame": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["blobId", "mediaType", "sha256"],
+          "properties": {
+            "blobId": { "$ref": "#/$defs/messageId" },
+            "mediaType": { "enum": ["image/png", "image/webp"] },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "elements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/element" },
+          "maxItems": 10000
+        }
+      },
+      "anyOf": [
+        { "required": ["frame"] },
+        { "required": ["elements"] }
+      ]
+    },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "bounds", "actions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/messageId" },
+        "role": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 2048 },
+        "value": { "type": "string", "maxLength": 8192 },
+        "bounds": { "$ref": "#/$defs/bounds" },
+        "actions": {
+          "type": "array",
+          "items": {
+            "enum": ["click", "focus", "scroll", "set-value"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "actionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "type", "actionId", "observationRevision", "application", "action"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "type": { "const": "action" },
+        "actionId": { "$ref": "#/$defs/messageId" },
+        "observationRevision": { "type": "integer", "minimum": 1 },
+        "application": { "$ref": "#/$defs/application" },
+        "action": {
+          "oneOf": [
+            { "$ref": "#/$defs/pointerMove" },
+            { "$ref": "#/$defs/pointerClick" },
+            { "$ref": "#/$defs/pointerDrag" },
+            { "$ref": "#/$defs/scroll" },
+            { "$ref": "#/$defs/keyPress" },
+            { "$ref": "#/$defs/textInput" },
+            { "$ref": "#/$defs/wait" }
+          ]
+        }
+      }
+    },
+    "pointerMove": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "to"],
+      "properties": {
+        "kind": { "const": "pointer.move" },
+        "to": { "$ref": "#/$defs/point" },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 5000 }
+      }
+    },
+    "pointerClick": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "at", "button", "count"],
+      "properties": {
+        "kind": { "const": "pointer.click" },
+        "at": { "$ref": "#/$defs/point" },
+        "button": { "enum": ["primary", "secondary", "middle"] },
+        "count": { "type": "integer", "minimum": 1, "maximum": 2 }
+      }
+    },
+    "pointerDrag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "to", "button"],
+      "properties": {
+        "kind": { "const": "pointer.drag" },
+        "from": { "$ref": "#/$defs/point" },
+        "to": { "$ref": "#/$defs/point" },
+        "button": { "enum": ["primary", "secondary", "middle"] },
+        "durationMs": { "type": "integer", "minimum": 50, "maximum": 5000 }
+      }
+    },
+    "scroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "deltaX", "deltaY"],
+      "properties": {
+        "kind": { "const": "scroll" },
+        "at": { "$ref": "#/$defs/point" },
+        "deltaX": { "type": "integer", "minimum": -25, "maximum": 25 },
+        "deltaY": { "type": "integer", "minimum": -25, "maximum": 25 }
+      }
+    },
+    "keyPress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "keys"],
+      "properties": {
+        "kind": { "const": "key.press" },
+        "keys": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_+-]{1,32}$" },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      }
+    },
+    "textInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": { "const": "text.input" },
+        "text": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "durationMs"],
+      "properties": {
+        "kind": { "const": "wait" },
+        "durationMs": { "type": "integer", "minimum": 1, "maximum": 15000 }
+      }
+    },
+    "actionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "type", "actionId", "observationRevision", "application", "status"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "type": { "const": "action-result" },
+        "actionId": { "$ref": "#/$defs/messageId" },
+        "observationRevision": { "type": "integer", "minimum": 1 },
+        "application": { "$ref": "#/$defs/application" },
+        "status": { "enum": ["applied", "rejected", "stale-observation", "wrong-application", "failed"] },
+        "message": { "type": "string", "maxLength": 2048 }
+      }
+    }
+  }
+}

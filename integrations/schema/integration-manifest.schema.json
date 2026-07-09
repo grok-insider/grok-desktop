@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.grok.desktop/integrations/integration-manifest-v1.schema.json",
+  "title": "Grok Desktop managed integration manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "id",
+    "version",
+    "protocol",
+    "entrypoint",
+    "publisher",
+    "signature",
+    "capabilities",
+    "configSchema",
+    "permissions",
+    "updateChannel",
+    "lifecycle"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri-reference" },
+    "manifestVersion": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$",
+      "maxLength": 128
+    },
+    "version": { "$ref": "#/$defs/semver" },
+    "protocol": { "$ref": "#/$defs/protocolRange" },
+    "entrypoint": { "$ref": "#/$defs/entrypoint" },
+    "publisher": { "$ref": "#/$defs/publisher" },
+    "signature": { "$ref": "#/$defs/signature" },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z0-9-]+)+$",
+        "maxLength": 96
+      },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "configSchema": { "$ref": "#/$defs/bundleRelativeJsonPath" },
+    "permissions": { "$ref": "#/$defs/permissions" },
+    "updateChannel": {
+      "enum": ["stable", "preview", "nightly", "development"]
+    },
+    "lifecycle": { "$ref": "#/$defs/lifecycle" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "updateChannel": { "not": { "const": "development" } } },
+        "required": ["updateChannel"]
+      },
+      "then": {
+        "properties": {
+          "signature": { "$ref": "#/$defs/ed25519Signature" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "maxLength": 64
+    },
+    "protocolRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minInclusive", "maxExclusive"],
+      "properties": {
+        "minInclusive": { "$ref": "#/$defs/semver" },
+        "maxExclusive": { "$ref": "#/$defs/semver" }
+      }
+    },
+    "bundleRelativePath": {
+      "type": "string",
+      "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$))[A-Za-z0-9._/-]+$",
+      "maxLength": 260
+    },
+    "bundleRelativeJsonPath": {
+      "allOf": [
+        { "$ref": "#/$defs/bundleRelativePath" },
+        { "pattern": "\\.json$" }
+      ]
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "arguments", "adapter"],
+      "properties": {
+        "command": { "$ref": "#/$defs/bundleRelativePath" },
+        "arguments": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 256 },
+          "maxItems": 16
+        },
+        "adapter": { "$ref": "#/$defs/bundleRelativeJsonPath" }
+      }
+    },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "trust"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]+$",
+          "maxLength": 128
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "trust": { "enum": ["first-party", "third-party"] },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "ed25519Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "value"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{86}==$"
+        }
+      }
+    },
+    "unsignedDevelopmentSignature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "value"],
+      "properties": {
+        "algorithm": { "const": "none" },
+        "keyId": { "type": "null" },
+        "value": { "type": "null" }
+      }
+    },
+    "signature": {
+      "oneOf": [
+        { "$ref": "#/$defs/ed25519Signature" },
+        { "$ref": "#/$defs/unsignedDevelopmentSignature" }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filesystem", "network", "process", "devices", "secrets", "hostCapabilities"],
+      "properties": {
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["readOnlyRoots", "readWriteRoots"],
+          "properties": {
+            "readOnlyRoots": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/guestAbsolutePath" },
+              "uniqueItems": true,
+              "maxItems": 32
+            },
+            "readWriteRoots": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/guestAbsolutePath" },
+              "uniqueItems": true,
+              "maxItems": 16
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outbound", "listen"],
+          "properties": {
+            "outbound": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/networkEndpoint" },
+              "uniqueItems": true,
+              "maxItems": 32
+            },
+            "listen": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/listenEndpoint" },
+              "uniqueItems": true,
+              "maxItems": 8
+            }
+          }
+        },
+        "process": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spawn"],
+          "properties": {
+            "spawn": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._+-]{1,64}$"
+              },
+              "uniqueItems": true,
+              "maxItems": 32
+            }
+          }
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "enum": ["wayland-virtual-display", "virtual-input", "virtual-audio"]
+          },
+          "uniqueItems": true
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]{1,95}$"
+          },
+          "uniqueItems": true,
+          "maxItems": 16
+        },
+        "hostCapabilities": {
+          "type": "array",
+          "items": {
+            "enum": ["guest-socket:control", "guest-socket:computer-use-v1"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "guestAbsolutePath": {
+      "type": "string",
+      "pattern": "^/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$",
+      "maxLength": 4096
+    },
+    "networkEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "ports", "tls"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$",
+          "maxLength": 253
+        },
+        "ports": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "tls": { "type": "boolean" }
+      }
+    },
+    "listenEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "address"],
+      "properties": {
+        "family": { "const": "unix" },
+        "address": { "$ref": "#/$defs/guestAbsolutePath" }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "restartPolicy", "shutdownTimeoutMs", "healthCheck"],
+      "properties": {
+        "scope": { "const": "integration" },
+        "restartPolicy": { "enum": ["never", "on-failure", "always"] },
+        "shutdownTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 30000
+        },
+        "healthCheck": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "intervalMs", "timeoutMs", "failureThreshold"],
+          "properties": {
+            "method": { "const": "lifecycle.health" },
+            "intervalMs": { "type": "integer", "minimum": 1000, "maximum": 300000 },
+            "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 },
+            "failureThreshold": { "type": "integer", "minimum": 1, "maximum": 10 }
+          }
+        }
+      }
+    }
+  }
+}

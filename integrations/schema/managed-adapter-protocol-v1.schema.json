@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.grok.desktop/integrations/managed-adapter-protocol-v1.schema.json",
+  "title": "Grok Desktop managed adapter lifecycle protocol v1",
+  "description": "Lifecycle envelopes share the adapter stream with messages validated independently by computer-use-v1.schema.json.",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "type", "id", "method", "params"],
+      "properties": {
+        "protocol": { "const": "grok.managed-adapter/v1" },
+        "type": { "const": "request" },
+        "id": { "$ref": "#/$defs/id" },
+        "method": { "enum": ["lifecycle.initialize", "lifecycle.health", "lifecycle.shutdown"] },
+        "params": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "method": { "const": "lifecycle.initialize" } } },
+          "then": { "properties": { "params": { "$ref": "#/$defs/initializeParams" } } }
+        },
+        {
+          "if": { "properties": { "method": { "const": "lifecycle.health" } } },
+          "then": { "properties": { "params": { "type": "object", "maxProperties": 0 } } }
+        },
+        {
+          "if": { "properties": { "method": { "const": "lifecycle.shutdown" } } },
+          "then": { "properties": { "params": { "$ref": "#/$defs/shutdownParams" } } }
+        }
+      ]
+    },
+    "initializeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integrationId", "integrationVersion", "protocolVersion", "config", "grants", "workspaces"],
+      "properties": {
+        "integrationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "integrationVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "protocolVersion": { "const": "1.0.0" },
+        "config": { "type": "object" },
+        "grants": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "uniqueItems": true
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mountId", "path", "readOnly"],
+            "properties": {
+              "mountId": { "$ref": "#/$defs/id" },
+              "path": { "type": "string", "pattern": "^/", "maxLength": 4096 },
+              "readOnly": { "const": true }
+            }
+          },
+          "maxItems": 32
+        }
+      }
+    },
+    "shutdownParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": { "enum": ["user", "update", "uninstall", "guest-shutdown", "health-failure"] }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "type", "id", "ok"],
+      "properties": {
+        "protocol": { "const": "grok.managed-adapter/v1" },
+        "type": { "const": "response" },
+        "id": { "$ref": "#/$defs/id" },
+        "ok": { "type": "boolean" },
+        "result": { "type": "object" },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": ["invalid-request", "permission-denied", "unsupported-protocol", "not-ready", "internal"]
+            },
+            "message": { "type": "string", "maxLength": 2048 }
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": { "ok": { "const": true } },
+          "required": ["result"],
+          "not": { "required": ["error"] }
+        },
+        {
+          "properties": { "ok": { "const": false } },
+          "required": ["error"],
+          "not": { "required": ["result"] }
+        }
+      ]
+    }
+  }
+}
