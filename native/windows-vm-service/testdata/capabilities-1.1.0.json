@@ -1,0 +1,1 @@
+{"contractVersion":"1.1.0","backend":"hcs-virtual-machine-platform","simulated":false,"available":true,"hcsSchema":"2.1","operations":["get_capabilities","ensure_image","create_vm","start_vm","stop_vm","delete_vm","attach_workspace"],"workspaceMode":"read-only-plan9","socketPurposes":[]}
