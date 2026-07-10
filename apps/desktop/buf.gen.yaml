@@ -1,0 +1,15 @@
+version: v2
+inputs:
+  - directory: ../../proto
+plugins:
+  - local: protoc-gen-ts_proto
+    out: electron/generated
+    strategy: all
+    opt:
+      - esModuleInterop=true
+      - forceLong=bigint
+      - useJsType=bigint
+      - oneof=unions-value
+      - outputJsonMethods=false
+      - useExactTypes=false
+      - env=node
