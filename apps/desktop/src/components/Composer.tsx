@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUp,
   AtSign,
@@ -385,6 +386,41 @@ export function Composer() {
   );
 }
 
+/**
+ * The model menu is portaled to <body> with fixed coordinates because the
+ * composer lives inside the scrolling <main> region: a CSS-anchored drop-up
+ * gets clipped by that ancestor's overflow when the composer sits near the
+ * top of the view (e.g. Home). The placement flips below the trigger when
+ * there is not enough room above it.
+ */
+const MODEL_MENU_TRIGGER_GAP = 8;
+const MODEL_MENU_VIEWPORT_MARGIN = 12;
+const MODEL_MENU_MAX_HEIGHT = 420;
+const MODEL_MENU_MIN_HEIGHT = 160;
+
+type ModelMenuPlacement = {
+  top?: number;
+  bottom?: number;
+  right: number;
+  maxHeight: number;
+};
+
+function modelMenuPlacement(trigger: HTMLElement): ModelMenuPlacement {
+  const rect = trigger.getBoundingClientRect();
+  const spaceAbove = rect.top - MODEL_MENU_TRIGGER_GAP - MODEL_MENU_VIEWPORT_MARGIN;
+  const spaceBelow = window.innerHeight - rect.bottom - MODEL_MENU_TRIGGER_GAP - MODEL_MENU_VIEWPORT_MARGIN;
+  const openUpward = spaceAbove >= MODEL_MENU_MAX_HEIGHT || spaceAbove >= spaceBelow;
+  const right = Math.max(window.innerWidth - rect.right, MODEL_MENU_VIEWPORT_MARGIN);
+  const available = Math.max(openUpward ? spaceAbove : spaceBelow, MODEL_MENU_MIN_HEIGHT);
+  return {
+    ...(openUpward
+      ? { bottom: window.innerHeight - rect.top + MODEL_MENU_TRIGGER_GAP }
+      : { top: rect.bottom + MODEL_MENU_TRIGGER_GAP }),
+    right,
+    maxHeight: Math.min(available, MODEL_MENU_MAX_HEIGHT),
+  };
+}
+
 function ComposerModelMenu({
   catalog,
   status,
@@ -402,6 +438,7 @@ function ComposerModelMenu({
   disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<ModelMenuPlacement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -416,10 +453,28 @@ function ComposerModelMenu({
     queueMicrotask(() => triggerRef.current?.focus());
   }, []);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    const reposition = () => {
+      if (triggerRef.current) setPlacement(modelMenuPlacement(triggerRef.current));
+    };
+    reposition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -435,9 +490,10 @@ function ComposerModelMenu({
     };
   }, [closeAndRestoreFocus, open]);
 
+  const positioned = placement !== null;
   useEffect(() => {
-    if (open) firstItemRef.current?.focus();
-  }, [open]);
+    if (open && positioned) firstItemRef.current?.focus();
+  }, [open, positioned]);
 
   return (
     <div className="relative" ref={rootRef}>
@@ -460,11 +516,17 @@ function ComposerModelMenu({
         <span className="truncate">{visibleLabel}</span>
         <ChevronDown className="shrink-0" size={14} aria-hidden="true" />
       </button>
-      {open && (
+      {open && placement && createPortal(
         <div
           id="composer-model-menu"
           ref={menuRef}
-          className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-xl border border-input bg-popover shadow-overlay"
+          className="fixed z-50 flex w-[min(360px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-input bg-popover shadow-overlay"
+          style={{
+            top: placement.top,
+            bottom: placement.bottom,
+            right: placement.right,
+            maxHeight: placement.maxHeight,
+          }}
           role="menu"
           tabIndex={-1}
           aria-label="Chat model"
@@ -484,12 +546,12 @@ function ComposerModelMenu({
             items[next]?.focus();
           }}
         >
-          <div className="border-b border-border px-3 py-2">
+          <div className="shrink-0 border-b border-border px-3 py-2">
             <p className="m-0 text-body-sm font-semibold text-foreground">Model for this conversation</p>
             <p className="m-0 mt-0.5 text-label text-muted-foreground">A temporary choice clears after the conversation starts.</p>
           </div>
           {catalog && (
-            <div className="max-h-64 overflow-y-auto p-1.5">
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
               <ModelChoice
                 ref={firstItemRef}
                 label={defaultModelId ? `Default · ${modelDisplayLabel(defaultModelId)}` : "Default"}
@@ -539,7 +601,8 @@ function ComposerModelMenu({
               </Button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

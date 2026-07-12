@@ -59,12 +59,31 @@ export function rendererPathForDesktopNavigationRoute(route: DesktopNavigationRo
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const { snapshot } = useDesktopSnapshot();
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => setSearchOpen(false), [location.pathname]);
+  useEffect(() => {
+    const bridge = window.grokDesktop;
+    if (!bridge) return;
+    let active = true;
+    void (async () => {
+      try {
+        const response = await bridge.request({ kind: "runtime.info" });
+        if (active && response?.kind === "runtime.info" && typeof response.version === "string") {
+          setAppVersion(response.version);
+        }
+      } catch {
+        // The version label is cosmetic; stay silent when the bridge cannot answer.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => window.grokDesktop?.onNavigationRoute((route) => {
     navigate(rendererPathForDesktopNavigationRoute(route));
   }), [navigate]);
@@ -206,6 +225,18 @@ export function AppShell() {
         </div>
 
         <div className="mt-auto flex flex-col gap-1.5 border-t border-sidebar-border pt-2 max-[680px]:m-0 max-[680px]:border-t-0 max-[680px]:p-0">
+          {appVersion && (
+            <span
+              className={cn(
+                "px-2.5 font-mono text-label text-subtle-foreground",
+                railHidden(collapsed),
+                "max-[680px]:hidden",
+              )}
+              title={`Grok Desktop ${appVersion}`}
+            >
+              v{appVersion}
+            </span>
+          )}
           <NavLink to="/settings" aria-label="Settings" className={({ isActive }) => navItemClass(isActive, collapsed)}>
             <Settings size={18} aria-hidden="true" />
             <span className={cn(railHidden(collapsed), "max-[680px]:hidden")}>Settings</span>

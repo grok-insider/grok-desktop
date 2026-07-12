@@ -170,6 +170,21 @@ function createWindow(applicationDocument: string): BrowserWindow {
   const webContentsId = window.webContents.id;
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  if (!app.isPackaged) {
+    // With no application menu there are no menu accelerators; keep the two
+    // development shortcuts the default menu used to provide.
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown") return;
+      const key = input.key.toLowerCase();
+      if (input.key === "F12" || (input.control && input.shift && key === "i")) {
+        event.preventDefault();
+        window.webContents.toggleDevTools();
+      } else if (input.key === "F5" || (input.control && !input.shift && key === "r")) {
+        event.preventDefault();
+        window.webContents.reload();
+      }
+    });
+  }
   window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
       deepLinkDelivery.markRendererUnavailable(window.webContents.id);
@@ -918,6 +933,10 @@ app.on("open-url", (event, url) => {
 });
 
 if (primaryInstance) app.whenReady().then(async () => {
+  // The renderer owns all chrome; the default File/Edit/View menu bar is
+  // dead weight on Windows/Linux. macOS keeps the default menu because the
+  // system menu bar carries required app/window commands and edit shortcuts.
+  if (process.platform !== "darwin") Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionCheckHandler(() => denyRendererPermission());
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(denyRendererPermission()));
   const development = !app.isPackaged;

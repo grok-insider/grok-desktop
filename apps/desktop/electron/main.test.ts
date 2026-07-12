@@ -97,7 +97,7 @@ const mocks = vi.hoisted(() => {
       BrowserWindow,
       dialog,
       ipcMain,
-      Menu: { buildFromTemplate: vi.fn(() => ({})) },
+      Menu: { buildFromTemplate: vi.fn(() => ({})), setApplicationMenu: vi.fn() },
       nativeImage: { createFromPath: vi.fn(() => ({ isEmpty: () => false })) },
       nativeTheme: { on: vi.fn(), shouldUseDarkColors: false },
       protocol: {

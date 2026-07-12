@@ -77,7 +77,10 @@ const mocks = vi.hoisted(() => {
     stop: vi.fn(() => Promise.resolve()),
     subscribe: vi.fn(() => vi.fn()),
   };
-  const Menu = { buildFromTemplate: vi.fn((template: unknown) => ({ template })) };
+  const Menu = {
+    buildFromTemplate: vi.fn((template: unknown) => ({ template })),
+    setApplicationMenu: vi.fn(),
+  };
   const nativeTheme = {
     on: vi.fn((name: string, listener: Listener) => register("theme", name, listener)),
     shouldUseDarkColors: false,
