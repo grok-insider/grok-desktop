@@ -384,6 +384,9 @@ export interface Request {
     | { $case: "getSupergrokEnrollmentStatus"; value: GetSuperGrokEnrollmentStatusRequest }
     | { $case: "cancelSupergrokEnrollment"; value: CancelSuperGrokEnrollmentRequest }
     | { $case: "disconnectSupergrok"; value: DisconnectSuperGrokRequest }
+    | //
+    /** Epoch 23: read-only aggregate of completed conversation-turn usage. */
+    { $case: "getUsageSummary"; value: GetUsageSummaryRequest }
     | undefined;
 }
 
@@ -421,7 +424,32 @@ export interface Response {
     | { $case: "grokBuildAuthStatus"; value: GrokBuildAuthStatus }
     | { $case: "managedIntegration"; value: ManagedIntegration }
     | { $case: "supergrokEnrollmentStatus"; value: SuperGrokEnrollmentStatus }
+    | //
+    /** Epoch 23: local completed-turn usage aggregate. */
+    { $case: "usageSummary"; value: UsageSummary }
     | undefined;
+}
+
+/** Epoch 23: bounded local usage for completed Chat turns only. */
+export interface GetUsageSummaryRequest {
+  /** workspace | project | thread */
+  scopeKind: string;
+  /** Required when scope_kind is project or thread. */
+  scopeId: string;
+  /** last_7_days | last_30_days | all_time */
+  window: string;
+}
+
+/** Official provider usage rolled up for one scope and window. */
+export interface UsageSummary {
+  inputTokens: bigint;
+  outputTokens: bigint;
+  costInUsdTicks: bigint;
+  turnCount: bigint;
+  scopeKind: string;
+  scopeId: string;
+  window: string;
+  asOfUnixMs: bigint;
 }
 
 /** Epoch 21: non-secret projection of daemon-owned SuperGrok OAuth enrollment. */
@@ -1580,6 +1608,9 @@ export const Request: MessageFns<Request> = {
       case "disconnectSupergrok":
         DisconnectSuperGrokRequest.encode(message.operation.value, writer.uint32(522).fork()).join();
         break;
+      case "getUsageSummary":
+        GetUsageSummaryRequest.encode(message.operation.value, writer.uint32(530).fork()).join();
+        break;
     }
     return writer;
   },
@@ -2119,6 +2150,17 @@ export const Request: MessageFns<Request> = {
           };
           continue;
         }
+        case 66: {
+          if (tag !== 530) {
+            break;
+          }
+
+          message.operation = {
+            $case: "getUsageSummary",
+            value: GetUsageSummaryRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2584,6 +2626,15 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "getUsageSummary": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "getUsageSummary",
+            value: GetUsageSummaryRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2691,6 +2742,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "supergrokEnrollmentStatus":
         SuperGrokEnrollmentStatus.encode(message.result.value, writer.uint32(266).fork()).join();
+        break;
+      case "usageSummary":
+        UsageSummary.encode(message.result.value, writer.uint32(274).fork()).join();
         break;
     }
     return writer;
@@ -2977,6 +3031,14 @@ export const Response: MessageFns<Response> = {
           };
           continue;
         }
+        case 34: {
+          if (tag !== 274) {
+            break;
+          }
+
+          message.result = { $case: "usageSummary", value: UsageSummary.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3217,7 +3279,245 @@ export const Response: MessageFns<Response> = {
         }
         break;
       }
+      case "usageSummary": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = { $case: "usageSummary", value: UsageSummary.fromPartial(object.result.value) };
+        }
+        break;
+      }
     }
+    return message;
+  },
+};
+
+function createBaseGetUsageSummaryRequest(): GetUsageSummaryRequest {
+  return { scopeKind: "", scopeId: "", window: "" };
+}
+
+export const GetUsageSummaryRequest: MessageFns<GetUsageSummaryRequest> = {
+  encode(message: GetUsageSummaryRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.scopeKind !== "") {
+      writer.uint32(10).string(message.scopeKind);
+    }
+    if (message.scopeId !== "") {
+      writer.uint32(18).string(message.scopeId);
+    }
+    if (message.window !== "") {
+      writer.uint32(26).string(message.window);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetUsageSummaryRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetUsageSummaryRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.scopeKind = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.scopeId = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.window = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetUsageSummaryRequest>): GetUsageSummaryRequest {
+    return GetUsageSummaryRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GetUsageSummaryRequest>): GetUsageSummaryRequest {
+    const message = createBaseGetUsageSummaryRequest();
+    message.scopeKind = object.scopeKind ?? "";
+    message.scopeId = object.scopeId ?? "";
+    message.window = object.window ?? "";
+    return message;
+  },
+};
+
+function createBaseUsageSummary(): UsageSummary {
+  return {
+    inputTokens: 0n,
+    outputTokens: 0n,
+    costInUsdTicks: 0n,
+    turnCount: 0n,
+    scopeKind: "",
+    scopeId: "",
+    window: "",
+    asOfUnixMs: 0n,
+  };
+}
+
+export const UsageSummary: MessageFns<UsageSummary> = {
+  encode(message: UsageSummary, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.inputTokens !== 0n) {
+      if (BigInt.asUintN(64, message.inputTokens) !== message.inputTokens) {
+        throw new globalThis.Error("value provided for field message.inputTokens of type uint64 too large");
+      }
+      writer.uint32(8).uint64(message.inputTokens);
+    }
+    if (message.outputTokens !== 0n) {
+      if (BigInt.asUintN(64, message.outputTokens) !== message.outputTokens) {
+        throw new globalThis.Error("value provided for field message.outputTokens of type uint64 too large");
+      }
+      writer.uint32(16).uint64(message.outputTokens);
+    }
+    if (message.costInUsdTicks !== 0n) {
+      if (BigInt.asUintN(64, message.costInUsdTicks) !== message.costInUsdTicks) {
+        throw new globalThis.Error("value provided for field message.costInUsdTicks of type uint64 too large");
+      }
+      writer.uint32(24).uint64(message.costInUsdTicks);
+    }
+    if (message.turnCount !== 0n) {
+      if (BigInt.asUintN(64, message.turnCount) !== message.turnCount) {
+        throw new globalThis.Error("value provided for field message.turnCount of type uint64 too large");
+      }
+      writer.uint32(32).uint64(message.turnCount);
+    }
+    if (message.scopeKind !== "") {
+      writer.uint32(42).string(message.scopeKind);
+    }
+    if (message.scopeId !== "") {
+      writer.uint32(50).string(message.scopeId);
+    }
+    if (message.window !== "") {
+      writer.uint32(58).string(message.window);
+    }
+    if (message.asOfUnixMs !== 0n) {
+      if (BigInt.asUintN(64, message.asOfUnixMs) !== message.asOfUnixMs) {
+        throw new globalThis.Error("value provided for field message.asOfUnixMs of type uint64 too large");
+      }
+      writer.uint32(64).uint64(message.asOfUnixMs);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): UsageSummary {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseUsageSummary();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.inputTokens = reader.uint64() as bigint;
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.outputTokens = reader.uint64() as bigint;
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.costInUsdTicks = reader.uint64() as bigint;
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.turnCount = reader.uint64() as bigint;
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.scopeKind = reader.string();
+          continue;
+        }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.scopeId = reader.string();
+          continue;
+        }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.window = reader.string();
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.asOfUnixMs = reader.uint64() as bigint;
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<UsageSummary>): UsageSummary {
+    return UsageSummary.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<UsageSummary>): UsageSummary {
+    const message = createBaseUsageSummary();
+    message.inputTokens = (object.inputTokens !== undefined && object.inputTokens !== null)
+      ? BigInt(object.inputTokens)
+      : 0n;
+    message.outputTokens = (object.outputTokens !== undefined && object.outputTokens !== null)
+      ? BigInt(object.outputTokens)
+      : 0n;
+    message.costInUsdTicks = (object.costInUsdTicks !== undefined && object.costInUsdTicks !== null)
+      ? BigInt(object.costInUsdTicks)
+      : 0n;
+    message.turnCount = (object.turnCount !== undefined && object.turnCount !== null) ? BigInt(object.turnCount) : 0n;
+    message.scopeKind = object.scopeKind ?? "";
+    message.scopeId = object.scopeId ?? "";
+    message.window = object.window ?? "";
+    message.asOfUnixMs = (object.asOfUnixMs !== undefined && object.asOfUnixMs !== null)
+      ? BigInt(object.asOfUnixMs)
+      : 0n;
     return message;
   },
 };

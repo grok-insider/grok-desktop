@@ -15,12 +15,13 @@ use grok_application::{
     ChatModelService, ConversationForkCommandResolution, ConversationForkSnapshot,
     ConversationService, ConversationTurnSnapshot, CreateAutomation, CreateProject, CreateThread,
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
-    DesktopPreferencesService, EditAndBranchConversationTurn, GrokBuildAuthService,
+    DesktopPreferencesService, EditAndBranchConversationTurn, GetUsageSummary, GrokBuildAuthService,
     GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH, OAuthCancellation,
     RegenerateConversationTurn, RetryConversationTurn, RunService, SelectChatModel,
     StartConversationTurn, StartedConversationFork, StartedConversationTurn,
     SuperGrokEnrollmentService, SuperGrokEnrollmentStatus, UpdateAutomation,
-    UpdateDesktopPreferences, UpdateProject, UpdateThread, WorkspaceService,
+    UpdateDesktopPreferences, UpdateProject, UpdateThread, UsageScope, UsageWindow,
+    WorkspaceService,
 };
 use grok_domain::{
     ApprovalId, ArtifactId, AutomationId, ConversationTurnId, ConversationTurnState, MessageId,
@@ -37,7 +38,8 @@ use grok_protocol::{
     desktop_preferences_to_wire, event_to_wire, import_artifact_from_wire,
     imported_artifact_to_wire, message_to_wire, missed_run_policy_from_wire,
     open_artifact_from_wire, overlap_policy_from_wire, project_to_wire, remove_artifact_from_wire,
-    removed_artifact_to_wire, thread_to_wire, v1, validate_envelope, workspace_search_hit_to_wire,
+    removed_artifact_to_wire, thread_to_wire, usage_summary_to_wire, v1, validate_envelope,
+    workspace_search_hit_to_wire,
 };
 use prost::Message as _;
 use thiserror::Error;
@@ -959,6 +961,9 @@ impl Daemon {
             Some(v1::request::Operation::GetChatModelCatalog(_)) => {
                 self.get_chat_model_catalog().await
             }
+            Some(v1::request::Operation::GetUsageSummary(request)) => {
+                self.get_usage_summary(request).await
+            }
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
             }
@@ -1445,6 +1450,17 @@ impl Daemon {
         Ok(v1::response::Result::ChatModelCatalog(
             chat_model_catalog_to_wire(catalog),
         ))
+    }
+
+    async fn get_usage_summary(
+        &self,
+        request: v1::GetUsageSummaryRequest,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let input = parse_usage_summary_request(request)?;
+        let summary = self.conversation()?.usage_summary(input).await?;
+        Ok(v1::response::Result::UsageSummary(usage_summary_to_wire(
+            summary,
+        )))
     }
 
     async fn select_chat_model(
@@ -2666,6 +2682,39 @@ fn managed_integration_to_wire(
         revision: record.revision,
         signature_verified,
     }
+}
+
+fn parse_usage_summary_request(
+    request: v1::GetUsageSummaryRequest,
+) -> Result<GetUsageSummary, ApplicationError> {
+    let window = match request.window.as_str() {
+        "last_7_days" => UsageWindow::Last7Days,
+        "last_30_days" => UsageWindow::Last30Days,
+        "all_time" => UsageWindow::AllTime,
+        _ => {
+            return Err(ApplicationError::InvalidInput(
+                "usage summary window is invalid".into(),
+            ));
+        }
+    };
+    let scope = match request.scope_kind.as_str() {
+        "workspace" => {
+            if !request.scope_id.is_empty() {
+                return Err(ApplicationError::InvalidInput(
+                    "workspace usage summary must not include a scope id".into(),
+                ));
+            }
+            UsageScope::Workspace
+        }
+        "project" => UsageScope::Project(ProjectId::new(request.scope_id)?),
+        "thread" => UsageScope::Thread(ThreadId::new(request.scope_id)?),
+        _ => {
+            return Err(ApplicationError::InvalidInput(
+                "usage summary scope is invalid".into(),
+            ));
+        }
+    };
+    Ok(GetUsageSummary { scope, window })
 }
 
 fn grok_build_auth_status_to_wire(

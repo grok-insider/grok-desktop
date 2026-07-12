@@ -77,6 +77,8 @@ message Request {
     GetSuperGrokEnrollmentStatusRequest get_supergrok_enrollment_status = 63;
     CancelSuperGrokEnrollmentRequest cancel_supergrok_enrollment = 64;
     DisconnectSuperGrokRequest disconnect_supergrok = 65;
+    // Epoch 23: read-only aggregate of completed conversation-turn usage.
+    GetUsageSummaryRequest get_usage_summary = 66;
   }
 }
 
@@ -117,7 +119,31 @@ message Response {
     GrokBuildAuthStatus grok_build_auth_status = 31;
     ManagedIntegration managed_integration = 32;
     SuperGrokEnrollmentStatus supergrok_enrollment_status = 33;
+    // Epoch 23: local completed-turn usage aggregate.
+    UsageSummary usage_summary = 34;
   }
+}
+
+// Epoch 23: bounded local usage for completed Chat turns only.
+message GetUsageSummaryRequest {
+  // workspace | project | thread
+  string scope_kind = 1;
+  // Required when scope_kind is project or thread.
+  string scope_id = 2;
+  // last_7_days | last_30_days | all_time
+  string window = 3;
+}
+
+// Official provider usage rolled up for one scope and window.
+message UsageSummary {
+  uint64 input_tokens = 1;
+  uint64 output_tokens = 2;
+  uint64 cost_in_usd_ticks = 3;
+  uint64 turn_count = 4;
+  string scope_kind = 5;
+  string scope_id = 6;
+  string window = 7;
+  uint64 as_of_unix_ms = 8;
 }
 
 // Epoch 21: non-secret projection of daemon-owned SuperGrok OAuth enrollment.

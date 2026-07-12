@@ -67,6 +67,7 @@ when it defines an IPC or schema epoch.
 | [0026](0026-daemon-owned-supergrok-api-chat-rail.md) | Daemon-owned SuperGrok API Chat rail |
 | [0027](0027-durable-signed-managed-integration-lifecycle.md) | Durable signed managed-integration lifecycle |
 | [0028](0028-durable-conversation-model-binding.md) | Durable per-conversation model binding |
+| [0029](0029-local-usage-summary-ipc.md) | Local usage summary IPC |
 
 ## Platform ADRs
 

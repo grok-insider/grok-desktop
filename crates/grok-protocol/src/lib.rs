@@ -5,14 +5,12 @@ mod validation;
 
 /// Current compatibility epoch accepted by the daemon.
 ///
-/// Epoch twenty-one adds daemon-owned `SuperGrok` device OAuth enrollment while
-/// retaining epoch twenty's withdrawal of automatic scheduler execution and managed-integration
-/// mutations until their atomic execution and durable trust boundaries are
-/// qualified. Definitions and persisted integration records remain readable.
-/// The Protobuf package remains the canonical v1 schema family, while the
-/// envelope version prevents either side from silently accepting a different
-/// operation set.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// Epoch twenty-three adds read-only local usage summary aggregates for completed
+/// Chat turns while retaining prior SuperGrok enrollment and withdrawn scheduler
+/// or managed-integration mutation semantics. The Protobuf package remains the
+/// canonical v1 schema family; the envelope version prevents either side from
+/// silently accepting a different operation set.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// Generated messages for the canonical daemon schema family.
 #[allow(clippy::all, clippy::pedantic, missing_docs)]
@@ -32,7 +30,8 @@ pub use convert::{
     desktop_preferences_to_wire, event_to_wire, import_artifact_from_wire,
     imported_artifact_to_wire, message_to_wire, missed_run_policy_from_wire,
     open_artifact_from_wire, overlap_policy_from_wire, project_to_wire, remove_artifact_from_wire,
-    removed_artifact_to_wire, run_to_wire, thread_to_wire, workspace_search_hit_to_wire,
+    removed_artifact_to_wire, run_to_wire, thread_to_wire, usage_summary_to_wire,
+    workspace_search_hit_to_wire,
 };
 pub use validation::{
     ArtifactRequestError, EnvelopeError, ValidatedMetadata, validate_envelope,

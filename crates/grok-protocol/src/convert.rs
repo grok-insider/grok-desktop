@@ -3,8 +3,8 @@ use grok_application::{
     CapabilityFacts, ChatModelCatalog, ChatModelCatalogEntry, ConversationForkDelivery,
     ConversationForkDeliveryState, ConversationForkMetadata, ConversationForkSnapshot,
     ConversationInheritedAssistantOutcome, ConversationTurnEventPage, ConversationTurnSnapshot,
-    ImportArtifact, OpenArtifact, RemoveArtifact, SelectedSourcePath, WorkspaceSearchHit,
-    WorkspaceSearchKind,
+    ImportArtifact, OpenArtifact, RemoveArtifact, SelectedSourcePath, UsageScope, UsageSummary,
+    UsageWindow, WorkspaceSearchHit, WorkspaceSearchKind,
 };
 use grok_domain::{
     Approval, ApprovalDecision, ApprovalRisk, ApprovalScope, ApprovalStatus, Artifact,
@@ -153,6 +153,31 @@ fn chat_model_descriptor_to_wire(value: ChatModelCatalogEntry) -> v1::ChatModelD
         input_modalities: value.input_modalities,
         output_modalities: value.output_modalities,
         text_conversation_ready: value.text_conversation_ready,
+    }
+}
+
+/// Converts a local completed-turn usage aggregate to its wire form.
+#[must_use]
+pub fn usage_summary_to_wire(value: UsageSummary) -> v1::UsageSummary {
+    let (scope_kind, scope_id) = match value.scope {
+        UsageScope::Workspace => ("workspace", String::new()),
+        UsageScope::Project(project_id) => ("project", project_id.as_str().to_owned()),
+        UsageScope::Thread(thread_id) => ("thread", thread_id.as_str().to_owned()),
+    };
+    let window = match value.window {
+        UsageWindow::Last7Days => "last_7_days",
+        UsageWindow::Last30Days => "last_30_days",
+        UsageWindow::AllTime => "all_time",
+    };
+    v1::UsageSummary {
+        input_tokens: value.input_tokens,
+        output_tokens: value.output_tokens,
+        cost_in_usd_ticks: value.cost_in_usd_ticks,
+        turn_count: value.turn_count,
+        scope_kind: scope_kind.into(),
+        scope_id,
+        window: window.into(),
+        as_of_unix_ms: value.as_of,
     }
 }
 
