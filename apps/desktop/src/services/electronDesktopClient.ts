@@ -1324,7 +1324,7 @@ export class ElectronDesktopClient implements DesktopClient {
         kind: "daemon.startConversationTurn",
         threadId: thread.id,
         content,
-        modelId,
+        ...(modelId === undefined ? {} : { modelId }),
         idempotencyKey: mutation.idempotencyKey,
       });
     } catch (error) {

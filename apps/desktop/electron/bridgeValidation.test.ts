@@ -257,6 +257,31 @@ describe("parseBridgeRequest", () => {
       content: "Ask official Grok",
       idempotencyKey: "turn-command-1",
     });
+    expect(parseBridgeRequest({
+      kind: "daemon.startConversationTurn",
+      threadId: "thread-1",
+      content: "Ask official Grok",
+      modelId: "grok-4.3",
+      idempotencyKey: "turn-command-model-1",
+    })).toEqual({
+      kind: "daemon.startConversationTurn",
+      threadId: "thread-1",
+      content: "Ask official Grok",
+      modelId: "grok-4.3",
+      idempotencyKey: "turn-command-model-1",
+    });
+    expect(parseBridgeRequest({
+      kind: "daemon.startConversationTurn",
+      threadId: "thread-1",
+      content: "Ask official Grok",
+      modelId: undefined,
+      idempotencyKey: "turn-command-model-2",
+    })).toEqual({
+      kind: "daemon.startConversationTurn",
+      threadId: "thread-1",
+      content: "Ask official Grok",
+      idempotencyKey: "turn-command-model-2",
+    });
     expect(() => parseBridgeRequest({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
@@ -265,6 +290,20 @@ describe("parseBridgeRequest", () => {
       role: "assistant",
       model: "untrusted-model",
     })).toThrow("conversation start request contains unsupported fields");
+    expect(() => parseBridgeRequest({
+      kind: "daemon.startConversationTurn",
+      threadId: "thread-1",
+      content: "Ask official Grok",
+      modelId: "",
+      idempotencyKey: "turn-command-bad-model-1",
+    })).toThrow("chat model identifier is invalid");
+    expect(() => parseBridgeRequest({
+      kind: "daemon.startConversationTurn",
+      threadId: "thread-1",
+      content: "Ask official Grok",
+      modelId: "grok\nunsafe",
+      idempotencyKey: "turn-command-bad-model-2",
+    })).toThrow("chat model identifier is invalid");
     expect(() => parseBridgeRequest({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",

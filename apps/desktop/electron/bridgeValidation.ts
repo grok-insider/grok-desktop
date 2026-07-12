@@ -220,11 +220,12 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
     };
   }
   if (kind === "daemon.startConversationTurn") {
-    exactKeys(input, ["kind", "threadId", "content", "idempotencyKey"], "conversation start request");
+    exactKeys(input, ["kind", "threadId", "content", "modelId", "idempotencyKey"], "conversation start request");
     return {
       kind,
       threadId: identifier(input.threadId, "thread id"),
       content: string(input.content, "message content", 1024 * 1024),
+      ...(input.modelId === undefined ? {} : { modelId: modelIdentifier(input.modelId) }),
       idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
     };
   }
