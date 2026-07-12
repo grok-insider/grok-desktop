@@ -105,6 +105,7 @@ type ResultValueMap = {
   grokBuildAuthStatus: Extract<ResponseResult, { $case: "grokBuildAuthStatus" }>["value"];
   managedIntegration: Extract<ResponseResult, { $case: "managedIntegration" }>["value"];
   supergrokEnrollmentStatus: Extract<ResponseResult, { $case: "supergrokEnrollmentStatus" }>["value"];
+  usageSummary: Extract<ResponseResult, { $case: "usageSummary" }>["value"];
 };
 
 type RequestOperation = NonNullable<Request["operation"]>;
@@ -997,7 +998,7 @@ export class DaemonProtocolClient {
     scopeKind: string,
     scopeId: string,
     window: string,
-  ): Promise<import("../generated/daemon/v1/daemon.js").UsageSummary> {
+  ): Promise<ResultValueMap["usageSummary"]> {
     return expectResult(
       await this.rpc.request(
         {
