@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type { StartRunInput } from "../services/desktopClient";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
+import { modelDisplayLabel, modelMenuTriggerLabel } from "../lib/modelLabels";
 import { IconButton } from "./ui";
 import { VoiceOverlay } from "./VoiceOverlay";
 import { Button } from "@/components/ui/button";
@@ -187,7 +188,10 @@ function ComposerModelMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const defaultModelId = catalog?.preference.selectedModelId;
-  const visibleLabel = overrideModelId ?? (defaultModelId ? `Default · ${defaultModelId}` : "Choose model");
+  const visibleLabel = modelMenuTriggerLabel({
+    overrideModelId,
+    defaultModelId,
+  });
   const closeAndRestoreFocus = useCallback(() => {
     setOpen(false);
     queueMicrotask(() => triggerRef.current?.focus());
@@ -221,13 +225,17 @@ function ComposerModelMenu({
       <button
         ref={triggerRef}
         type="button"
-        className="inline-flex h-[30px] max-w-52 items-center gap-1.5 rounded-md border border-transparent px-2 font-mono text-label font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted aria-expanded:border-input aria-expanded:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-[30px] max-w-56 items-center gap-1.5 rounded-md border border-transparent px-2 text-label font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted aria-expanded:border-input aria-expanded:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         aria-label={`Choose model, ${visibleLabel}`}
         aria-haspopup="menu"
         aria-controls="composer-model-menu"
         aria-expanded={open}
         disabled={disabled}
-        title={disabled ? "Model overrides apply to Chat conversations only" : undefined}
+        title={disabled
+          ? "Model overrides apply to Chat conversations only"
+          : overrideModelId ?? defaultModelId
+            ? `Canonical id: ${overrideModelId ?? defaultModelId}`
+            : undefined}
         onClick={() => setOpen((value) => !value)}
       >
         <span className="truncate">{visibleLabel}</span>
@@ -265,7 +273,8 @@ function ComposerModelMenu({
             <div className="max-h-64 overflow-y-auto p-1.5">
               <ModelChoice
                 ref={firstItemRef}
-                label={`Default · ${defaultModelId}`}
+                label={defaultModelId ? `Default · ${modelDisplayLabel(defaultModelId)}` : "Default"}
+                secondary={defaultModelId}
                 selected={!overrideModelId}
                 onChoose={() => {
                   onOverrideChange(undefined);
@@ -275,7 +284,8 @@ function ComposerModelMenu({
               {selectableModels.map((model) => (
                 <div className="group flex items-center gap-1 rounded-md hover:bg-muted" key={model.id} role="none">
                   <ModelChoice
-                    label={model.id}
+                    label={modelDisplayLabel(model.id)}
+                    secondary={model.id}
                     selected={overrideModelId === model.id}
                     disabled={status !== "ready"}
                     onChoose={() => {
@@ -287,7 +297,7 @@ function ComposerModelMenu({
                     <button
                       type="button"
                       role="menuitem"
-                      aria-label={`Set ${model.id} as default`}
+                      aria-label={`Set ${modelDisplayLabel(model.id)} as default`}
                       className="mr-1 shrink-0 rounded-md px-2 py-1.5 text-label font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
                       disabled={savingModelId !== null || status !== "ready"}
                       onClick={() => void setDefaultModel(model.id)}
@@ -322,10 +332,11 @@ function matchesMenuNavigationKey(key: string): key is "ArrowDown" | "ArrowUp" |
 
 const ModelChoice = forwardRef<HTMLButtonElement, {
   label: string;
+  secondary?: string;
   selected: boolean;
   onChoose(): void;
   disabled?: boolean;
-}>(function ModelChoice({ label, selected, onChoose, disabled = false }, ref) {
+}>(function ModelChoice({ label, secondary, selected, onChoose, disabled = false }, ref) {
   return (
     <button
       ref={ref}
@@ -333,13 +344,19 @@ const ModelChoice = forwardRef<HTMLButtonElement, {
       role="menuitemradio"
       aria-checked={selected}
       disabled={disabled}
-      className="flex min-h-[34px] min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+      title={secondary}
+      className="flex min-h-[34px] min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
       onClick={onChoose}
     >
       <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
         {selected && <Check size={14} />}
       </span>
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{label}</span>
+        {secondary ? (
+          <span className="mt-0.5 block truncate font-mono text-label text-subtle-foreground">{secondary}</span>
+        ) : null}
+      </span>
     </button>
   );
 });

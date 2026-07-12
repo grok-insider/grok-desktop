@@ -30,21 +30,22 @@ function renderComposer(client: MockDesktopClient = new CapturingClient()) {
 
 async function chooseModel(modelId: string) {
   fireEvent.click(await screen.findByRole("button", { name: /Choose model/ }));
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: modelId }));
+  // Accessible name includes product label and mono canonical id.
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: new RegExp(modelId) }));
 }
 
 describe("Composer model selection", () => {
   it("applies a temporary model to one new conversation and clears it after success", async () => {
     const client = renderComposer() as CapturingClient;
     await chooseModel("grok-4.3-fast");
-    expect(screen.getByRole("button", { name: "Choose model, grok-4.3-fast" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose model, Grok 4.3 Fast" })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Message Grok"), { target: { value: "Explain this plan" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(client.starts).toHaveLength(1));
     expect(client.starts[0]).toMatchObject({ modelId: "grok-4.3-fast", mode: "chat" });
-    await screen.findByRole("button", { name: "Choose model, Default · grok-4.3" });
+    await screen.findByRole("button", { name: "Choose model, Default · Grok 4.3" });
   });
 
   it("retains the temporary choice when provider start fails", async () => {
@@ -55,7 +56,7 @@ describe("Composer model selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Provider start failed.");
-    expect(screen.getByRole("button", { name: "Choose model, grok-4.3-fast" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose model, Grok 4.3 Fast" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message Grok")).toHaveValue("Keep my choice");
   });
 
@@ -63,10 +64,10 @@ describe("Composer model selection", () => {
     const client = renderComposer();
     const select = vi.spyOn(client, "selectChatModel");
     fireEvent.click(await screen.findByRole("button", { name: /Choose model/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Set grok-4.3-fast as default" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Set Grok 4.3 Fast as default" }));
 
     await waitFor(() => expect(select).toHaveBeenCalledWith({ expectedRevision: 0, modelId: "grok-4.3-fast" }));
-    await screen.findByRole("button", { name: "Choose model, Default · grok-4.3-fast" });
+    await screen.findByRole("button", { name: "Choose model, Default · Grok 4.3 Fast" });
   });
 
   it("shows bounded discovery failure and retries without disabling the composer", async () => {
@@ -83,7 +84,7 @@ describe("Composer model selection", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("model catalog is unavailable");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    await screen.findByRole("menuitemradio", { name: "Default · grok-4.3" });
+    await screen.findByRole("menuitemradio", { name: /Default · Grok 4\.3/ });
     expect(client.calls).toBe(2);
   });
 

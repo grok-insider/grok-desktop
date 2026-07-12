@@ -172,7 +172,7 @@ describe("SettingsView", () => {
     const modelSelect = await screen.findByRole("combobox", { name: "Default chat model" });
     await waitFor(() => expect(modelSelect).toBeEnabled());
     expect(modelSelect).toHaveValue("grok-4.3");
-    expect(within(modelSelect).getByRole("option", { name: "grok-4.3 — product default" })).toBeInTheDocument();
+    expect(within(modelSelect).getByRole("option", { name: /Grok 4\.3.*product default.*grok-4\.3/ })).toBeInTheDocument();
 
     fireEvent.change(modelSelect, { target: { value: "grok-4.3-fast" } });
 

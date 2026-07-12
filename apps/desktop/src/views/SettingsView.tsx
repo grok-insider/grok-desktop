@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { modelDisplayLabel } from "../lib/modelLabels";
 import { formatTokenCount, formatUsageLine } from "../lib/usageFormat";
 import { Button, PageHeader, Toggle } from "../components/ui";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
@@ -385,12 +386,15 @@ function ModelSettings() {
               {!catalog && <option value="">Unavailable</option>}
               {catalog && !selectedInCatalog && (
                 <option value={catalog.preference.selectedModelId} disabled>
-                  {catalog.preference.selectedModelId} — unavailable
+                  {modelDisplayLabel(catalog.preference.selectedModelId)} ({catalog.preference.selectedModelId}) — unavailable
                 </option>
               )}
               {selectableModels.map((model) => (
                 <option key={model.id} value={model.id}>
-                  {model.id}{model.id === catalog?.defaultModelId ? " — product default" : ""}
+                  {modelDisplayLabel(model.id)}
+                  {model.id === catalog?.defaultModelId ? " — product default" : ""}
+                  {" · "}
+                  {model.id}
                 </option>
               ))}
             </select>
@@ -407,8 +411,15 @@ function ModelSettings() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="m-0 max-w-full break-words text-body font-semibold text-foreground [overflow-wrap:anywhere]">
-              {catalog?.preference.selectedModelId ?? "No live model selection"}
+              {catalog?.preference.selectedModelId
+                ? modelDisplayLabel(catalog.preference.selectedModelId)
+                : "No live model selection"}
             </h3>
+            {catalog?.preference.selectedModelId ? (
+              <span className="font-mono text-label text-subtle-foreground">
+                {catalog.preference.selectedModelId}
+              </span>
+            ) : null}
             {catalog && (
               <Badge variant={status === "error" ? "warning" : catalog.selectedModelReady ? "success" : "warning"}>
                 {status === "error" ? "Stale" : catalog.selectedModelReady ? "Ready" : "Not ready"}
