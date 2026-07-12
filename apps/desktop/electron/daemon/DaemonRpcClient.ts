@@ -559,7 +559,16 @@ export class DaemonProtocolClient {
   ): Promise<ConversationTurnResult> {
     return expectResult(
       await this.rpc.request(
-        { $case: "startConversationTurn", value: { threadId, content, modelId: modelId ?? "" } },
+        {
+          $case: "startConversationTurn",
+          value: {
+            threadId,
+            content,
+            // Omit rather than "" so protobuf does not encode an empty optional
+            // override that conflicts with a thread's durable model binding.
+            ...(modelId !== undefined && modelId !== "" ? { modelId } : {}),
+          },
+        },
         idempotencyKey,
         CONVERSATION_START_RPC_TIMEOUT_MS,
       ),

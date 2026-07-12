@@ -1493,10 +1493,14 @@ impl Daemon {
             ApplicationError::Unavailable("conversation execution is not configured".into())
         })?;
         let key = mutation_key(key)?;
+        // Blank optional model_id is absent, not an override. Clients that coerce
+        // missing overrides to "" would otherwise Conflict against a bound model.
         let input = StartConversationTurn {
             thread_id: request.thread_id,
             content: request.content,
-            model_id: request.model_id,
+            model_id: request
+                .model_id
+                .filter(|model_id| !model_id.trim().is_empty()),
         };
         if let Some(replay) = conversation.replay_start(&input, key).await?
             && let Some(result) = self.conversation_replay_result(replay).await?

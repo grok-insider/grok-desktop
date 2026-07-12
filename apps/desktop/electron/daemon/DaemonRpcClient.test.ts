@@ -1123,6 +1123,64 @@ describe("DaemonRpcClient", () => {
     protocol.close();
   });
 
+  it("omits modelId on start when the caller does not pass an override", async () => {
+    const stream = new FakeDuplex();
+    const protocol = client(stream);
+    const started = protocol.startConversationTurn("thread-1", "Follow up", "turn-command-no-model");
+    const request = decodeFrame(await stream.nextWrite());
+    expect(request.payload?.$case === "request" && request.payload.value.operation).toEqual({
+      $case: "startConversationTurn",
+      value: { threadId: "thread-1", content: "Follow up", modelId: undefined },
+    });
+    const userMessage = wireMessage("message-user", MessageRole.MESSAGE_ROLE_USER, "Follow up", 3n);
+    stream.receive(encodeFrame({
+      protocolVersion: PROTOCOL_VERSION,
+      requestId: request.requestId,
+      startupNonce: nonce,
+      deadlineUnixMs: 0n,
+      idempotencyKey: request.idempotencyKey,
+      payload: {
+        $case: "response",
+        value: {
+          result: {
+            $case: "conversationTurn",
+            value: {
+              turnId: "turn-follow-up",
+              state: ConversationTurnState.CONVERSATION_TURN_STATE_RESERVED,
+              revision: 0n,
+              modelId: "grok-4.3",
+              userMessage,
+              assistantMessage: undefined,
+              run: {
+                id: "run-follow-up",
+                projectId: "project-1",
+                threadId: "thread-1",
+                state: RunState.RUN_STATE_QUEUED,
+                revision: 0n,
+                createdAtUnixMs: 1n,
+                updatedAtUnixMs: 1n,
+              },
+              failure: undefined,
+              citations: [],
+              usage: { inputTokens: 0n, outputTokens: 0n, costInUsdTicks: 0n },
+              zeroDataRetention: undefined,
+              lineage: {
+                origin: ConversationTurnOrigin.CONVERSATION_TURN_ORIGIN_ORIGINAL,
+                sourceTurnId: "",
+                retryDepth: 0,
+              },
+              retryEligibility:
+                ConversationRetryEligibility.CONVERSATION_RETRY_ELIGIBILITY_SOURCE_IN_PROGRESS,
+            },
+          },
+        },
+      },
+    }));
+
+    await expect(started).resolves.toMatchObject({ turnId: "turn-follow-up" });
+    protocol.close();
+  });
+
   it("retries by source identity without renderer-owned provider input", async () => {
     const stream = new FakeDuplex();
     const protocol = client(stream);
