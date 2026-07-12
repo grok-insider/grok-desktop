@@ -50,6 +50,19 @@ pub enum ConversationTurnOrigin {
     },
 }
 
+/// Closed credential rail used for one direct conversation attempt.
+///
+/// The rail is durable, non-secret lineage. It prevents retries and forks from
+/// silently switching between a user-owned API key and a subscription grant.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ChatRail {
+    /// User-owned xAI API key. This is also the legacy/default rail.
+    #[default]
+    XaiApiKey,
+    /// Fresh user-authorized `SuperGrok` OAuth grant with `api:access`.
+    SuperGrokApi,
+}
+
 /// Durable non-secret lineage and local credential-generation binding.
 ///
 /// The binding is an opaque local generation identifier. It is deliberately
@@ -61,6 +74,8 @@ pub struct ConversationTurnLineage {
     pub origin: ConversationTurnOrigin,
     /// Opaque local credential generation used for provider preflight.
     pub credential_binding_id: Option<String>,
+    /// Immutable credential rail used by this attempt.
+    pub rail: ChatRail,
     /// Bounded retry-chain depth. Originals are zero.
     pub retry_depth: u8,
 }
@@ -72,10 +87,23 @@ impl ConversationTurnLineage {
     ///
     /// Returns [`ConversationTurnError`] for an invalid local binding ID.
     pub fn original(credential_binding_id: String) -> Result<Self, ConversationTurnError> {
+        Self::original_on(ChatRail::XaiApiKey, credential_binding_id)
+    }
+
+    /// Creates lineage for a newly submitted prompt on an explicit rail.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversationTurnError`] for an invalid local binding ID.
+    pub fn original_on(
+        rail: ChatRail,
+        credential_binding_id: String,
+    ) -> Result<Self, ConversationTurnError> {
         validate_credential_binding_id(&credential_binding_id)?;
         Ok(Self {
             origin: ConversationTurnOrigin::Original,
             credential_binding_id: Some(credential_binding_id),
+            rail,
             retry_depth: 0,
         })
     }
@@ -90,6 +118,25 @@ impl ConversationTurnLineage {
         credential_binding_id: String,
         source_retry_depth: u8,
     ) -> Result<Self, ConversationTurnError> {
+        Self::retry_on(
+            source_turn_id,
+            ChatRail::XaiApiKey,
+            credential_binding_id,
+            source_retry_depth,
+        )
+    }
+
+    /// Creates retry lineage while preserving an explicit source rail.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversationTurnError`] for invalid binding or retry depth.
+    pub fn retry_on(
+        source_turn_id: ConversationTurnId,
+        rail: ChatRail,
+        credential_binding_id: String,
+        source_retry_depth: u8,
+    ) -> Result<Self, ConversationTurnError> {
         validate_credential_binding_id(&credential_binding_id)?;
         let retry_depth = source_retry_depth
             .checked_add(1)
@@ -98,6 +145,7 @@ impl ConversationTurnLineage {
         Ok(Self {
             origin: ConversationTurnOrigin::Retry { source_turn_id },
             credential_binding_id: Some(credential_binding_id),
+            rail,
             retry_depth,
         })
     }
@@ -114,10 +162,24 @@ impl ConversationTurnLineage {
         source_turn_id: ConversationTurnId,
         credential_binding_id: String,
     ) -> Result<Self, ConversationTurnError> {
+        Self::edit_and_branch_on(source_turn_id, ChatRail::XaiApiKey, credential_binding_id)
+    }
+
+    /// Creates Edit-and-branch lineage while preserving an explicit source rail.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversationTurnError`] for an invalid local binding ID.
+    pub fn edit_and_branch_on(
+        source_turn_id: ConversationTurnId,
+        rail: ChatRail,
+        credential_binding_id: String,
+    ) -> Result<Self, ConversationTurnError> {
         validate_credential_binding_id(&credential_binding_id)?;
         Ok(Self {
             origin: ConversationTurnOrigin::EditAndBranch { source_turn_id },
             credential_binding_id: Some(credential_binding_id),
+            rail,
             retry_depth: 0,
         })
     }
@@ -134,10 +196,24 @@ impl ConversationTurnLineage {
         source_turn_id: ConversationTurnId,
         credential_binding_id: String,
     ) -> Result<Self, ConversationTurnError> {
+        Self::regenerate_on(source_turn_id, ChatRail::XaiApiKey, credential_binding_id)
+    }
+
+    /// Creates Regenerate lineage while preserving an explicit source rail.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversationTurnError`] for an invalid local binding ID.
+    pub fn regenerate_on(
+        source_turn_id: ConversationTurnId,
+        rail: ChatRail,
+        credential_binding_id: String,
+    ) -> Result<Self, ConversationTurnError> {
         validate_credential_binding_id(&credential_binding_id)?;
         Ok(Self {
             origin: ConversationTurnOrigin::Regenerate { source_turn_id },
             credential_binding_id: Some(credential_binding_id),
+            rail,
             retry_depth: 0,
         })
     }
@@ -1031,6 +1107,7 @@ mod tests {
                 source_turn_id: owner.clone(),
             },
             credential_binding_id: Some("xai-binding-1".into()),
+            rail: ChatRail::XaiApiKey,
             retry_depth: 1,
         };
         assert_eq!(
@@ -1038,6 +1115,40 @@ mod tests {
             Err(ConversationTurnError::InvalidField("lineage"))
         );
         assert!(ConversationTurnLineage::original("contains space".into()).is_err());
+    }
+
+    #[test]
+    fn explicit_chat_rail_is_immutable_across_lineage_constructors() {
+        let source = ConversationTurnId::new("turn-source").expect("source");
+        let original = ConversationTurnLineage::original_on(
+            ChatRail::SuperGrokApi,
+            "supergrok-generation-1".into(),
+        )
+        .expect("supergrok original");
+        assert_eq!(original.rail, ChatRail::SuperGrokApi);
+
+        let retry = ConversationTurnLineage::retry_on(
+            source.clone(),
+            original.rail,
+            "supergrok-generation-1".into(),
+            original.retry_depth,
+        )
+        .expect("supergrok retry");
+        assert_eq!(retry.rail, ChatRail::SuperGrokApi);
+
+        let fork = ConversationTurnLineage::regenerate_on(
+            source,
+            retry.rail,
+            "supergrok-generation-1".into(),
+        )
+        .expect("supergrok regenerate");
+        assert_eq!(fork.rail, ChatRail::SuperGrokApi);
+        assert_eq!(
+            ConversationTurnLineage::original("legacy-generation".into())
+                .expect("legacy default")
+                .rail,
+            ChatRail::XaiApiKey
+        );
     }
 
     #[test]
@@ -1094,6 +1205,7 @@ mod tests {
             let unbound = ConversationTurnLineage {
                 origin: origin.clone(),
                 credential_binding_id: None,
+                rail: ChatRail::XaiApiKey,
                 retry_depth: 0,
             };
             assert_eq!(
@@ -1103,6 +1215,7 @@ mod tests {
             let wrong_depth = ConversationTurnLineage {
                 origin,
                 credential_binding_id: Some("xai-binding-1".into()),
+                rail: ChatRail::XaiApiKey,
                 retry_depth: 1,
             };
             assert_eq!(
@@ -1124,6 +1237,7 @@ mod tests {
                     ConversationTurnLineage {
                         origin: self_origin,
                         credential_binding_id: Some("xai-binding-1".into()),
+                        rail: ChatRail::XaiApiKey,
                         retry_depth: 0,
                     },
                     &owner,
@@ -1139,6 +1253,7 @@ mod tests {
         let legacy = ConversationTurnLineage {
             origin: ConversationTurnOrigin::Original,
             credential_binding_id: None,
+            rail: ChatRail::XaiApiKey,
             retry_depth: 0,
         };
         assert_eq!(
@@ -1150,6 +1265,7 @@ mod tests {
                 source_turn_id: ConversationTurnId::new("turn-0").expect("source"),
             },
             credential_binding_id: None,
+            rail: ChatRail::XaiApiKey,
             retry_depth: 1,
         };
         assert_eq!(

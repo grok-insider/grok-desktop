@@ -2693,6 +2693,7 @@ fn capture_retry_context(
         || already_retried
         || source_lineage.credential_binding_id.is_none()
         || source_lineage.credential_binding_id != lineage.credential_binding_id
+        || source_lineage.rail != lineage.rail
         || expected_source_depth != Some(lineage.retry_depth)
         || user_message.content != source_user.content
     {

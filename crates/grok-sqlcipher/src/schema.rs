@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 19;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 20;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -142,6 +142,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             17 => migrate_artifacts_v17(&transaction)?,
             18 => migrate_artifact_retention_v18(&transaction)?,
             19 => migrate_automation_scheduler_v19(&transaction)?,
+            20 => migrate_chat_rail_v20(&transaction)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -151,6 +152,23 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
         )?;
         transaction.execute_batch(&format!("PRAGMA user_version = {version};"))?;
         transaction.commit()?;
+    }
+    Ok(())
+}
+
+const MIGRATION_20: &str = r"
+ALTER TABLE conversation_turn_lineage
+ADD COLUMN rail INTEGER NOT NULL DEFAULT 0 CHECK (rail BETWEEN 0 AND 1);
+";
+
+fn migrate_chat_rail_v20(transaction: &Transaction<'_>) -> Result<(), SqlCipherStoreError> {
+    let rail_exists: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_turn_lineage') WHERE name='rail')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !rail_exists {
+        transaction.execute_batch(MIGRATION_20)?;
     }
     Ok(())
 }
@@ -3721,7 +3739,7 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_evaluation_commands;
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
-                 DELETE FROM schema_migrations WHERE version=19;
+                 DELETE FROM schema_migrations WHERE version IN (19,20);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )
@@ -3779,7 +3797,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;",
             )
@@ -3803,7 +3821,7 @@ mod tests {
                  DROP TRIGGER artifact_versions_create_retention;
                  DROP TABLE artifact_removal_commands;
                  DROP TABLE artifact_version_retention;
-                 DELETE FROM schema_migrations WHERE version=18;
+                 DELETE FROM schema_migrations WHERE version IN (18,19,20);
                  PRAGMA user_version=17;
                  PRAGMA foreign_keys=ON;",
             )
@@ -5020,7 +5038,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;
 
@@ -5064,7 +5082,7 @@ mod tests {
                      VALUES (new.rowid,new.title,new.body);
                  END;
 
-                 DELETE FROM schema_migrations WHERE version IN (16,17,18);
+                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20);
                  PRAGMA user_version=15;
                  CREATE TRIGGER block_artifact_search_rebuild
                  BEFORE INSERT ON search_documents WHEN new.kind='artifact' BEGIN

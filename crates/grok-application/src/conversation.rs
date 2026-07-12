@@ -1416,13 +1416,15 @@ impl ConversationService {
                 )?;
                 let lineage = match kind {
                     ConversationForkKind::EditAndBranch => {
-                        ConversationTurnLineage::edit_and_branch(
+                        ConversationTurnLineage::edit_and_branch_on(
                             source.turn.id.clone(),
+                            source.lineage.rail,
                             credential_binding_id.to_owned(),
                         )?
                     }
-                    ConversationForkKind::Regenerate => ConversationTurnLineage::regenerate(
+                    ConversationForkKind::Regenerate => ConversationTurnLineage::regenerate_on(
                         source.turn.id.clone(),
+                        source.lineage.rail,
                         credential_binding_id.to_owned(),
                     )?,
                     ConversationForkKind::Branch => unreachable!("handled above"),
@@ -1700,8 +1702,9 @@ impl ConversationService {
             model_id.clone(),
             now,
         )?;
-        let lineage = ConversationTurnLineage::retry(
+        let lineage = ConversationTurnLineage::retry_on(
             source_turn_id.clone(),
+            source.lineage.rail,
             current_binding,
             source_retry_depth,
         )?;

@@ -15,11 +15,11 @@ use grok_application::{
     conversation_fork_metadata_is_within_bounds,
 };
 use grok_domain::{
-    ConversationCitation, ConversationFailure, ConversationFailureKind, ConversationForkKind,
-    ConversationMessageDerivation, ConversationMessageDerivationKind, ConversationThreadOrigin,
-    ConversationTurn, ConversationTurnEvent, ConversationTurnEventKind, ConversationTurnEventLog,
-    ConversationTurnId, ConversationTurnLineage, ConversationTurnOrigin, ConversationTurnState,
-    ConversationUsage, EffectId, EffectKind, EffectState, Idempotency,
+    ChatRail, ConversationCitation, ConversationFailure, ConversationFailureKind,
+    ConversationForkKind, ConversationMessageDerivation, ConversationMessageDerivationKind,
+    ConversationThreadOrigin, ConversationTurn, ConversationTurnEvent, ConversationTurnEventKind,
+    ConversationTurnEventLog, ConversationTurnId, ConversationTurnLineage, ConversationTurnOrigin,
+    ConversationTurnState, ConversationUsage, EffectId, EffectKind, EffectState, Idempotency,
     MAX_CONVERSATION_TEXT_CHUNK_BYTES, MAX_CONVERSATION_TEXT_EVENTS, MAX_MESSAGE_BYTES, Message,
     MessageId, MessageRole, MessageState, ProjectId, ProjectState, Run, RunEventKind, RunId,
     RunState, SideEffect, Thread, ThreadId,
@@ -3022,6 +3022,7 @@ fn capture_retry_context(
         || already_retried
         || source.lineage.credential_binding_id.is_none()
         || source.lineage.credential_binding_id != lineage.credential_binding_id
+        || source.lineage.rail != lineage.rail
         || thread_binding != lineage.credential_binding_id
         || expected_retry_depth != Some(lineage.retry_depth)
         || user_message.content != source_user.content
@@ -3257,14 +3258,18 @@ fn insert_turn_lineage(
     connection
         .execute(
             "INSERT INTO conversation_turn_lineage(
-                 turn_id,origin,source_turn_id,credential_binding_id,retry_depth
-             ) VALUES (?1,?2,?3,?4,?5)",
+                 turn_id,origin,source_turn_id,credential_binding_id,retry_depth,rail
+             ) VALUES (?1,?2,?3,?4,?5,?6)",
             params![
                 turn_id.as_str(),
                 origin,
                 source_turn_id,
                 lineage.credential_binding_id,
                 number(u64::from(lineage.retry_depth))?,
+                match lineage.rail {
+                    ChatRail::XaiApiKey => 0_i64,
+                    ChatRail::SuperGrokApi => 1_i64,
+                },
             ],
         )
         .map_err(map_sqlite)?;
@@ -3277,7 +3282,7 @@ fn query_turn_lineage(
 ) -> Result<ConversationTurnLineage, StoreError> {
     let lineage = connection
         .query_row(
-            "SELECT origin,source_turn_id,credential_binding_id,retry_depth
+            "SELECT origin,source_turn_id,credential_binding_id,retry_depth,rail
              FROM conversation_turn_lineage WHERE turn_id=?1",
             [turn_id.as_str()],
             |row| {
@@ -3303,6 +3308,11 @@ fn query_turn_lineage(
                     retry_depth: unsigned(row, 3)?
                         .try_into()
                         .map_err(|error| conversion(3, format!("invalid retry depth: {error}")))?,
+                    rail: match row.get::<_, i64>(4)? {
+                        0 => ChatRail::XaiApiKey,
+                        1 => ChatRail::SuperGrokApi,
+                        value => return Err(conversion(4, format!("invalid chat rail {value}"))),
+                    },
                 })
             },
         )
@@ -3935,6 +3945,7 @@ fn validate_persisted_retry_lineage(
         || source_turn.model_id != snapshot.turn.model_id
         || source_lineage.credential_binding_id.is_none()
         || source_lineage.credential_binding_id != snapshot.lineage.credential_binding_id
+        || source_lineage.rail != snapshot.lineage.rail
         || expected_depth != Some(snapshot.lineage.retry_depth)
         || source_user.role != MessageRole::User
         || source_user.state != MessageState::Active
@@ -4028,6 +4039,7 @@ fn validate_persisted_fork_turn(
         || source_turn.project_id != snapshot.turn.project_id
         || source_turn.model_id != snapshot.turn.model_id
         || source_snapshot.lineage.credential_binding_id != snapshot.lineage.credential_binding_id
+        || source_snapshot.lineage.rail != snapshot.lineage.rail
         || !source_eligible
         || child.created_at != snapshot.turn.created_at
         || child_context != derived_messages

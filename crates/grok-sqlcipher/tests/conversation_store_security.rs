@@ -11,10 +11,10 @@ use grok_application::{
     WorkspaceService, WorkspaceStore,
 };
 use grok_domain::{
-    ConversationCitation, ConversationFailure, ConversationFailureKind, ConversationForkKind,
-    ConversationMessageDerivationKind, ConversationTurn, ConversationTurnEventKind,
-    ConversationTurnId, ConversationTurnLineage, ConversationTurnOrigin, ConversationTurnState,
-    ConversationUsage, EffectId, EffectKind, EffectState, Idempotency,
+    ChatRail, ConversationCitation, ConversationFailure, ConversationFailureKind,
+    ConversationForkKind, ConversationMessageDerivationKind, ConversationTurn,
+    ConversationTurnEventKind, ConversationTurnId, ConversationTurnLineage, ConversationTurnOrigin,
+    ConversationTurnState, ConversationUsage, EffectId, EffectKind, EffectState, Idempotency,
     MAX_CONVERSATION_TEXT_CHUNK_BYTES, MAX_MESSAGE_BYTES, Message, MessageId, MessageRole,
     MessageState, ProjectId, Run, RunEventKind, RunId, RunState, SideEffect, Thread, ThreadId,
 };
@@ -1131,7 +1131,7 @@ async fn retry_reservation_rejects_forged_or_non_latest_source_material_atomical
         .await
         .expect("cancel retry source");
 
-    for case in ["revision", "prompt", "model", "binding", "depth"] {
+    for case in ["revision", "prompt", "model", "binding", "rail", "depth"] {
         let mut candidate = retry_candidate(&source, 43);
         let mut expected_revision = source.turn.revision;
         match case {
@@ -1139,6 +1139,7 @@ async fn retry_reservation_rejects_forged_or_non_latest_source_material_atomical
             "prompt" => candidate.2.content = "forged prompt".into(),
             "model" => candidate.0.model_id = "forged-model".into(),
             "binding" => candidate.1.credential_binding_id = Some("forged-binding".into()),
+            "rail" => candidate.1.rail = ChatRail::SuperGrokApi,
             "depth" => candidate.1.retry_depth = 2,
             _ => unreachable!(),
         }
@@ -2342,7 +2343,7 @@ async fn schema_fourteen_forks_migrate_acknowledged_and_restart_after_a_fault() 
                  SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                  WHERE new.state=0;
              END;
-             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19);
+             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20);
              PRAGMA user_version=14;
              CREATE TABLE conversation_fork_delivery_ack_commands(blocker INTEGER) STRICT;",
         )

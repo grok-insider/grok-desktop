@@ -31,7 +31,7 @@ pub use capability::{
     CapabilitySurface,
 };
 pub use conversation::{
-    ConversationCitation, ConversationFailure, ConversationFailureKind, ConversationTurn,
+    ChatRail, ConversationCitation, ConversationFailure, ConversationFailureKind, ConversationTurn,
     ConversationTurnError, ConversationTurnEvent, ConversationTurnEventError,
     ConversationTurnEventKind, ConversationTurnEventLog, ConversationTurnLineage,
     ConversationTurnOrigin, ConversationTurnState, ConversationUsage,
