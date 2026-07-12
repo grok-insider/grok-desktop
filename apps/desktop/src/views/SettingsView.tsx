@@ -217,10 +217,10 @@ function AccountSettings() {
         <div className="min-w-0 flex-1">
           <h3 className="m-0 text-title-sm font-semibold text-foreground">Grok subscription</h3>
           <p className="m-0 mt-0.5 text-body-sm text-muted-foreground">
-            Subscription sign-in status is not exposed by the daemon.
+            Host authentication is managed in Setup. Work still requires isolation readiness.
           </p>
-          <Badge className="mt-2" variant="warning">
-            <ShieldCheck size={13} aria-hidden="true" /> Status unavailable
+          <Badge className="mt-2" variant="neutral">
+            <ShieldCheck size={13} aria-hidden="true" /> Use Setup
           </Badge>
         </div>
         <Button className="max-[680px]:w-full" onClick={() => navigate("/setup")}>
