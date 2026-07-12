@@ -17,7 +17,7 @@ use crate::{
     ApplicationError, ChatModelPreferenceStore, Citation, Clock, ContentPart, ConversationEvent,
     ConversationMessage, ConversationModelFactory, ConversationRequest, ConversationRole,
     CredentialService, GetUsageSummary, IdGenerator, ModelError, ModelErrorKind,
-    ModelFailureCertainty, MutationCommand, NewRunEvent, PRODUCT_CHAT_SYSTEM_PROMPT_V1, Page,
+    ModelFailureCertainty, MutationCommand, NewRunEvent, PRODUCT_CHAT_SYSTEM_PROMPT_V2, Page,
     StoreError, SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary, UsageWindow,
     WorkspaceService, mutations::mutation_command,
 };
@@ -3187,7 +3187,7 @@ fn provider_request(
     }
     let bytes = context
         .iter()
-        .try_fold(PRODUCT_CHAT_SYSTEM_PROMPT_V1.len(), |total, message| {
+        .try_fold(PRODUCT_CHAT_SYSTEM_PROMPT_V2.len(), |total, message| {
             total.checked_add(message.content.len())
         })
         .ok_or_else(|| {
@@ -3201,7 +3201,7 @@ fn provider_request(
     let mut messages = Vec::with_capacity(context.len() + 1);
     messages.push(ConversationMessage {
         role: ConversationRole::System,
-        content: vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V1.into())],
+        content: vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V2.into())],
     });
     messages.extend(
         context

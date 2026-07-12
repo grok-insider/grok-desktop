@@ -2863,7 +2863,7 @@ mod tests {
         CredentialMutationStore, CredentialService, DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization,
         ExecutionStore, IdGenerator, ModelDescriptor, ModelError, ModelErrorKind,
         ModelFailureCertainty, MutationCommand, NewRunEvent, OAuthFailure, OAuthTokenGrant,
-        PRODUCT_CHAT_SYSTEM_PROMPT_V1, PreparedArtifactContent, ProviderStartCommit,
+        PRODUCT_CHAT_SYSTEM_PROMPT_V2, PreparedArtifactContent, ProviderStartCommit,
         RequestApproval, SecretName, SecretValue, SecretVault, SelectedSourcePath, StoreError,
         SuperGrokOAuth, TerminalTurnCommit, WorkspaceService, WorkspaceStore, XaiApiKeyValidation,
         XaiApiKeyValidationError, XaiApiKeyValidator,
@@ -3833,7 +3833,7 @@ mod tests {
         hash_part(&mut hasher, &[0]);
         hash_part(&mut hasher, b"system");
         hash_part(&mut hasher, b"text");
-        hash_part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V1.as_bytes());
+        hash_part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V2.as_bytes());
         for message in context {
             hash_part(
                 &mut hasher,
@@ -8174,7 +8174,7 @@ mod tests {
         assert_eq!(system.role, ConversationRole::System);
         assert_eq!(
             system.content,
-            vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V1.into())]
+            vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V2.into())]
         );
         assert_eq!(message.role, ConversationRole::User);
         assert_eq!(

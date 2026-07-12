@@ -7301,7 +7301,7 @@ mod tests {
         ConversationService, ConversationStream, CreateAutomation, CreateMessage, CreateProject,
         CreateRun, CreateThread, CredentialService, DesktopPreferencesService,
         EditAndBranchConversationTurn, ExecuteConversationTurn, ModelDescriptor, ModelError,
-        ModelErrorKind, ModelFailureCertainty, PRODUCT_CHAT_SYSTEM_PROMPT_V1, PrepareEffect,
+        ModelErrorKind, ModelFailureCertainty, PRODUCT_CHAT_SYSTEM_PROMPT_V2, PrepareEffect,
         PreparePrivilegedOperation, PrivilegedOperationService, PrivilegedOperationStore,
         RegenerateConversationTurn, RequestApproval, RetryConversationTurn, RunService,
         SelectChatModel, SideEffectService, UpdateAutomation, UpdateDesktopPreferences,
@@ -11034,7 +11034,7 @@ mod tests {
         part(&mut hasher, &[0]);
         part(&mut hasher, b"system");
         part(&mut hasher, b"text");
-        part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V1.as_bytes());
+        part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V2.as_bytes());
         for message in context {
             part(
                 &mut hasher,
