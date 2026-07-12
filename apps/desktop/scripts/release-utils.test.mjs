@@ -18,6 +18,7 @@ import {
   parseReleaseMetadataKeys,
   readReleaseEnvironment,
   releaseInputSigningBytes,
+  renderStableAppInstaller,
   renderManifest,
   serviceGuestCatalogTrust,
   shouldAuthenticodeSignPackagedFile,
@@ -59,6 +60,22 @@ test("normalizes versions and parses explicit release targets", () => {
     architecture: "arm64", channel: "stable", stage: undefined, out: undefined,
   });
   assert.throws(() => parseReleaseArguments(["--arch", "ia32", "--channel", "stable"]), /x64 or arm64/);
+});
+
+test("renders stable App Installer metadata with fixed identity and update origin", () => {
+  const appInstaller = renderStableAppInstaller({
+    architecture: "x64",
+    packageIdentity: "GrokDesktop.Test",
+    publisher: "CN=Grok Desktop Test",
+    version: "1.2.3.0",
+  });
+  assert.match(appInstaller, /appinstaller\/2021/);
+  assert.match(appInstaller, /releases\/latest\/download\/GrokDesktop-stable-x64\.msix/);
+  assert.match(appInstaller, /AutomaticBackgroundTask/);
+  assert.match(appInstaller, /UpdateBlocksActivation="false"/);
+  assert.throws(() => renderStableAppInstaller({
+    architecture: "ia32", packageIdentity: "GrokDesktop.Test", publisher: "CN=Test", version: "1.2.3.0",
+  }), /architecture/);
 });
 
 test("creates isolated native build environments and deterministic public trust bindings", async () => {

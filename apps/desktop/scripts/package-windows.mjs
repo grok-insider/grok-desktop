@@ -12,6 +12,7 @@ import {
   parseReleaseArguments,
   readReleaseEnvironment,
   renderManifest,
+  renderStableAppInstaller,
   sha256File,
   shouldAuthenticodeSignPackagedFile,
   validateSignerIdentity,
@@ -141,6 +142,20 @@ async function main() {
       fuses: await readableFuseState(executable),
     };
     await writeFile(path.join(outputRoot, `${packageName}.json`), `${JSON.stringify(releaseRecord, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    if (releaseArguments.channel === "stable") {
+      const stablePackageName = `GrokDesktop-stable-${releaseArguments.architecture}.msix`;
+      await cp(msixPackage, path.join(outputRoot, stablePackageName), { errorOnExist: true });
+      await writeFile(
+        path.join(outputRoot, `GrokDesktop-stable-${releaseArguments.architecture}.appinstaller`),
+        renderStableAppInstaller({
+          architecture: releaseArguments.architecture,
+          packageIdentity: environment.packageIdentity,
+          publisher: environment.publisher,
+          version: msixVersion,
+        }),
+        { encoding: "utf8", mode: 0o600, flag: "wx" },
+      );
+    }
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

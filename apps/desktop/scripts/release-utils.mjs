@@ -260,6 +260,18 @@ export function renderManifest(template, values) {
   return output;
 }
 
+export function renderStableAppInstaller({ architecture, packageIdentity, publisher, version }) {
+  if (!RELEASE_ARCHITECTURES.has(architecture)) throw new Error("unsupported App Installer architecture");
+  if (!packageIdentityPattern.test(packageIdentity) || !publisher.startsWith("CN=")
+      || hasInvalidXmlCharacters(publisher)) {
+    throw new Error("App Installer package identity is invalid");
+  }
+  if (!windowsVersionPattern.test(version)) throw new Error("App Installer version is invalid");
+  const assetName = `GrokDesktop-stable-${architecture}.msix`;
+  const base = "https://github.com/grok-insider/grok-desktop/releases/latest/download";
+  return `<?xml version="1.0" encoding="utf-8"?>\n<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="${escapeXml(version)}" Uri="${base}/GrokDesktop-stable-${architecture}.appinstaller">\n  <MainPackage Name="${escapeXml(packageIdentity)}" Publisher="${escapeXml(publisher)}" Version="${escapeXml(version)}" ProcessorArchitecture="${architecture}" Uri="${base}/${assetName}" />\n  <UpdateSettings>\n    <OnLaunch HoursBetweenUpdateChecks="6" ShowPrompt="true" UpdateBlocksActivation="false" />\n    <AutomaticBackgroundTask />\n  </UpdateSettings>\n</AppInstaller>\n`;
+}
+
 export async function validateReleaseInputs(stageRoot, expected) {
   const { architecture, channel, desktopVersion, releaseMetadataKeys, acpCatalogTrust, nowUnixSeconds } = expected ?? {};
   if (!RELEASE_ARCHITECTURES.has(architecture)) throw new Error("unsupported release architecture");
