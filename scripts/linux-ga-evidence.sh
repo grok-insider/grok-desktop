@@ -52,7 +52,7 @@ else
 fi
 
 if rg -q "verifies_committed_ed25519_wisp_fixture ... ok" "$SCRATCH/wisp-lifecycle-rust.log" 2>/dev/null \
-  && rg -q "TestWispFixtureBundle" "$SCRATCH/wisp-fixture-verify.log" 2>/dev/null; then
+  && rg -q "OK wisp-fixture-verify|ok  github.com/.*/manifestverify" "$SCRATCH/wisp-fixture-verify.log" 2>/dev/null; then
   echo "wisp_lifecycle: ok (signed fixture + host stage service)" | tee "$SCRATCH/wisp-lifecycle-test.log"
 else
   echo "wisp_lifecycle: missing or failed" | tee "$SCRATCH/wisp-lifecycle-test.log"
