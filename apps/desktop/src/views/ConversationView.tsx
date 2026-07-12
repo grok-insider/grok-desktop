@@ -36,6 +36,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { MarkdownMessage } from "../components/MarkdownMessage";
 import { formatUsageLine } from "../lib/usageFormat";
 import { IconButton } from "../components/ui";
 import { useDesktopClient } from "../services/DesktopClientContext";
@@ -384,6 +385,7 @@ export function ConversationView() {
                         onCitation={(citation) => openInspector({ kind: "citation", value: citation })}
                         onCopy={() => copyMessage(message)}
                         onEdit={() => turn && openForkDialog({ kind: "edit", message, turn })}
+                        onOpenExternal={(url) => void client.openExternalUrl(url)}
                         onRegenerate={() => turn && openForkDialog({ kind: "regenerate", message, turn })}
                         busy={Boolean(forkingMessageId)}
                         retryDepth={turn?.lineage.origin === "retry" ? turn.lineage.retryDepth : undefined}
@@ -548,6 +550,7 @@ function MessageBlock({
   onCitation,
   onArtifact,
   onEdit,
+  onOpenExternal,
   onRegenerate,
   onBranch,
   busy,
@@ -559,6 +562,7 @@ function MessageBlock({
   onCitation(value: ConversationCitation): void;
   onArtifact(value: ConversationArtifact): void;
   onEdit(): void;
+  onOpenExternal(url: string): void;
   onRegenerate(): void;
   onBranch(): void;
   busy: boolean;
@@ -640,17 +644,15 @@ function MessageBlock({
       <div
         aria-live={message.state === "streaming" ? "polite" : undefined}
         className={cn(
-          "min-h-[22px] whitespace-pre-wrap text-body-lg leading-[22px] text-foreground",
-          isUser && "rounded-lg bg-muted px-3 py-2",
+          "min-h-[22px]",
+          isUser && "whitespace-pre-wrap rounded-lg bg-muted px-3 py-2 text-body-lg leading-[22px] text-foreground",
         )}
       >
-        {message.content}
-        {message.state === "streaming" ? (
-          <span
-            aria-hidden="true"
-            className="ml-1 inline-block h-3.5 w-0.5 animate-pulse bg-info align-[-1px] motion-reduce:animate-none"
-          />
-        ) : null}
+        {isUser ? message.content : (
+          <MarkdownMessage onOpenExternal={onOpenExternal} streaming={message.state === "streaming"}>
+            {message.content}
+          </MarkdownMessage>
+        )}
       </div>
 
       {!isUser && turn?.state === "completed" && (turn.usage.inputTokens > 0 || turn.usage.outputTokens > 0) ? (

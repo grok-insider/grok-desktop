@@ -557,7 +557,7 @@ describe("ConversationView", () => {
     const firstChunk = await screen.findByText("First durable chunk");
     const assistantRow = firstChunk.closest("article");
     expect(assistantRow).not.toBeNull();
-    expect(firstChunk).toHaveClass("min-h-[22px]");
+    expect(firstChunk.closest("[aria-live='polite']")).toHaveClass("min-h-[22px]");
     expect(screen.getByText("Streaming")).toBeInTheDocument();
 
     client.publish(conversation({
