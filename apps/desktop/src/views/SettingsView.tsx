@@ -23,7 +23,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Button, PageHeader, Toggle } from "../components/ui";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
-import type { AccountSetupState, ChatModelCatalog, DesktopPreferences } from "../services/desktopClient";
+import type {
+  AccountSetupState,
+  ChatModelCatalog,
+  DesktopPreferences,
+  SuperGrokEnrollmentStatus,
+} from "../services/desktopClient";
 import { SETTINGS_PERSISTENCE_UNAVAILABLE_REASON } from "../services/productAvailability";
 
 // Only sections with at least one daemon-backed control are advertised.
@@ -173,15 +178,18 @@ function SettingsUnavailableNotice() {
 function AccountSettings() {
   const client = useDesktopClient();
   const [account, setAccount] = useState<AccountSetupState | null>(null);
+  const [superGrok, setSuperGrok] = useState<SuperGrokEnrollmentStatus | null>(null);
   const [accountError, setAccountError] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     let active = true;
-    void client
-      .getAccountSetup()
-      .then((value) => {
-        if (active) setAccount(value);
+    void Promise.all([client.getAccountSetup(), client.getSuperGrokEnrollmentStatus()])
+      .then(([value, superGrokStatus]) => {
+        if (active) {
+          setAccount(value);
+          setSuperGrok(superGrokStatus);
+        }
       })
       .catch(() => {
         if (active) setAccountError("Credential status unavailable");
@@ -229,6 +237,22 @@ function AccountSettings() {
       </div>
 
       <SettingsGroup>
+        <div className="flex min-h-[68px] items-center gap-3 border-b border-border px-4 py-3 max-[680px]:flex-wrap">
+          <ShieldCheck className="shrink-0 text-subtle-foreground" size={18} aria-hidden="true" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <strong className="text-body font-semibold text-foreground">SuperGrok plan · API</strong>
+            <span className="text-body-sm text-subtle-foreground">
+              {superGrok?.state === "connected"
+                ? "Connected and active for new Chat conversations"
+                : "Connect through the official xAI device flow in Setup"}
+            </span>
+          </span>
+          <Badge variant={superGrok?.state === "connected" ? "success" : "neutral"}>
+            {superGrok?.state === "connected" ? "Connected" : "Not connected"}
+          </Badge>
+          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup")}>Manage SuperGrok</Button>
+        </div>
+
         <header className="flex min-h-16 items-center justify-between gap-4 border-b border-border px-4 py-3">
           <div className="min-w-0">
             <h3 className="m-0 text-body font-semibold text-foreground">xAI API key</h3>
