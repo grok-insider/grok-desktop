@@ -1075,6 +1075,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+ "tokio-util",
  "zeroize",
 ]
 
@@ -1135,6 +1136,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -1163,6 +1165,7 @@ dependencies = [
  "grok-domain",
  "sha2",
  "tokio",
+ "tokio-util",
  "uuid",
  "zeroize",
 ]

@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, stat, symlink, writeFile, rm } from "node:fs/promises";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   linuxDaemonCandidates,
   parseLinuxPackageArguments,
+  renderLinuxVmServiceEnvironment,
+  renderLinuxVmServiceUnit,
   renderLinuxDesktopEntry,
   resolveLinuxDaemonBinary,
+  stageLinuxVmServiceBundle,
+  stageVerifiedLinuxAcp,
   verifyLinuxPackagedLayout,
 } from "./package-linux.mjs";
 
@@ -18,7 +23,118 @@ test("parseLinuxPackageArguments defaults arch from host and rejects bad options
   assert.throws(() => parseLinuxPackageArguments(["--arch"]), /option\/value/);
   assert.throws(() => parseLinuxPackageArguments(["--arch", "ppc64"]), /x64 or arm64/);
   assert.throws(() => parseLinuxPackageArguments(["--nope", "1"]), /unsupported/);
+  assert.throws(() => parseLinuxPackageArguments(["--vm-service", "/bin/true"]), /daemon-uid/);
+  assert.throws(() => parseLinuxPackageArguments(["--acp-catalog", "/tmp/catalog"]), /requires/);
 });
+
+test("renders a fixed private systemd broker policy with explicit daemon uid", () => {
+  const unit = renderLinuxVmServiceUnit({ serviceGroup: "grok-desktop-broker" });
+  assert.match(unit, /User=root\nGroup=grok-desktop-broker/);
+  assert.match(unit, /RuntimeDirectoryMode=0750/);
+  assert.match(unit, /DeviceAllow=\/dev\/kvm rw/);
+  assert.match(unit, /ProtectSystem=strict/);
+  assert.doesNotMatch(unit, /GROK_LINUX_VM_ALLOWED_UID/);
+  assert.equal(renderLinuxVmServiceEnvironment({ daemonUid: 1000 }),
+    "GROK_LINUX_VM_ALLOWED_UID=1000\nGROK_LINUX_VM_ALLOWED_DAEMON=/opt/grok-desktop/resources/bin/grok-daemon\n");
+  assert.throws(() => renderLinuxVmServiceEnvironment({ daemonUid: -1 }), /invalid/);
+});
+
+test("stages byte-identical Linux broker service policy", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-linux-service-"));
+  try {
+    const binary = path.join(root, "grok-linux-vm-service");
+    const binaryBytes = elfFixture(process.arch === "arm64" ? "arm64" : "x64");
+    await writeFile(binary, binaryBytes, { mode: 0o755 });
+    const digest = createHash("sha256").update(binaryBytes).digest("hex");
+    const binding = `grok-linux-vm-service-trust-v1:${createHash("sha256").update(digest).digest("hex")}`;
+    const daemon = path.join(root, "grok-daemon");
+    await writeFile(daemon, `${digest}${binding}`, { mode: 0o755 });
+    const out = path.join(root, "out");
+    await mkdir(out);
+    const result = await stageLinuxVmServiceBundle(out, {
+      vmService: binary,
+      architecture: process.arch === "arm64" ? "arm64" : "x64",
+      daemonUid: 1000,
+      serviceGroup: "grok-desktop-broker",
+    }, daemon);
+    assert.deepEqual(await readFile(result.binary), await readFile(binary));
+    assert.equal((await stat(result.environment)).mode & 0o777, 0o640);
+    assert.match(await readFile(result.unit, "utf8"), /EnvironmentFile=\/etc\/grok-desktop/);
+    const linked = path.join(root, "linked-service");
+    await symlink(binary, linked);
+    await assert.rejects(() => stageLinuxVmServiceBundle(path.join(root, "linked-out"), {
+      vmService: linked,
+      architecture: process.arch === "arm64" ? "arm64" : "x64",
+      daemonUid: 1000,
+      serviceGroup: "grok-desktop-broker",
+    }, daemon), /ELOOP|symbolic|regular/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stages only a signed Linux ACP component and preserves vendor bytes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-linux-acp-"));
+  try {
+    const architecture = process.arch === "arm64" ? "arm64" : "x64";
+    const component = path.join(root, "grok");
+    const componentBytes = elfFixture(architecture);
+    await writeFile(component, componentBytes, { mode: 0o755 });
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const rawKey = Buffer.from(publicKey.export({ format: "jwk" }).x, "base64url");
+    const keyID = "linux-test";
+    const trustRaw = `${keyID}=${rawKey.toString("hex")}`;
+    const trustBinding = `grok-acp-catalog-trust-v1:${createHash("sha256").update(trustRaw).digest("hex")}`;
+    const trustFile = path.join(root, "trust.txt");
+    await writeFile(trustFile, `${trustRaw}\n`, { mode: 0o600 });
+    const payload = Buffer.from(JSON.stringify({
+      schema: "grok.official-component-catalog/v1",
+      sequence: 1,
+      expiresAtUnixSeconds: 2_000_000_000,
+      components: [{
+        name: "grok-build", publisher: "xAI", version: "1.2.3", os: "linux",
+        architecture: architecture === "x64" ? "x86_64" : "aarch64",
+        executable: "bin/grok",
+        sha256: createHash("sha256").update(componentBytes).digest("hex"),
+        size: componentBytes.length,
+      }],
+    }));
+    const keyLength = Buffer.alloc(2);
+    keyLength.writeUInt16BE(Buffer.byteLength(keyID));
+    const signingBytes = Buffer.concat([
+      Buffer.from("grok.desktop.official-component-catalog.v1\0"), keyLength,
+      Buffer.from(keyID), payload,
+    ]);
+    const catalog = path.join(root, "catalog.json");
+    await writeFile(catalog, JSON.stringify({
+      schema: "grok.official-component-catalog-envelope/v1",
+      keyId: keyID,
+      payload: payload.toString("base64"),
+      signature: sign(null, signingBytes, privateKey).toString("base64"),
+    }));
+    const daemon = path.join(root, "grok-daemon");
+    await writeFile(daemon, Buffer.concat([Buffer.from(trustRaw), Buffer.from(trustBinding)]), { mode: 0o755 });
+    const resources = path.join(root, "resources-bin");
+    await mkdir(resources);
+    const staged = await stageVerifiedLinuxAcp(resources, {
+      architecture, acpCatalog: catalog, acpComponent: component, acpTrustFile: trustFile,
+    }, daemon, 1_900_000_000);
+    assert.deepEqual(await readFile(staged.component), componentBytes);
+    await writeFile(component, Buffer.concat([componentBytes, Buffer.from("tamper")]), { mode: 0o755 });
+    await assert.rejects(() => stageVerifiedLinuxAcp(path.join(root, "second"), {
+      architecture, acpCatalog: catalog, acpComponent: component, acpTrustFile: trustFile,
+    }, daemon, 1_900_000_000), /changed during staging|does not match/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function elfFixture(architecture) {
+  const bytes = Buffer.alloc(64);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1], 0);
+  bytes.writeUInt16LE(architecture === "x64" ? 62 : 183, 18);
+  return bytes;
+}
 
 test("linuxDaemonCandidates only returns host-matching paths", () => {
   const root = "/repo";

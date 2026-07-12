@@ -3,9 +3,12 @@
 //! Wire contract (frozen): JSON-lines envelopes. Go `encoding/json` encodes
 //! `[]byte` fields as **standard base64 strings**.
 //!
-//! Product path (`runner_health`): EnsureImage → CreateVm → StartVm → grant +
-//! `runner.health`. Peer identity is resolved by the broker via SO_PEERCRED;
+//! Product path (`runner_health`): `EnsureImage` → `CreateVm` → `StartVm` → grant +
+//! `runner.health`. Peer identity is resolved by the broker via `SO_PEERCRED`;
 //! any `peerExe` field is diagnostic-only.
+
+#[allow(dead_code)]
+pub(crate) mod scheduled;
 
 use std::{
     env, fs, io,
@@ -54,6 +57,7 @@ impl LinuxVmServiceGuestTransport {
     }
 
     /// Explicit constructor for tests and lab harnesses.
+    #[cfg(test)]
     #[must_use]
     pub fn new(socket_path: PathBuf, peer_exe: PathBuf, proof: impl Into<String>) -> Self {
         Self {
@@ -73,9 +77,11 @@ impl PrivilegedGuestControlTransport for LinuxVmServiceGuestTransport {
         let peer = self.peer_exe.clone();
         let image_root = self.image_root.clone();
         let vm = vm_id.to_owned();
-        spawn_blocking(move || orchestrate_runner_health(&socket, &peer, image_root.as_deref(), &vm, &proof))
-            .await
-            .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?
+        spawn_blocking(move || {
+            orchestrate_runner_health(&socket, &peer, image_root.as_deref(), &vm, &proof)
+        })
+        .await
+        .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?
     }
 }
 
@@ -86,7 +92,7 @@ struct RequestEnvelope<P: Serialize> {
     id: String,
     operation: &'static str,
     deadline: String,
-    /// Diagnostic only; broker authorizes via SO_PEERCRED + /proc/pid/exe.
+    /// Diagnostic only; broker authorizes via `SO_PEERCRED` + `/proc/pid/exe`.
     peer_exe: String,
     payload: P,
 }
@@ -124,7 +130,10 @@ struct GuestControlPayload<'a> {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct ResponseEnvelope {
+    version: String,
+    id: String,
     ok: bool,
     #[serde(default)]
     result: Option<serde_json::Value>,
@@ -133,6 +142,7 @@ struct ResponseEnvelope {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct GuestControlResult {
     #[serde(default, deserialize_with = "deserialize_go_byte_slice")]
     body: Vec<u8>,
@@ -141,6 +151,7 @@ struct GuestControlResult {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct ResponseError {
     message: String,
     #[serde(default)]
@@ -163,7 +174,8 @@ where
     }
 }
 
-/// Parses one newline-delimited guest_control success frame.
+/// Parses one newline-delimited `guest_control` success frame.
+#[cfg(test)]
 pub(crate) fn parse_response_frame(line: &str) -> Result<Vec<u8>, PrivilegedGatewayError> {
     let response = parse_envelope(line)?;
     if !response.ok {
@@ -175,23 +187,41 @@ pub(crate) fn parse_response_frame(line: &str) -> Result<Vec<u8>, PrivilegedGate
     let decoded: GuestControlResult = serde_json::from_value(result)
         .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
     if decoded.body.is_empty() {
-        return Err(PrivilegedGatewayError::Unavailable("empty guest health body".into()));
+        return Err(PrivilegedGatewayError::Unavailable(
+            "empty guest health body".into(),
+        ));
     }
     Ok(decoded.body)
 }
 
 fn parse_envelope(line: &str) -> Result<ResponseEnvelope, PrivilegedGatewayError> {
-    if line.len() > MAX_FRAME {
-        return Err(PrivilegedGatewayError::Transport("response too large".into()));
+    if line.is_empty() || line.len() > MAX_FRAME {
+        return Err(PrivilegedGatewayError::Transport(
+            "response is empty or too large".into(),
+        ));
     }
-    serde_json::from_str(line.trim_end())
-        .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))
+    let response: ResponseEnvelope = serde_json::from_str(line.trim_end())
+        .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
+    if response.version != ENVELOPE_VERSION || response.id.is_empty() || response.id.len() > 128 {
+        return Err(PrivilegedGatewayError::Transport(
+            "response envelope negotiation failed".into(),
+        ));
+    }
+    if (response.ok && (response.result.is_none() || response.error.is_some()))
+        || (!response.ok && (response.result.is_some() || response.error.is_none()))
+    {
+        return Err(PrivilegedGatewayError::Transport(
+            "response envelope outcome is ambiguous".into(),
+        ));
+    }
+    Ok(response)
 }
 
 fn map_error(error: Option<ResponseError>) -> PrivilegedGatewayError {
-    let message = error
-        .map(|error| format!("{}: {}", error.code, error.message))
-        .unwrap_or_else(|| "guest control failed".into());
+    let message = error.map_or_else(
+        || "guest control failed".into(),
+        |error| format!("{}: {}", error.code, error.message),
+    );
     PrivilegedGatewayError::Unavailable(message)
 }
 
@@ -234,11 +264,7 @@ fn orchestrate_runner_health(
         },
     )?;
     if !create.ok {
-        let msg = create
-            .error
-            .as_ref()
-            .map(|e| e.message.as_str())
-            .unwrap_or("");
+        let msg = create.error.as_ref().map_or("", |e| e.message.as_str());
         if !msg.contains("vm exists") {
             return Err(map_error(create.error));
         }
@@ -276,7 +302,9 @@ fn orchestrate_runner_health(
     let decoded: GuestControlResult = serde_json::from_value(result)
         .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
     if decoded.body.is_empty() {
-        return Err(PrivilegedGatewayError::Unavailable("empty guest health body".into()));
+        return Err(PrivilegedGatewayError::Unavailable(
+            "empty guest health body".into(),
+        ));
     }
     Ok(decoded.body)
 }
@@ -363,6 +391,7 @@ fn exchange_ok<P: Serialize>(
     Ok(response)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn exchange_raw<P: Serialize>(
     stream: &mut UnixStream,
     peer_exe: &Path,
@@ -372,11 +401,10 @@ fn exchange_raw<P: Serialize>(
 ) -> Result<ResponseEnvelope, PrivilegedGatewayError> {
     let deadline = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() + 10_000)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis() + 10_000);
     let request = RequestEnvelope {
         version: ENVELOPE_VERSION,
-        id,
+        id: id.clone(),
         operation,
         deadline: deadline.to_string(),
         peer_exe: peer_exe.display().to_string(),
@@ -385,23 +413,43 @@ fn exchange_raw<P: Serialize>(
     let mut encoded = serde_json::to_vec(&request)
         .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
     if encoded.len() >= MAX_FRAME {
-        return Err(PrivilegedGatewayError::Transport("request too large".into()));
+        return Err(PrivilegedGatewayError::Transport(
+            "request too large".into(),
+        ));
     }
     encoded.push(b'\n');
     io::Write::write_all(stream, &encoded)
         .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
 
     let mut reader = io::BufReader::new(&*stream);
-    let mut line = String::new();
-    io::BufRead::read_line(&mut reader, &mut line)
+    let mut frame = Vec::new();
+    let mut bounded = io::Read::take(
+        io::Read::by_ref(&mut reader),
+        u64::try_from(MAX_FRAME).unwrap_or(u64::MAX) + 1,
+    );
+    io::BufRead::read_until(&mut bounded, b'\n', &mut frame)
         .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
-    parse_envelope(&line)
+    if frame.len() > MAX_FRAME || !frame.ends_with(b"\n") {
+        return Err(PrivilegedGatewayError::Transport(
+            "response frame is missing or oversized".into(),
+        ));
+    }
+    let line = std::str::from_utf8(&frame)
+        .map_err(|error| PrivilegedGatewayError::Transport(error.to_string()))?;
+    let response = parse_envelope(line)?;
+    if response.id != id {
+        return Err(PrivilegedGatewayError::Transport(
+            "response correlation failed".into(),
+        ));
+    }
+    Ok(response)
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use std::{
+        os::unix::fs::PermissionsExt,
         process::{Child, Command, Stdio},
         thread,
         time::Duration,
@@ -437,7 +485,7 @@ mod tests {
 
     #[test]
     fn rejects_json_number_array_body_as_transport_error() {
-        let bad = r#"{"ok":true,"result":{"method":"runner.health","body":[123,34]}}"#;
+        let bad = r#"{"version":"1.0.0","id":"health-1","ok":true,"result":{"method":"runner.health","body":[123,34]}}"#;
         let error = parse_response_frame(bad).expect_err("array body");
         assert!(
             matches!(error, PrivilegedGatewayError::Transport(_)),
@@ -445,14 +493,31 @@ mod tests {
         );
     }
 
-    /// Live product path: EnsureImage → Create/StartVm → grant + health via socket.
+    #[test]
+    fn rejects_unnegotiated_and_ambiguous_response_envelopes() {
+        for bad in [
+            r#"{"version":"2.0.0","id":"health-1","ok":true,"result":{}}"#,
+            r#"{"version":"1.0.0","id":"health-1","ok":true,"result":{},"error":{"code":"invalid","message":"bad","retryable":false}}"#,
+            r#"{"version":"1.0.0","id":"health-1","ok":false}"#,
+            r#"{"version":"1.0.0","id":"health-1","ok":true,"result":{},"unknown":true}"#,
+        ] {
+            assert!(
+                matches!(
+                    parse_envelope(bad),
+                    Err(PrivilegedGatewayError::Transport(_))
+                ),
+                "accepted {bad}"
+            );
+        }
+    }
+
+    /// Live product path: `EnsureImage` → `CreateVm`/`StartVm` → grant + health via socket.
     #[test]
     fn socket_smoke_orchestrates_ensure_create_start_health() {
-        let socket = std::env::temp_dir().join(format!(
-            "grok-linux-vm-orch-smoke-{}.sock",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&socket);
+        let socket_root = tempfile::tempdir().expect("private socket root");
+        std::fs::set_permissions(socket_root.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("private socket permissions");
+        let socket = socket_root.path().join("broker.sock");
         let image_root = tempfile::tempdir().expect("image root");
         let peer = std::env::current_exe().expect("peer exe");
         // Resolve peer path the way /proc/pid/exe will (symlink-eval).

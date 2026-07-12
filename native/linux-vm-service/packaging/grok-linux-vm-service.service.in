@@ -1,0 +1,38 @@
+[Unit]
+Description=Grok Desktop Linux VM isolation broker
+After=local-fs.target
+ConditionPathExists=/dev/kvm
+
+[Service]
+Type=simple
+User=root
+Group=@@SERVICE_GROUP@@
+EnvironmentFile=/etc/grok-desktop/linux-vm-service.env
+Environment=GROK_LINUX_VM_SOCKET=/run/grok-desktop/linux-vm-service.sock
+Environment=GROK_LINUX_VM_IMAGE_ROOT=/var/lib/grok-desktop/images
+Environment=GROK_LINUX_VM_REQUIRE_KVM=1
+ExecStart=/usr/libexec/grok-desktop/grok-linux-vm-service
+RuntimeDirectory=grok-desktop
+RuntimeDirectoryMode=0750
+StateDirectory=grok-desktop
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+ReadWritePaths=/run/grok-desktop /var/lib/grok-desktop
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

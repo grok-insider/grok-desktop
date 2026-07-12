@@ -438,8 +438,14 @@ export async function inspectServiceGuestCatalogTrust(file, trustedKeys) {
 }
 
 export async function inspectDaemonAcpCatalogTrust(file, trust) {
+  return inspectDaemonAcpCatalogTrustBytes(await readFile(file), trust);
+}
+
+export function inspectDaemonAcpCatalogTrustBytes(contents, trust) {
   assertAcpCatalogTrust(trust);
-  const contents = await readFile(file);
+  if (!Buffer.isBuffer(contents) || contents.length < 1 || contents.length > 128 * 1024 * 1024) {
+    throw new Error("daemon trust inspection input is invalid");
+  }
   if (!contents.includes(Buffer.from(trust.raw, "utf8")) ||
       !contents.includes(Buffer.from(trust.binding, "utf8"))) {
     throw new Error("daemon was not built with the approved ACP catalog trust binding");
@@ -447,10 +453,22 @@ export async function inspectDaemonAcpCatalogTrust(file, trust) {
   return trust;
 }
 
-export async function verifyOfficialGrokCatalog(file, architecture, trust, nowUnixSeconds) {
+export async function verifyOfficialGrokCatalog(
+  file, architecture, trust, nowUnixSeconds, operatingSystem = "windows",
+) {
+  return verifyOfficialGrokCatalogBytes(
+    await readFile(file), architecture, trust, nowUnixSeconds, operatingSystem,
+  );
+}
+
+export function verifyOfficialGrokCatalogBytes(
+  envelopeBytes, architecture, trust, nowUnixSeconds, operatingSystem = "windows",
+) {
   if (!RELEASE_ARCHITECTURES.has(architecture)) throw new Error("official Grok catalog target is unsupported");
+  if (operatingSystem !== "windows" && operatingSystem !== "linux") {
+    throw new Error("official Grok catalog operating system is unsupported");
+  }
   assertAcpCatalogTrust(trust);
-  const envelopeBytes = await readFile(file);
   const envelope = parseStrictBoundedJSON(
     envelopeBytes, maxAcpCatalogEnvelopeSize, "official Grok catalog envelope",
   );
@@ -501,11 +519,12 @@ export async function verifyOfficialGrokCatalog(file, architecture, trust, nowUn
     const platform = `${component.os}/${component.architecture}`;
     if (platforms.has(platform)) throw new Error("official Grok catalog contains a duplicate platform");
     platforms.add(platform);
-    if (component.os === "windows" && component.architecture === expectedArchitecture) selected = component;
+    if (component.os === operatingSystem && component.architecture === expectedArchitecture) selected = component;
   }
   if (!selected) throw new Error("official Grok catalog does not contain the package platform");
-  if (selected.executable !== acpComponentRelativePath) {
-    throw new Error("official Grok release component must use bin/grok.exe");
+  const expectedExecutable = operatingSystem === "windows" ? acpComponentRelativePath : "bin/grok";
+  if (selected.executable !== expectedExecutable) {
+    throw new Error(`official Grok release component must use ${expectedExecutable}`);
   }
   return {
     sequence: payload.sequence,

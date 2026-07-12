@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1472,12 +1473,14 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
 
   it("forwards a complete official Grok Build ACP descriptor only for development launches", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "grok-acp-descriptor-"));
-    const executable = path.join(directory, "grok");
+    const acpExecutable = path.join(directory, "grok");
     try {
-      writeFileSync(executable, "test executable");
-      vi.stubEnv("GROK_ACP_EXECUTABLE", executable);
+      writeFileSync(acpExecutable, "#!/bin/sh\nprintf 'grok 0.2.97\\n'\n");
+      chmodSync(acpExecutable, 0o700);
+      const digest = createHash("sha256").update(readFileSync(acpExecutable)).digest("hex");
+      vi.stubEnv("GROK_ACP_EXECUTABLE", acpExecutable);
       vi.stubEnv("GROK_ACP_VERSION", "0.2.97");
-      vi.stubEnv("GROK_ACP_SHA256", "B".repeat(64));
+      vi.stubEnv("GROK_ACP_SHA256", digest.toUpperCase());
       vi.stubEnv("PATH", "/safe/bin");
 
       const development = daemonEnvironment(
@@ -1491,9 +1494,9 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
         false,
       );
 
-      expect(development.GROK_ACP_EXECUTABLE).toBe(executable);
+      expect(development.GROK_ACP_EXECUTABLE).toBe(acpExecutable);
       expect(development.GROK_ACP_VERSION).toBe("0.2.97");
-      expect(development.GROK_ACP_SHA256).toBe("b".repeat(64));
+      expect(development.GROK_ACP_SHA256).toBe(digest);
       expect(development).not.toHaveProperty("GROK_ACP_WORKSPACE_ROOTS");
       expect(packaged).not.toHaveProperty("GROK_ACP_EXECUTABLE");
       expect(packaged).not.toHaveProperty("GROK_ACP_VERSION");

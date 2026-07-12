@@ -3,8 +3,10 @@
 package linuxvmservice
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,7 +16,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // ContractVersion is the wire contract for get_capabilities.
@@ -54,13 +58,25 @@ var ErrNotFound = errors.New("linux isolation broker not found")
 
 // Capabilities is the static probe document.
 type Capabilities struct {
-	ContractVersion string      `json:"contractVersion"`
-	Backend         string      `json:"backend"`
-	Simulated       bool        `json:"simulated"`
-	Available       bool        `json:"available"`
-	Operations      []Operation `json:"operations"`
-	WorkspaceMode   string      `json:"workspaceMode"`
-	Reason          string      `json:"reason,omitempty"`
+	ContractVersion string                `json:"contractVersion"`
+	Backend         string                `json:"backend"`
+	Simulated       bool                  `json:"simulated"`
+	Available       bool                  `json:"available"`
+	Operations      []Operation           `json:"operations"`
+	WorkspaceMode   string                `json:"workspaceMode"`
+	Reason          string                `json:"reason,omitempty"`
+	Qualification   QualificationEvidence `json:"qualification"`
+}
+
+// QualificationEvidence reports only release-bound facts established by the
+// packaged broker. This development broker deliberately reports them false
+// until production signed-catalog and hardware evidence is wired.
+type QualificationEvidence struct {
+	BrokerPackageVerified      bool   `json:"brokerPackageVerified"`
+	SignedGuestCatalogVerified bool   `json:"signedGuestCatalogVerified"`
+	GuestImageVerified         bool   `json:"guestImageVerified"`
+	HardwareQualified          bool   `json:"hardwareQualified"`
+	EvidenceSHA256             string `json:"evidenceSha256,omitempty"`
 }
 
 // Image is a catalog-selected guest image that passed digest verification.
@@ -107,15 +123,39 @@ type GuestControlRequest struct {
 
 // GuestControlResponse is a non-secret control result.
 type GuestControlResponse struct {
-	Method string `json:"method"`
-	Body   []byte `json:"body,omitempty"`
+	Method  string `json:"method"`
+	Body    []byte `json:"body,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 }
+
+// ScheduledRunRequest is the only payload accepted by scheduled.run.
+type ScheduledRunRequest struct {
+	OccurrenceID string
+	RunID        string
+	Prompt       string
+}
+
+// ScheduledRunOutcome is the closed terminal result returned by the guest.
+type ScheduledRunOutcome string
+
+const (
+	ScheduledRunSucceeded ScheduledRunOutcome = "succeeded"
+	ScheduledRunFailed    ScheduledRunOutcome = "failed"
+)
 
 // PeerIdentity is authenticated at the unix socket accept boundary.
 type PeerIdentity struct {
 	UID            uint32
 	PID            int32
 	ExecutablePath string
+	ExecutableDev  uint64
+	ExecutableIno  uint64
+}
+
+type executableIdentity struct {
+	path string
+	dev  uint64
+	ino  uint64
 }
 
 // HypervisorProcess is a live guest hypervisor process owned by the broker.
@@ -136,6 +176,8 @@ type Config struct {
 	ImageRoot string
 	// AllowedDaemonPaths are exact paths that may call the broker.
 	AllowedDaemonPaths []string
+	// AllowedDaemonUIDs are the exact SO_PEERCRED user identities admitted.
+	AllowedDaemonUIDs []uint32
 	// RequireKVM when true refuses Available unless /dev/kvm exists.
 	RequireKVM bool
 	// Now overrides the clock in tests.
@@ -153,19 +195,29 @@ type Config struct {
 	RunnerHealthHook func(vmID string) ([]byte, error)
 	// GuestHealthDial, when set, is preferred for runner.health over the hook.
 	GuestHealthDial func(ctx context.Context, vmID string, bootID string) ([]byte, error)
+	// ScheduledRunDial invokes the closed scheduled.run guest endpoint. It is
+	// ignored unless release qualification and PoP gates are both live.
+	ScheduledRunDial func(ctx context.Context, vmID string, bootID string, request ScheduledRunRequest) (ScheduledRunOutcome, error)
 }
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,62}$`)
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var scheduledIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+var scheduledPayloadMagic = []byte("GRKSCH01")
+
+const maxScheduledPromptBytes = 64 * 1024
 
 // Service is the closed privileged surface.
 type Service struct {
-	mu        sync.Mutex
-	config    Config
-	images    map[string]Image
-	vms       map[string]*Vm
-	granted   map[string]bool // vmID -> guest control granted for this process lifetime after PoP
-	processes map[string]HypervisorProcess
+	mu            sync.Mutex
+	config        Config
+	images        map[string]Image
+	vms           map[string]*Vm
+	granted       map[string]bool // vmID -> guest control granted for this process lifetime after PoP
+	processes     map[string]HypervisorProcess
+	allowed       []executableIdentity
+	allowedUIDs   map[uint32]struct{}
+	qualification *QualificationEvidence
 }
 
 // NewService constructs a broker. ImageRoot must exist and be private.
@@ -184,13 +236,37 @@ func NewService(config Config) (*Service, error) {
 	if len(config.AllowedDaemonPaths) == 0 {
 		return nil, fmt.Errorf("%w: allowed daemon paths required", ErrInvalid)
 	}
+	if len(config.AllowedDaemonUIDs) == 0 || len(config.AllowedDaemonUIDs) > 16 {
+		return nil, fmt.Errorf("%w: allowed daemon uids required and bounded", ErrInvalid)
+	}
+	allowedUIDs := make(map[uint32]struct{}, len(config.AllowedDaemonUIDs))
+	for _, uid := range config.AllowedDaemonUIDs {
+		if _, exists := allowedUIDs[uid]; exists {
+			return nil, fmt.Errorf("%w: duplicate allowed daemon uid", ErrInvalid)
+		}
+		allowedUIDs[uid] = struct{}{}
+	}
 	cleaned := make([]string, 0, len(config.AllowedDaemonPaths))
+	allowed := make([]executableIdentity, 0, len(config.AllowedDaemonPaths))
 	for _, p := range config.AllowedDaemonPaths {
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			return nil, err
 		}
-		cleaned = append(cleaned, abs)
+		canonical, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: allowed daemon must exist", ErrInvalid)
+		}
+		info, err := os.Stat(canonical)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("%w: allowed daemon must be a regular file", ErrInvalid)
+		}
+		identity, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || identity.Dev == 0 || identity.Ino == 0 {
+			return nil, fmt.Errorf("%w: allowed daemon identity unavailable", ErrInvalid)
+		}
+		cleaned = append(cleaned, canonical)
+		allowed = append(allowed, executableIdentity{path: canonical, dev: identity.Dev, ino: identity.Ino})
 	}
 	config.ImageRoot = root
 	config.AllowedDaemonPaths = cleaned
@@ -201,11 +277,13 @@ func NewService(config Config) (*Service, error) {
 		config.Spawn = defaultQemuSpawn(config.QemuBinary)
 	}
 	return &Service{
-		config:    config,
-		images:    make(map[string]Image),
-		vms:       make(map[string]*Vm),
-		granted:   make(map[string]bool),
-		processes: make(map[string]HypervisorProcess),
+		config:      config,
+		images:      make(map[string]Image),
+		vms:         make(map[string]*Vm),
+		granted:     make(map[string]bool),
+		processes:   make(map[string]HypervisorProcess),
+		allowed:     allowed,
+		allowedUIDs: allowedUIDs,
 	}, nil
 }
 
@@ -225,16 +303,23 @@ func (s *Service) AuthorizePeer(peer PeerIdentity) error {
 	if peer.PID <= 0 {
 		return fmt.Errorf("%w: invalid pid", ErrUnauthorized)
 	}
+	if _, ok := s.allowedUIDs[peer.UID]; !ok {
+		return fmt.Errorf("%w: daemon uid not allowlisted", ErrUnauthorized)
+	}
+	if peer.ExecutableDev == 0 || peer.ExecutableIno == 0 {
+		return fmt.Errorf("%w: executable identity unavailable", ErrUnauthorized)
+	}
 	exe := filepath.Clean(peer.ExecutablePath)
-	for _, allowed := range s.config.AllowedDaemonPaths {
-		if exe == allowed {
+	for _, allowed := range s.allowed {
+		if exe == allowed.path && peer.ExecutableDev == allowed.dev && peer.ExecutableIno == allowed.ino {
 			return nil
 		}
 	}
 	return fmt.Errorf("%w: daemon path not allowlisted", ErrUnauthorized)
 }
 
-// GetCapabilities returns static facts. GuestControl is listed only when KVM is ready.
+// GetCapabilities returns static, non-authorizing facts. Guest control is
+// deliberately absent because a separate proof-backed grant owns that surface.
 func (s *Service) GetCapabilities(ctx context.Context, peer PeerIdentity) (Capabilities, error) {
 	if err := ctx.Err(); err != nil {
 		return Capabilities{}, err
@@ -251,12 +336,16 @@ func (s *Service) GetCapabilities(ctx context.Context, peer PeerIdentity) (Capab
 		OperationDeleteVM,
 		OperationAttachWorkspace,
 	}
-	available := s.kvmReady()
-	reason := ""
-	if !available {
+	qualification := QualificationEvidence{}
+	if s.qualification != nil {
+		qualification = *s.qualification
+	}
+	available := s.kvmReady() && completeQualification(qualification)
+	reason := "signed_release_evidence_unavailable"
+	if !s.kvmReady() {
 		reason = "kvm_unavailable"
-	} else {
-		ops = append(ops, OperationGuestControl)
+	} else if available {
+		reason = ""
 	}
 	// Never advertise simulated isolation as Work-ready.
 	return Capabilities{
@@ -267,6 +356,7 @@ func (s *Service) GetCapabilities(ctx context.Context, peer PeerIdentity) (Capab
 		Operations:      ops,
 		WorkspaceMode:   WorkspaceMode,
 		Reason:          reason,
+		Qualification:   qualification,
 	}, nil
 }
 
@@ -533,7 +623,7 @@ func (s *Service) GuestControl(ctx context.Context, peer PeerIdentity, req Guest
 	if !s.kvmReady() {
 		return GuestControlResponse{}, fmt.Errorf("%w: kvm unavailable", ErrUnavailable)
 	}
-	if req.Method != "runner.health" {
+	if req.Method != "runner.health" && req.Method != "scheduled.run" {
 		return GuestControlResponse{}, fmt.Errorf("%w: method not allowlisted", ErrInvalid)
 	}
 	s.mu.Lock()
@@ -555,6 +645,27 @@ func (s *Service) GuestControl(ctx context.Context, peer PeerIdentity, req Guest
 		return GuestControlResponse{}, fmt.Errorf("%w: hypervisor process not alive", ErrUnavailable)
 	}
 
+	if req.Method == "scheduled.run" {
+		if s.qualification == nil || !completeQualification(*s.qualification) {
+			return GuestControlResponse{}, fmt.Errorf("%w: scheduled work is not release-qualified", ErrUnavailable)
+		}
+		if s.config.ScheduledRunDial == nil {
+			return GuestControlResponse{}, fmt.Errorf("%w: scheduled guest dial not configured", ErrUnavailable)
+		}
+		scheduled, err := decodeScheduledRunPayload(req.Payload)
+		if err != nil {
+			return GuestControlResponse{}, err
+		}
+		outcome, err := s.config.ScheduledRunDial(ctx, req.VmID, bootID, scheduled)
+		if err != nil {
+			return GuestControlResponse{}, err
+		}
+		if outcome != ScheduledRunSucceeded && outcome != ScheduledRunFailed {
+			return GuestControlResponse{}, fmt.Errorf("%w: invalid scheduled guest outcome", ErrUnavailable)
+		}
+		return GuestControlResponse{Method: req.Method, Outcome: string(outcome)}, nil
+	}
+
 	var body []byte
 	var err error
 	switch {
@@ -573,6 +684,43 @@ func (s *Service) GuestControl(ctx context.Context, peer PeerIdentity, req Guest
 		return GuestControlResponse{}, fmt.Errorf("%w: empty guest health response", ErrUnavailable)
 	}
 	return GuestControlResponse{Method: req.Method, Body: body}, nil
+}
+
+func completeQualification(evidence QualificationEvidence) bool {
+	return evidence.BrokerPackageVerified && evidence.SignedGuestCatalogVerified &&
+		evidence.GuestImageVerified && evidence.HardwareQualified && sha256Pattern.MatchString(evidence.EvidenceSHA256)
+}
+
+func decodeScheduledRunPayload(payload []byte) (ScheduledRunRequest, error) {
+	const headerBytes = 8 + 2 + 2 + 4
+	if len(payload) < headerBytes || string(payload[:8]) != string(scheduledPayloadMagic) {
+		return ScheduledRunRequest{}, fmt.Errorf("%w: invalid scheduled payload", ErrInvalid)
+	}
+	occurrenceLength := int(binary.BigEndian.Uint16(payload[8:10]))
+	position := 10
+	if occurrenceLength < 1 || position+occurrenceLength+2+4 > len(payload) {
+		return ScheduledRunRequest{}, fmt.Errorf("%w: invalid scheduled occurrence", ErrInvalid)
+	}
+	occurrenceID := string(payload[position : position+occurrenceLength])
+	position += occurrenceLength
+	runLength := int(binary.BigEndian.Uint16(payload[position : position+2]))
+	position += 2
+	if runLength < 1 || position+runLength+4 > len(payload) {
+		return ScheduledRunRequest{}, fmt.Errorf("%w: invalid scheduled run", ErrInvalid)
+	}
+	runID := string(payload[position : position+runLength])
+	position += runLength
+	promptLength := int(binary.BigEndian.Uint32(payload[position : position+4]))
+	position += 4
+	if promptLength < 1 || promptLength > maxScheduledPromptBytes || position+promptLength != len(payload) {
+		return ScheduledRunRequest{}, fmt.Errorf("%w: invalid scheduled prompt", ErrInvalid)
+	}
+	promptBytes := payload[position:]
+	if !scheduledIDPattern.MatchString(occurrenceID) || !scheduledIDPattern.MatchString(runID) ||
+		!utf8.Valid(promptBytes) || bytes.IndexByte(promptBytes, 0) >= 0 {
+		return ScheduledRunRequest{}, fmt.Errorf("%w: invalid scheduled payload fields", ErrInvalid)
+	}
+	return ScheduledRunRequest{OccurrenceID: occurrenceID, RunID: runID, Prompt: string(promptBytes)}, nil
 }
 
 // defaultQemuSpawn returns a closed QEMU/KVM template with no general NIC.

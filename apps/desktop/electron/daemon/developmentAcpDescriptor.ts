@@ -60,11 +60,23 @@ export function resolveDevelopmentAcpDescriptor(
   const executable = resolveRealPath(pathExecutable);
   if (!executable || !officialGrokBasename(executable, options.platform)) return undefined;
 
-  const version = envVersion ?? normalizeVersion(readVersion(executable));
-  if (!version) return undefined;
+  // Bracket executable version inspection with the digest. This prevents a
+  // path replacement from pairing version output from one generation with
+  // bytes from another; the daemon independently opens and verifies the same
+  // canonical path immediately before starting it.
+  const digestBeforeVersion = hashFile(executable)?.toLowerCase();
+  const measuredVersion = normalizeVersion(readVersion(executable));
+  const digestAfterVersion = hashFile(executable)?.toLowerCase();
+  if (
+    !digestBeforeVersion
+    || digestBeforeVersion !== digestAfterVersion
+    || !measuredVersion
+    || (envVersion !== undefined && envVersion !== measuredVersion)
+    || (envSha !== undefined && envSha !== digestAfterVersion)
+  ) return undefined;
 
-  const sha256 = envSha ?? hashFile(executable);
-  if (!sha256) return undefined;
+  const version = envVersion ?? measuredVersion;
+  const sha256 = envSha ?? digestAfterVersion;
 
   // Never pair a caller-supplied digest with a different auto-detected path
   // when only the digest was set; require a coherent triple.

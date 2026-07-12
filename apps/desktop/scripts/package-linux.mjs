@@ -5,17 +5,32 @@
  * a desktop entry + layout manifest. Does not claim Work isolation; the Linux
  * VM broker is packaged separately when present.
  */
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile, chmod } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, open, readFile, rm, stat, writeFile, chmod } from "node:fs/promises";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { packager } from "@electron/packager";
+import {
+  inspectDaemonAcpCatalogTrustBytes,
+  parseAcpCatalogTrustedKeys,
+  verifyOfficialGrokCatalogBytes,
+} from "./release-utils.mjs";
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repositoryRoot = path.resolve(desktopRoot, "../..");
 const productName = "Grok Desktop";
 const executableName = "grok-desktop";
+const OPEN_CLOEXEC = fsConstants.O_CLOEXEC ?? 0;
+const linuxServiceTemplate = readFileSync(
+  path.join(repositoryRoot, "native/linux-vm-service/packaging/grok-linux-vm-service.service.in"),
+  "utf8",
+);
+const linuxServiceEnvironmentTemplate = readFileSync(
+  path.join(repositoryRoot, "native/linux-vm-service/packaging/linux-vm-service.env.in"),
+  "utf8",
+);
 
 export const LINUX_PACKAGE_ARCHITECTURES = new Set(["x64", "arm64"]);
 
@@ -28,7 +43,8 @@ export function parseLinuxPackageArguments(argv) {
     if (!option?.startsWith("--") || value === undefined) {
       throw new Error("linux package arguments must be option/value pairs");
     }
-    if (option !== "--arch" && option !== "--out" && option !== "--daemon") {
+    if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component",
+      "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
       throw new Error(`unsupported linux package option ${option}`);
     }
     if (values[option]) throw new Error(`linux package option ${option} was repeated`);
@@ -38,12 +54,34 @@ export function parseLinuxPackageArguments(argv) {
   if (!LINUX_PACKAGE_ARCHITECTURES.has(architecture)) {
     throw new Error("--arch must be x64 or arm64");
   }
+  const acpValues = [values["--acp-catalog"], values["--acp-component"], values["--acp-trust-file"]];
+  if (acpValues.some(Boolean) && !acpValues.every(Boolean)) {
+    throw new Error("signed ACP staging requires catalog, component, and trust file together");
+  }
+  const vmService = values["--vm-service"] ? path.resolve(values["--vm-service"]) : undefined;
+  if (!vmService && values["--daemon-uid"] !== undefined) {
+    throw new Error("--daemon-uid is valid only with --vm-service");
+  }
+  if (vmService && (!/^\d{1,10}$/.test(values["--daemon-uid"] ?? "") ||
+      Number(values["--daemon-uid"]) > 0xffff_ffff)) {
+    throw new Error("--daemon-uid must be an explicit uint32 when staging linux-vm-service");
+  }
+  const serviceGroup = values["--service-group"] ?? "grok-desktop-broker";
+  if (!/^[a-z_][a-z0-9_-]{0,30}$/.test(serviceGroup)) {
+    throw new Error("--service-group is invalid");
+  }
   return {
     architecture,
     out: values["--out"]
       ? path.resolve(values["--out"])
       : path.join(repositoryRoot, "out", "release", "linux", architecture),
     daemonBinary: values["--daemon"] ? path.resolve(values["--daemon"]) : undefined,
+    acpCatalog: values["--acp-catalog"] ? path.resolve(values["--acp-catalog"]) : undefined,
+    acpComponent: values["--acp-component"] ? path.resolve(values["--acp-component"]) : undefined,
+    acpTrustFile: values["--acp-trust-file"] ? path.resolve(values["--acp-trust-file"]) : undefined,
+    vmService,
+    daemonUid: vmService ? Number(values["--daemon-uid"]) : undefined,
+    serviceGroup,
   };
 }
 
@@ -78,10 +116,134 @@ export async function resolveLinuxDaemonBinary(options) {
 }
 
 async function assertExecutableFile(filePath, label) {
+  const link = await lstat(filePath);
+  if (link.isSymbolicLink()) throw new Error(`${label} must not be a symbolic link: ${filePath}`);
   const info = await stat(filePath);
   if (!info.isFile()) throw new Error(`${label} is not a file: ${filePath}`);
   // Owner-executable bit (or any exec bit) required for packaged launch.
   if ((info.mode & 0o111) === 0) throw new Error(`${label} is not executable: ${filePath}`);
+}
+
+export async function inspectElfExecutable(filePath, architecture) {
+  await assertExecutableFile(filePath, "ELF executable");
+  const header = (await readFile(filePath)).subarray(0, 20);
+  inspectElfHeader(header, architecture);
+}
+
+function inspectElfHeader(header, architecture) {
+  const expectedMachine = architecture === "x64" ? 62 : 183;
+  if (header.length < 20 || !header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+      header[4] !== 2 || header[5] !== 1 || header.readUInt16LE(18) !== expectedMachine) {
+    throw new Error("ELF executable architecture does not match the package");
+  }
+}
+
+async function openRetainedSource(filePath, label, maximumBytes, executable = false) {
+  const handle = await open(filePath, fsConstants.O_RDONLY | OPEN_CLOEXEC | fsConstants.O_NOFOLLOW);
+  try {
+    const identity = await handle.stat({ bigint: true });
+    if (!identity.isFile() || identity.size < 1n || identity.size > BigInt(maximumBytes) ||
+        (executable && (identity.mode & 0o111n) === 0n)) {
+      throw new Error(`${label} is not a bounded regular file`);
+    }
+    return { handle, identity, label };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function openRetainedSources(specifications) {
+  const sources = [];
+  try {
+    for (const specification of specifications) {
+      sources.push(await openRetainedSource(...specification));
+    }
+    return sources;
+  } catch (error) {
+    await Promise.all(sources.map((source) => source.handle.close()));
+    throw error;
+  }
+}
+
+async function assertRetainedIdentity(source) {
+  const current = await source.handle.stat({ bigint: true });
+  for (const field of ["dev", "ino", "size", "mode"]) {
+    if (current[field] !== source.identity[field]) throw new Error(`${source.label} identity changed during staging`);
+  }
+}
+
+async function readRetainedSource(source) {
+  const size = Number(source.identity.size);
+  const bytes = Buffer.alloc(size);
+  let position = 0;
+  while (position < size) {
+    const { bytesRead } = await source.handle.read(bytes, position, size - position, position);
+    if (bytesRead === 0) throw new Error(`${source.label} was truncated during staging`);
+    position += bytesRead;
+  }
+  await assertRetainedIdentity(source);
+  return bytes;
+}
+
+async function hashRetainedSource(source) {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  while (position < Number(source.identity.size)) {
+    const length = Math.min(buffer.length, Number(source.identity.size) - position);
+    const { bytesRead } = await source.handle.read(buffer, 0, length, position);
+    if (bytesRead === 0) throw new Error(`${source.label} was truncated during staging`);
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  await assertRetainedIdentity(source);
+  return hash.digest("hex");
+}
+
+async function copyRetainedSource(source, destination, mode, expectedDigest) {
+  const output = await open(
+    destination,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | OPEN_CLOEXEC | fsConstants.O_NOFOLLOW,
+    mode,
+  );
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  try {
+    while (position < Number(source.identity.size)) {
+      const length = Math.min(buffer.length, Number(source.identity.size) - position);
+      const { bytesRead } = await source.handle.read(buffer, 0, length, position);
+      if (bytesRead === 0) throw new Error(`${source.label} was truncated during staging`);
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await output.write(buffer, written, bytesRead - written, position + written);
+        if (result.bytesWritten === 0) throw new Error(`failed to stage ${source.label}`);
+        written += result.bytesWritten;
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    await output.sync();
+  } finally {
+    await output.close();
+  }
+  await assertRetainedIdentity(source);
+  const digest = hash.digest("hex");
+  if (expectedDigest && digest !== expectedDigest) throw new Error(`${source.label} changed during staging`);
+  return digest;
+}
+
+export function renderLinuxVmServiceUnit({ serviceGroup }) {
+  if (!/^[a-z_][a-z0-9_-]{0,30}$/.test(serviceGroup)) throw new Error("service group is invalid");
+  return linuxServiceTemplate.replace("@@SERVICE_GROUP@@", serviceGroup);
+}
+
+export function renderLinuxVmServiceEnvironment({ daemonUid }) {
+  if (!Number.isInteger(daemonUid) || daemonUid < 0 || daemonUid > 0xffff_ffff) {
+    throw new Error("daemon uid is invalid");
+  }
+  return linuxServiceEnvironmentTemplate.replace("@@DAEMON_UID@@", String(daemonUid));
 }
 
 export function renderLinuxDesktopEntry({ name, execPath, iconPath, version }) {
@@ -168,6 +330,98 @@ export async function prepareLinuxPackagingSource(sourceRoot, packageMetadata) {
   );
 }
 
+export async function stageVerifiedLinuxAcp(resourcesBin, options, daemonSource, nowUnixSeconds) {
+  if (!options.acpCatalog) return undefined;
+  const sources = await openRetainedSources([
+    [options.acpTrustFile, "ACP trust file", 4096],
+    [options.acpCatalog, "ACP signed catalog", 512 * 1024],
+    [options.acpComponent, "ACP component", 1024 * 1024 * 1024, true],
+    [daemonSource, "daemon", 128 * 1024 * 1024, true],
+  ]);
+  const [trustSource, catalogSource, componentSource, daemonSourceHandle] = sources;
+  try {
+    const trustRaw = (await readRetainedSource(trustSource)).toString("utf8").trim();
+    const trust = parseAcpCatalogTrustedKeys(trustRaw);
+    const catalogBytes = await readRetainedSource(catalogSource);
+    const catalog = verifyOfficialGrokCatalogBytes(
+      catalogBytes, options.architecture, trust, nowUnixSeconds, "linux",
+    );
+    inspectDaemonAcpCatalogTrustBytes(await readRetainedSource(daemonSourceHandle), trust);
+    const componentHeader = Buffer.alloc(20);
+    if ((await componentSource.handle.read(componentHeader, 0, 20, 0)).bytesRead !== 20) {
+      throw new Error("ACP component ELF header is truncated");
+    }
+    inspectElfHeader(componentHeader, options.architecture);
+    const componentRoot = path.join(resourcesBin, "components", "grok-acp");
+    const stagedCatalog = path.join(componentRoot, "catalog.json");
+    const stagedComponent = path.join(componentRoot, "bin", "grok");
+    await mkdir(path.dirname(stagedComponent), { recursive: true, mode: 0o755 });
+    const catalogDigest = createHash("sha256").update(catalogBytes).digest("hex");
+    await copyRetainedSource(catalogSource, stagedCatalog, 0o644, catalogDigest);
+    const sourceDigest = await copyRetainedSource(
+      componentSource, stagedComponent, 0o755, catalog.component.sha256,
+    );
+    if (componentSource.identity.size !== BigInt(catalog.component.size)) {
+      throw new Error("signed ACP catalog does not match the selected Linux component size");
+    }
+    await inspectElfExecutable(stagedComponent, options.architecture);
+    const stagedCatalogBytes = await readFile(stagedCatalog);
+    if (createHash("sha256").update(stagedCatalogBytes).digest("hex") !== catalogDigest) {
+      throw new Error("staged ACP catalog differs from verified bytes");
+    }
+    verifyOfficialGrokCatalogBytes(
+      stagedCatalogBytes, options.architecture, trust, nowUnixSeconds, "linux",
+    );
+    return {
+      catalog: stagedCatalog,
+      component: stagedComponent,
+      version: catalog.component.version,
+      sha256: sourceDigest,
+      trustBinding: trust.binding,
+    };
+  } finally {
+    await Promise.all(sources.map((source) => source.handle.close()));
+  }
+}
+
+export async function stageLinuxVmServiceBundle(out, options, daemonSource) {
+  if (!options.vmService) return undefined;
+  const [serviceSource, daemonSourceHandle] = await openRetainedSources([
+    [options.vmService, "linux-vm-service", 128 * 1024 * 1024, true],
+    [daemonSource, "daemon", 128 * 1024 * 1024, true],
+  ]);
+  try {
+    const serviceHeader = Buffer.alloc(20);
+    if ((await serviceSource.handle.read(serviceHeader, 0, 20, 0)).bytesRead !== 20) {
+      throw new Error("linux-vm-service ELF header is truncated");
+    }
+    inspectElfHeader(serviceHeader, options.architecture);
+    const digest = await hashRetainedSource(serviceSource);
+    const binding = `grok-linux-vm-service-trust-v1:${createHash("sha256").update(digest).digest("hex")}`;
+    const daemonBytes = await readRetainedSource(daemonSourceHandle);
+    if (!daemonBytes.includes(Buffer.from(digest)) || !daemonBytes.includes(Buffer.from(binding))) {
+      throw new Error("daemon was not built with the staged linux-vm-service trust binding");
+    }
+  const serviceRoot = path.join(out, "linux-service");
+  const binary = path.join(serviceRoot, "usr", "libexec", "grok-desktop", "grok-linux-vm-service");
+  const unit = path.join(serviceRoot, "usr", "lib", "systemd", "system", "grok-linux-vm-service.service");
+  const environment = path.join(serviceRoot, "etc", "grok-desktop", "linux-vm-service.env");
+  await mkdir(path.dirname(binary), { recursive: true, mode: 0o755 });
+  await mkdir(path.dirname(unit), { recursive: true, mode: 0o755 });
+  await mkdir(path.dirname(environment), { recursive: true, mode: 0o750 });
+  await copyRetainedSource(serviceSource, binary, 0o755, digest);
+  await writeFile(unit, renderLinuxVmServiceUnit(options), { encoding: "utf8", mode: 0o644 });
+  await writeFile(environment, renderLinuxVmServiceEnvironment(options), { encoding: "utf8", mode: 0o640 });
+  await inspectElfExecutable(binary, options.architecture);
+  if (await sha256File(binary) !== digest) {
+    throw new Error("staged linux-vm-service differs from its verified source bytes");
+  }
+    return { serviceRoot, binary, unit, environment, sha256: digest, trustBinding: binding };
+  } finally {
+    await Promise.all([serviceSource.handle.close(), daemonSourceHandle.handle.close()]);
+  }
+}
+
 async function main() {
   if (process.platform !== "linux") {
     throw new Error("Linux packages must be assembled on a Linux host");
@@ -178,13 +432,18 @@ async function main() {
   const daemonSource = await resolveLinuxDaemonBinary(options);
 
   await rm(options.out, { recursive: true, force: true });
-  await mkdir(options.out, { recursive: true });
+  await mkdir(options.out, { recursive: true, mode: 0o700 });
+  await chmod(options.out, 0o700);
 
   const resourcesBin = path.join(options.out, "stage-resources", "bin");
   await mkdir(resourcesBin, { recursive: true });
   const stagedDaemon = path.join(resourcesBin, "grok-daemon");
   await cp(daemonSource, stagedDaemon);
   await chmod(stagedDaemon, 0o755);
+  const stagedAcp = await stageVerifiedLinuxAcp(
+    resourcesBin, options, daemonSource, Math.floor(Date.now() / 1000),
+  );
+  const stagedVmService = await stageLinuxVmServiceBundle(options.out, options, daemonSource);
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "grok-desktop-linux-pkg-"));
   try {
@@ -245,6 +504,18 @@ async function main() {
       executable,
       daemonSha256: await sha256File(packagedDaemon),
       daemonSource,
+      acp: stagedAcp ? {
+        staged: true,
+        version: stagedAcp.version,
+        sha256: stagedAcp.sha256,
+        trustBinding: stagedAcp.trustBinding,
+      } : { staged: false },
+      vmService: stagedVmService ? {
+        staged: true,
+        sha256: stagedVmService.sha256,
+        serviceGroup: options.serviceGroup,
+        daemonUid: options.daemonUid,
+      } : { staged: false },
       isolation: "not_embedded",
       notes:
         "Work isolation requires the separate linux-vm-service and signed guest image; this package is fail-closed Limited Mode for Work.",

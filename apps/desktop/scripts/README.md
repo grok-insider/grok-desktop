@@ -81,6 +81,27 @@ pnpm dev:web
 Opening the renderer without either Electron's preload bridge or that explicit
 preview command fails closed instead of loading interactive sample data.
 
+## Linux release assembly
+
+`package-linux.mjs` always supports a daemon-only Limited Mode package. Its
+product-only inputs are all-or-nothing:
+
+- `--acp-catalog`, `--acp-component`, and `--acp-trust-file` stage the official
+  signed Linux Grok Build component without changing its bytes.
+- `--vm-service`, `--daemon-uid`, and optional `--service-group` emit the
+  root-installed broker binary, systemd unit, and explicit peer-policy file.
+- The supplied daemon must contain the exact ACP public-trust binding and
+  linux-vm-service digest binding. Runtime environment values cannot replace
+  those build bindings.
+
+All native inputs are retained through no-follow file handles while identity,
+size, architecture, and digest are checked and streamed into exclusive staging
+destinations. Symlinks, incomplete input sets, unsafe service groups, implicit
+UIDs, byte changes, and trust mismatches fail packaging. See
+[Linux release notes](../../../docs/platform/linux-release.md) for the complete
+command, output layout, installation policy, and remaining external
+qualification gates.
+
 ## Hyprland GUI verification
 
 For visual GUI verification on this development host, reserve Hyprland

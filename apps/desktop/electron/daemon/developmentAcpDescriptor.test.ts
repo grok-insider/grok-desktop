@@ -18,12 +18,8 @@ describe("developmentAcpDescriptor", () => {
         GROK_ACP_SHA256: "A".repeat(64),
       },
       resolveRealPath: (filePath) => filePath,
-      hashFile: () => {
-        throw new Error("hash should not run when sha is provided");
-      },
-      readVersion: () => {
-        throw new Error("version should not run when version is provided");
-      },
+      hashFile: () => "a".repeat(64),
+      readVersion: () => "grok 0.2.97",
       findOnPath: () => {
         throw new Error("path lookup should not run when executable is provided");
       },
@@ -65,6 +61,30 @@ describe("developmentAcpDescriptor", () => {
     });
 
     expect(descriptor).toBeUndefined();
+  });
+
+  it("rejects replacement during version inspection and mismatched explicit evidence", () => {
+    let hashCall = 0;
+    expect(resolveDevelopmentAcpDescriptor({
+      platform: "linux",
+      env: { PATH: "/opt/xai/bin" },
+      findOnPath: () => "/opt/xai/bin/grok",
+      resolveRealPath: (filePath) => filePath,
+      hashFile: () => (++hashCall === 1 ? "a" : "b").repeat(64),
+      readVersion: () => "grok 0.2.97",
+    })).toBeUndefined();
+
+    expect(resolveDevelopmentAcpDescriptor({
+      platform: "linux",
+      env: {
+        GROK_ACP_EXECUTABLE: "/opt/xai/bin/grok",
+        GROK_ACP_VERSION: "0.2.98",
+        GROK_ACP_SHA256: "c".repeat(64),
+      },
+      resolveRealPath: (filePath) => filePath,
+      hashFile: () => "c".repeat(64),
+      readVersion: () => "grok 0.2.97",
+    })).toBeUndefined();
   });
 
   it("rejects incomplete or workspace-root overrides", () => {
