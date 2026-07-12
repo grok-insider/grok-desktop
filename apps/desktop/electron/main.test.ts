@@ -75,6 +75,8 @@ const mocks = vi.hoisted(() => {
     webContents,
     electron: {
       app: {
+        commandLine: { appendSwitch: vi.fn() },
+        disableHardwareAcceleration: vi.fn(),
         exit: vi.fn(),
         getAppPath: vi.fn(() => "/app"),
         getPath: vi.fn(() => "/tmp"),
@@ -82,6 +84,7 @@ const mocks = vi.hoisted(() => {
         isPackaged: true,
         on: vi.fn(),
         quit: vi.fn(),
+        relaunch: vi.fn(),
         requestSingleInstanceLock: vi.fn(() => true),
         whenReady: vi.fn(() => Promise.resolve()),
       },

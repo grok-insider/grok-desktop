@@ -14,6 +14,10 @@ import {
   resolveCdpProfileDirectory,
   waitForElectronCdp,
 } from "./dev-cdp-utils.mjs";
+import {
+  DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE,
+  softwareFallbackArguments,
+} from "./graphics-launch-utils.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -83,50 +87,75 @@ async function main() {
     delete environment.VITE_BROWSER_PREVIEW;
     delete environment.VITE_DEV_SERVER_URL;
 
-    const child = spawn(electronBinary, [
+    const baseArguments = [
       `--remote-debugging-address=${DEFAULT_CDP_HOST}`,
       `--remote-debugging-port=${options.port}`,
       `--user-data-dir=${profileDirectory}`,
-      desktopRoot,
-    ], {
-      cwd: desktopRoot,
-      env: environment,
-      shell: false,
-      stdio: "inherit",
-      windowsHide: false,
-    });
-    ownedChild = child;
-    const exit = childExit(child);
-    await updateOwnedSessionRecord(sessionPath, sessionId, {
-      schemaVersion: 1,
-      sessionId,
-      profile: options.profile,
-      port: options.port,
-      launcherPid: process.pid,
-      electronPid: child.pid,
-      stage: "running",
-      startedAt: new Date().toISOString(),
-    });
+    ];
+    let launchArguments = baseArguments;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const child = spawn(electronBinary, [...launchArguments, desktopRoot], {
+        cwd: desktopRoot,
+        env: environment,
+        shell: false,
+        stdio: "inherit",
+        windowsHide: false,
+      });
+      ownedChild = child;
+      const exit = childExit(child);
+      await updateOwnedSessionRecord(sessionPath, sessionId, {
+        schemaVersion: 1,
+        sessionId,
+        profile: options.profile,
+        port: options.port,
+        launcherPid: process.pid,
+        electronPid: child.pid,
+        stage: "running",
+        startedAt: new Date().toISOString(),
+      });
 
-    const discovery = await Promise.race([
-      waitForElectronCdp(options.port),
-      exit.then((outcome) => {
-        throw childExitError("Electron", outcome);
-      }),
-    ]);
-    process.stdout.write([
-      `Grok Desktop CDP is listening at http://${DEFAULT_CDP_HOST}:${options.port}`,
-      `Profile: ${options.profile} (${profileDirectory})`,
-      `Renderer target: ${discovery.targetUrl}`,
-      `Electron PID: ${child.pid}`,
-      "Run `pnpm test:e2e:electron -- --port " + options.port + "` in another terminal to probe the bridge.",
-      "",
-    ].join("\n"));
+      const startup = await Promise.race([
+        waitForElectronCdp(options.port).then((discovery) => ({ kind: "ready", discovery })),
+        exit.then((outcome) => ({ kind: "exit", outcome })),
+      ]);
+      if (startup.kind === "exit") {
+        ownedChild = undefined;
+        if (
+          startup.outcome.code === DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE
+          && !startup.outcome.signal
+          && attempt === 0
+        ) {
+          launchArguments = softwareFallbackArguments(baseArguments);
+          process.stderr.write("dev:cdp: retrying once with software rendering\n");
+          continue;
+        }
+        throw childExitError("Electron", startup.outcome);
+      }
 
-    const outcome = await exit;
-    ownedChild = undefined;
-    if (!receivedSignal && (outcome.code !== 0 || outcome.signal)) throw childExitError("Electron", outcome);
-    if (receivedSignal) process.exitCode = signalExitCode(receivedSignal);
+      process.stdout.write([
+        `Grok Desktop CDP is listening at http://${DEFAULT_CDP_HOST}:${options.port}`,
+        `Profile: ${options.profile} (${profileDirectory})`,
+        `Renderer target: ${startup.discovery.targetUrl}`,
+        `Electron PID: ${child.pid}`,
+        "Run `pnpm test:e2e:electron -- --port " + options.port + "` in another terminal to probe the bridge.",
+        "",
+      ].join("\n"));
+
+      const outcome = await exit;
+      ownedChild = undefined;
+      if (
+        outcome.code === DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE
+        && !outcome.signal
+        && attempt === 0
+      ) {
+        launchArguments = softwareFallbackArguments(baseArguments);
+        process.stderr.write("dev:cdp: retrying once with software rendering\n");
+        continue;
+      }
+      if (!receivedSignal && (outcome.code !== 0 || outcome.signal)) throw childExitError("Electron", outcome);
+      if (receivedSignal) process.exitCode = signalExitCode(receivedSignal);
+      break;
+    }
   } finally {
     terminateOwnedChild("SIGTERM");
     await removeOwnedSessionRecord(sessionPath, sessionId);

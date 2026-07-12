@@ -62,6 +62,27 @@ Electron CDP smoke (daemon already on the QA profile):
 pnpm test:e2e:electron -- --port 9250
 ```
 
+## Linux graphics backend
+
+Electron selects its startup backend before creating a window. Pure Wayland and
+pure X11 sessions use their available backend. When both Wayland and XWayland
+are present, Mesa-class systems prefer native Wayland while detected NVIDIA
+systems prefer XWayland to avoid incompatible DMA-BUF/EGL imports. A GPU crash
+before the first usable window causes one software-rendered restart; it never
+loops or changes the renderer sandbox, context isolation, CSP, or web security.
+
+For driver diagnosis, override the automatic policy explicitly:
+
+```sh
+pnpm dev -- --grok-graphics-backend=auto
+pnpm dev -- --grok-graphics-backend=wayland
+pnpm dev -- --grok-graphics-backend=x11
+pnpm dev -- --grok-graphics-backend=software
+```
+
+Packaged Electron accepts the same `--grok-graphics-backend` values. Invalid or
+conflicting values are ignored in favor of automatic selection.
+
 Windows packaging: `pnpm package:windows`. HCS-dependent tests require the
 documented Windows qualification workers. Release matrix:
 [release-qualification.md](../quality/release-qualification.md). Packaging

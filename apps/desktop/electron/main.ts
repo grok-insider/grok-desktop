@@ -33,6 +33,12 @@ import { resolveDevelopmentServerUrl } from "./developmentServer.js";
 import { resolveTrayIconPath } from "./trayIcon.js";
 import { isTrustedTopLevelAppSender } from "./trustedSenderPolicy.js";
 import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy.js";
+import {
+  applyGraphicsPolicy,
+  DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE,
+  graphicsRelaunchArguments,
+  resolveGraphicsPolicy,
+} from "./graphicsPolicy.js";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 let supervisor: DaemonSupervisor | undefined;
@@ -42,6 +48,8 @@ let shutdownStarted = false;
 let shutdownCompleted = false;
 let keepRunningInNotificationArea = true;
 let applicationDocumentForWindow: string | undefined;
+let primaryWindowUsable = false;
+let graphicsFallbackStarting = false;
 const productionDocument = "grok-desktop://app/index.html";
 const deepLinkDelivery = new DesktopDeepLinkDelivery();
 const conversationWatches = new Map<number, Map<string, ConversationWatch>>();
@@ -80,6 +88,50 @@ protocol.registerSchemesAsPrivileged([{
   scheme: "grok-desktop",
   privileges: { standard: true, secure: true, corsEnabled: false, supportFetchAPI: false, stream: true },
 }]);
+
+const graphicsPolicy = resolveGraphicsPolicy({
+  platform: process.platform,
+  argv: process.argv.slice(1),
+  waylandDisplay: process.env.WAYLAND_DISPLAY,
+  x11Display: process.env.DISPLAY,
+  glxVendor: process.env["__GLX_VENDOR_LIBRARY_NAME"],
+  gbmBackend: process.env.GBM_BACKEND,
+  nvidiaDriverPresent: process.platform === "linux" && existsSync("/proc/driver/nvidia/version"),
+});
+applyGraphicsPolicy(graphicsPolicy, app);
+if (graphicsPolicy.warning) {
+  console.warn(`graphics policy ignored a ${graphicsPolicy.warning} argument set`);
+}
+console.info(`graphics backend=${graphicsPolicy.backend} reason=${graphicsPolicy.reason}`);
+
+async function restartWithSoftwareGraphics(): Promise<void> {
+  if (graphicsFallbackStarting) return;
+  graphicsFallbackStarting = true;
+  console.warn("GPU startup failed; restarting once with software rendering");
+  if (app.isPackaged) {
+    app.relaunch({ args: graphicsRelaunchArguments(process.argv.slice(1)) });
+  }
+  const activeSupervisor = supervisor;
+  if (activeSupervisor) {
+    try {
+      await activeSupervisor.stop();
+    } catch {
+      // A graphics fallback must not strand the current process indefinitely.
+    }
+  }
+  app.exit(app.isPackaged ? 0 : DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE);
+}
+
+app.on("child-process-gone", (_event, details) => {
+  if (
+    details.type === "GPU"
+    && !primaryWindowUsable
+    && !graphicsPolicy.fallbackAttempted
+    && graphicsPolicy.backend !== "software"
+  ) {
+    void restartWithSoftwareGraphics();
+  }
+});
 
 function createWindow(applicationDocument: string): BrowserWindow {
   const window = new BrowserWindow({
@@ -121,7 +173,10 @@ function createWindow(applicationDocument: string): BrowserWindow {
     clearConversationWatches(webContentsId);
     if (primaryWindow === window) primaryWindow = undefined;
   });
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    primaryWindowUsable = true;
+    window.show();
+  });
 
   void window.loadURL(applicationDocument);
   primaryWindow = window;

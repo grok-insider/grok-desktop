@@ -55,6 +55,8 @@ const mocks = vi.hoisted(() => {
     setToolTip: vi.fn(),
   };
   const app = {
+    commandLine: { appendSwitch: vi.fn() },
+    disableHardwareAcceleration: vi.fn(),
     exit: vi.fn(),
     getAppPath: vi.fn(() => "/app"),
     getPath: vi.fn(() => "/tmp"),
@@ -62,6 +64,7 @@ const mocks = vi.hoisted(() => {
     isPackaged: true,
     on: vi.fn((name: string, listener: Listener) => register("app", name, listener)),
     quit: vi.fn(),
+    relaunch: vi.fn(),
     requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
   };
@@ -167,6 +170,35 @@ afterEach(() => {
 });
 
 describe("main process window and quit lifecycle", () => {
+  it("relaunches once in software mode when the GPU dies before the window is usable", async () => {
+    await bootMain();
+    const childGone = registered(mocks.appEvents, "child-process-gone");
+
+    childGone({}, { type: "GPU", reason: "crashed", exitCode: 8704 });
+    childGone({}, { type: "GPU", reason: "crashed", exitCode: 8704 });
+
+    await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledWith(0));
+    expect(mocks.app.relaunch).toHaveBeenCalledOnce();
+    expect(mocks.app.relaunch.mock.calls[0]?.[0]?.args).toEqual(expect.arrayContaining([
+      "--grok-graphics-backend=software",
+      "--grok-graphics-fallback-attempted",
+    ]));
+    expect(mocks.daemon.stop).toHaveBeenCalledOnce();
+  });
+
+  it("does not restart active user work after the first window becomes usable", async () => {
+    await bootMain();
+    registered(mocks.windowEvents, "ready-to-show")();
+    registered(mocks.appEvents, "child-process-gone")({}, {
+      type: "GPU",
+      reason: "crashed",
+      exitCode: 8704,
+    });
+
+    expect(mocks.app.relaunch).not.toHaveBeenCalled();
+    expect(mocks.app.exit).not.toHaveBeenCalled();
+  });
+
   it("hides a normal close and lets tray Quit complete one graceful daemon shutdown", async () => {
     const stop = deferred();
     mocks.daemon.stop.mockReturnValue(stop.promise);
