@@ -37,11 +37,13 @@ import type {
   DesktopClient,
   DesktopPreferences,
   DesktopSnapshot,
+  GetUsageSummaryInput,
   LibraryItem,
   ManagedIntegrationDetail,
   MediaCreation,
   StartRunInput,
   SuperGrokEnrollmentStatus,
+  UsageSummary,
   VoiceSession,
   VoiceSetup,
   WorkspaceSearchResults,
@@ -566,6 +568,29 @@ export class ElectronDesktopClient implements DesktopClient {
       }
     }
     return catalog;
+  }
+
+  async getUsageSummary(input: GetUsageSummaryInput): Promise<UsageSummary> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.getUsageSummary",
+      scopeKind: input.scopeKind,
+      ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
+      window: input.window,
+    });
+    if (response.kind !== "daemon.usageSummary") {
+      throw new Error("invalid usage-summary bridge response");
+    }
+    return {
+      inputTokens: response.summary.inputTokens,
+      outputTokens: response.summary.outputTokens,
+      costInUsdTicks: response.summary.costInUsdTicks,
+      turnCount: response.summary.turnCount,
+      scopeKind: response.summary.scopeKind,
+      scopeId: response.summary.scopeId,
+      window: response.summary.window,
+      asOfUnixMs: response.summary.asOfUnixMs,
+    };
   }
 
   async selectChatModel(input: {

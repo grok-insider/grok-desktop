@@ -28,6 +28,9 @@ import type {
   DaemonStatus,
   DaemonSuperGrokEnrollmentStatus,
   DaemonThread,
+  DaemonUsageScopeKind,
+  DaemonUsageSummary,
+  DaemonUsageWindow,
   DaemonWorkspaceSnapshot,
   DaemonWorkspaceSearchResults,
 } from "../../src/contracts/bridge.js";
@@ -340,6 +343,21 @@ export class DaemonSupervisor {
     const catalog = await this.requireProtocol().getChatModelCatalog();
     this.setConnected();
     return mapChatModelCatalog(catalog);
+  }
+
+  async getUsageSummary(
+    scopeKind: DaemonUsageScopeKind,
+    scopeId: string | undefined,
+    window: DaemonUsageWindow,
+  ): Promise<DaemonUsageSummary> {
+    await this.start();
+    const summary = await this.requireProtocol().getUsageSummary(
+      scopeKind,
+      scopeId ?? "",
+      window,
+    );
+    this.setConnected();
+    return mapUsageSummary(summary);
   }
 
   async selectChatModel(
@@ -2089,6 +2107,35 @@ function mapChatModelPreference(
     selectedModelId: boundedModelIdentifier(preference.selectedModelId, "selected chat model id"),
     revision: safeNumber(preference.revision, "chat model preference revision"),
     updatedAtUnixMs: safeNumber(preference.updatedAtUnixMs, "chat model preference update time"),
+  };
+}
+
+function mapUsageSummary(
+  summary: import("../generated/daemon/v1/daemon.js").UsageSummary,
+): DaemonUsageSummary {
+  const scopeKind = summary.scopeKind;
+  if (scopeKind !== "workspace" && scopeKind !== "project" && scopeKind !== "thread") {
+    throw new DaemonProtocolError("daemon usage summary scope is invalid");
+  }
+  const window = summary.window;
+  if (window !== "last_7_days" && window !== "last_30_days" && window !== "all_time") {
+    throw new DaemonProtocolError("daemon usage summary window is invalid");
+  }
+  if (scopeKind === "workspace" && summary.scopeId.length > 0) {
+    throw new DaemonProtocolError("daemon workspace usage summary must not include a scope id");
+  }
+  if (scopeKind !== "workspace" && summary.scopeId.length === 0) {
+    throw new DaemonProtocolError("daemon usage summary is missing a scope id");
+  }
+  return {
+    inputTokens: safeNumber(summary.inputTokens, "usage input tokens"),
+    outputTokens: safeNumber(summary.outputTokens, "usage output tokens"),
+    costInUsdTicks: safeNumber(summary.costInUsdTicks, "usage cost ticks"),
+    turnCount: safeNumber(summary.turnCount, "usage turn count"),
+    scopeKind,
+    scopeId: scopeKind === "workspace" ? "" : boundedString(summary.scopeId, "usage scope id", 128),
+    window,
+    asOfUnixMs: safeNumber(summary.asOfUnixMs, "usage as-of time"),
   };
 }
 

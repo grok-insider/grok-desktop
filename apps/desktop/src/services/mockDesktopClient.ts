@@ -241,6 +241,19 @@ export class MockDesktopClient implements DesktopClient {
     return structuredClone(this.chatModelCatalog);
   }
 
+  async getUsageSummary(input: import("./desktopClient").GetUsageSummaryInput): Promise<import("./desktopClient").UsageSummary> {
+    return {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      costInUsdTicks: 0,
+      turnCount: 3,
+      scopeKind: input.scopeKind,
+      scopeId: input.scopeId ?? "",
+      window: input.window,
+      asOfUnixMs: Date.now(),
+    };
+  }
+
   async selectChatModel(input: {
     expectedRevision: number;
     modelId: string;

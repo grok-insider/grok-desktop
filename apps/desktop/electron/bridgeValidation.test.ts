@@ -205,6 +205,46 @@ describe("parseBridgeRequest", () => {
     }
   });
 
+  it("accepts only exact usage summary scopes and windows", () => {
+    expect(parseBridgeRequest({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "workspace",
+      window: "last_7_days",
+    })).toEqual({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "workspace",
+      window: "last_7_days",
+    });
+    expect(parseBridgeRequest({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "thread",
+      scopeId: "thread-1",
+      window: "last_30_days",
+    })).toEqual({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "thread",
+      scopeId: "thread-1",
+      window: "last_30_days",
+    });
+    expect(() => parseBridgeRequest({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "workspace",
+      scopeId: "extra",
+      window: "last_7_days",
+    })).toThrow("workspace usage summary must not include a scope id");
+    expect(() => parseBridgeRequest({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "project",
+      window: "last_7_days",
+    })).toThrow("usage scope id is required");
+    expect(() => parseBridgeRequest({
+      kind: "daemon.getUsageSummary",
+      scopeKind: "thread",
+      scopeId: "thread-1",
+      window: "weekly",
+    })).toThrow("usage window is invalid");
+  });
+
   it("accepts only bounded idempotent conversation start requests", () => {
     expect(parseBridgeRequest({
       kind: "daemon.startConversationTurn",

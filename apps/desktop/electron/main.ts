@@ -586,6 +586,14 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
       const catalog = await daemon.getChatModelCatalog();
       return { kind: "daemon.chatModelCatalog", catalog };
     }
+    if (request.kind === "daemon.getUsageSummary") {
+      const summary = await daemon.getUsageSummary(
+        request.scopeKind,
+        request.scopeId,
+        request.window,
+      );
+      return { kind: "daemon.usageSummary", summary };
+    }
     if (request.kind === "daemon.beginSuperGrokDeviceEnrollment") {
       const status = await daemon.beginSuperGrokDeviceEnrollment(request.idempotencyKey);
       return { kind: "daemon.superGrokEnrollmentStatus", status };

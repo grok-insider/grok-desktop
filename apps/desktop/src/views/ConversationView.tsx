@@ -36,6 +36,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { formatUsageLine } from "../lib/usageFormat";
 import { IconButton } from "../components/ui";
 import { useDesktopClient } from "../services/DesktopClientContext";
 import type {
@@ -651,6 +652,12 @@ function MessageBlock({
           />
         ) : null}
       </div>
+
+      {!isUser && turn?.state === "completed" && (turn.usage.inputTokens > 0 || turn.usage.outputTokens > 0) ? (
+        <p className="m-0 mt-1.5 font-mono text-label text-subtle-foreground" aria-label="Response usage">
+          {formatUsageLine(turn.usage)}
+        </p>
+      ) : null}
 
       {message.citations.length > 0 ? (
         <div aria-label="Sources" className="mt-3 flex flex-wrap gap-2">

@@ -395,6 +395,26 @@ export interface ChatModelCatalog {
   defaultModelReady: boolean;
 }
 
+export type UsageScopeKind = "workspace" | "project" | "thread";
+export type UsageWindow = "last_7_days" | "last_30_days" | "all_time";
+
+export interface UsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  costInUsdTicks: number;
+  turnCount: number;
+  scopeKind: UsageScopeKind;
+  scopeId: string;
+  window: UsageWindow;
+  asOfUnixMs: number;
+}
+
+export interface GetUsageSummaryInput {
+  scopeKind: UsageScopeKind;
+  scopeId?: string;
+  window: UsageWindow;
+}
+
 export interface StartRunInput {
   prompt: string;
   mode: "chat" | "work";
@@ -420,6 +440,7 @@ export interface DesktopClient {
   getDesktopPreferences(): Promise<DesktopPreferences>;
   updateDesktopPreferences(input: { expectedRevision: number; keepRunningInNotificationArea: boolean }): Promise<DesktopPreferences>;
   getChatModelCatalog(): Promise<ChatModelCatalog>;
+  getUsageSummary(input: GetUsageSummaryInput): Promise<UsageSummary>;
   selectChatModel(input: { expectedRevision: number; modelId: string }): Promise<ChatModelPreference>;
   beginGrokBuildAuth(): Promise<ClientResult<GrokAuthChallenge>>;
   completeGrokBuildAuth(): Promise<ClientResult<AccountSetupState>>;

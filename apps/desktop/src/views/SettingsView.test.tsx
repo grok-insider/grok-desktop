@@ -57,7 +57,7 @@ describe("SettingsView", () => {
 
     const navigation = screen.getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = within(navigation).getAllByRole("button");
-    expect(sectionButtons).toHaveLength(3);
+    expect(sectionButtons).toHaveLength(4);
     sectionButtons.forEach((button) => expect(button).toHaveAttribute("aria-controls", "settings-panel"));
 
     const accountButton = within(navigation).getByRole("button", { name: "Account" });
@@ -73,11 +73,11 @@ describe("SettingsView", () => {
     expect(screen.getByRole("region", { name: "General" })).toBeInTheDocument();
 
     fireEvent.keyDown(generalButton, { key: "End" });
-    const updatesButton = within(navigation).getByRole("button", { name: "Models" });
-    expect(updatesButton).toHaveFocus();
-    expect(screen.getByRole("region", { name: "Models" })).toBeInTheDocument();
+    const usageButton = within(navigation).getByRole("button", { name: "Usage" });
+    expect(usageButton).toHaveFocus();
+    expect(screen.getByRole("region", { name: "Usage" })).toBeInTheDocument();
 
-    fireEvent.keyDown(updatesButton, { key: "Home" });
+    fireEvent.keyDown(usageButton, { key: "Home" });
     expect(accountButton).toHaveFocus();
     expect(screen.getByRole("region", { name: "Account" })).toBeInTheDocument();
   });

@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   Bot,
+  ChartColumn,
   CircleAlert,
   KeyRound,
   Laptop,
@@ -12,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { formatTokenCount, formatUsageLine } from "../lib/usageFormat";
 import { Button, PageHeader, Toggle } from "../components/ui";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
 import { useDesktopClient } from "../services/DesktopClientContext";
@@ -19,6 +21,7 @@ import type {
   AccountSetupState,
   DesktopPreferences,
   SuperGrokEnrollmentStatus,
+  UsageSummary,
 } from "../services/desktopClient";
 
 // Only sections with at least one daemon-backed control are advertised.
@@ -28,6 +31,7 @@ const settingSections = [
   { id: "account", label: "Account", icon: UserRound },
   { id: "general", label: "General", icon: Laptop },
   { id: "models", label: "Models", icon: Bot },
+  { id: "usage", label: "Usage", icon: ChartColumn },
 ] as const;
 
 type SettingsSection = (typeof settingSections)[number]["id"];
@@ -98,6 +102,7 @@ export function SettingsView() {
             aria-labelledby={settingsHeadingId(section)}
           >
             {section === "account" && <AccountSettings />}
+            {section === "usage" && <UsageSettings />}
             {section === "general" && <GeneralSettings />}
             {section === "models" && <ModelSettings />}
           </section>
@@ -427,5 +432,87 @@ function ModelSettings() {
         )}
       </aside>
     </>
+  );
+}
+
+function UsageSettings() {
+  const client = useDesktopClient();
+  const [last7, setLast7] = useState<UsageSummary | null>(null);
+  const [last30, setLast30] = useState<UsageSummary | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      const [week, month] = await Promise.all([
+        client.getUsageSummary({ scopeKind: "workspace", window: "last_7_days" }),
+        client.getUsageSummary({ scopeKind: "workspace", window: "last_30_days" }),
+      ]);
+      setLast7(week);
+      setLast30(month);
+      setStatus("ready");
+    } catch (cause) {
+      setStatus("error");
+      setError(cause instanceof Error ? cause.message : "Usage could not be loaded.");
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [client]);
+
+  return (
+    <>
+      <SettingsHeading
+        section="usage"
+        title="Usage"
+        description="Official completed Chat turns only. Grok Desktop never invents tokens from context size."
+      />
+      <SettingsGroup>
+        {status === "loading" && (
+          <div className="space-y-3 p-4" role="status" aria-label="Loading usage">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        )}
+        {status === "error" && (
+          <div className="border-b border-warning/20 bg-warning-soft p-4" role="alert">
+            <p className="m-0 text-body-sm text-warning">{error}</p>
+            <Button className="mt-2" variant="secondary" onClick={() => void load()}>
+              <RefreshCw size={14} aria-hidden="true" /> Retry
+            </Button>
+          </div>
+        )}
+        {status === "ready" && last7 && last30 && (
+          <>
+            <UsageWindowRow title="Last 7 days" summary={last7} />
+            <UsageWindowRow title="Last 30 days" summary={last30} />
+          </>
+        )}
+      </SettingsGroup>
+      <p className="m-0 mt-3 text-body-sm text-subtle-foreground">
+        SuperGrok weekly plan allowance is not shown here yet. When available, it will use a separate
+        daemon-owned subscription probe — not third-party usage tools.
+      </p>
+    </>
+  );
+}
+
+function UsageWindowRow({ title, summary }: { title: string; summary: UsageSummary }) {
+  return (
+    <div className="flex min-h-[72px] items-center justify-between gap-6 border-b border-border px-4 py-3 last:border-b-0 max-[680px]:flex-col max-[680px]:items-stretch">
+      <div className="min-w-0">
+        <h3 className="m-0 text-body font-semibold text-foreground">{title}</h3>
+        <p className="m-0 mt-1 font-mono text-body-sm text-subtle-foreground">
+          {formatUsageLine(summary)} · {formatTokenCount(summary.turnCount)} turns
+        </p>
+      </div>
+      <div className="text-right font-mono text-label text-muted-foreground tabular-nums max-[680px]:text-left">
+        <div>{formatTokenCount(summary.inputTokens)} in</div>
+        <div>{formatTokenCount(summary.outputTokens)} out</div>
+      </div>
+    </div>
   );
 }

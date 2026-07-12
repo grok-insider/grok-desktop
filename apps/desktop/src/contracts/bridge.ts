@@ -293,6 +293,21 @@ export interface DaemonChatModelCatalog {
   defaultModelReady: boolean;
 }
 
+export type DaemonUsageScopeKind = "workspace" | "project" | "thread";
+export type DaemonUsageWindow = "last_7_days" | "last_30_days" | "all_time";
+
+/** Aggregate of official completed-turn usage for one scope and window. */
+export interface DaemonUsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  costInUsdTicks: number;
+  turnCount: number;
+  scopeKind: DaemonUsageScopeKind;
+  scopeId: string;
+  window: DaemonUsageWindow;
+  asOfUnixMs: number;
+}
+
 export type DaemonConversationTurnState =
   | "reserved"
   | "provider_started"
@@ -432,6 +447,12 @@ export type BridgeRequest =
   | { kind: "daemon.getDesktopPreferences" }
   | { kind: "daemon.updateDesktopPreferences"; expectedRevision: number; keepRunningInNotificationArea: boolean; idempotencyKey: string }
   | { kind: "daemon.getChatModelCatalog" }
+  | {
+      kind: "daemon.getUsageSummary";
+      scopeKind: DaemonUsageScopeKind;
+      scopeId?: string;
+      window: DaemonUsageWindow;
+    }
   | { kind: "daemon.selectChatModel"; expectedRevision: number; modelId: string; idempotencyKey: string }
   | { kind: "daemon.enrollXaiApiKey"; idempotencyKey: string }
   | { kind: "daemon.deleteXaiApiKey"; idempotencyKey: string }
@@ -483,6 +504,7 @@ export type BridgeResponse =
     }
   | { kind: "daemon.desktopPreferences"; preferences: DaemonDesktopPreferences }
   | { kind: "daemon.chatModelCatalog"; catalog: DaemonChatModelCatalog }
+  | { kind: "daemon.usageSummary"; summary: DaemonUsageSummary }
   | { kind: "daemon.chatModelPreference"; preference: DaemonChatModelPreference }
   | { kind: "daemon.credentialEnrollmentFailure"; reason: "cancelled" | "integrity_failure" }
   | { kind: "daemon.project"; project: DaemonProject }

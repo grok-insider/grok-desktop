@@ -36,7 +36,7 @@ import {
 } from "../generated/daemon/v1/daemon.js";
 
 // Epoch twenty-one adds daemon-owned SuperGrok enrollment while preserving epoch twenty fail-closed surfaces.
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;
@@ -990,6 +990,24 @@ export class DaemonProtocolClient {
         CHAT_MODEL_RPC_TIMEOUT_MS,
       ),
       "chatModelCatalog",
+    );
+  }
+
+  async getUsageSummary(
+    scopeKind: string,
+    scopeId: string,
+    window: string,
+  ): Promise<import("../generated/daemon/v1/daemon.js").UsageSummary> {
+    return expectResult(
+      await this.rpc.request(
+        {
+          $case: "getUsageSummary",
+          value: { scopeKind, scopeId, window },
+        },
+        "",
+        CHAT_MODEL_RPC_TIMEOUT_MS,
+      ),
+      "usageSummary",
     );
   }
 

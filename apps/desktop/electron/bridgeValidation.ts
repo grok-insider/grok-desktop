@@ -77,6 +77,24 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
       idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
     };
   }
+  if (kind === "daemon.getUsageSummary") {
+    exactKeys(input, ["kind", "scopeKind", "scopeId", "window"], "usage summary request");
+    const scopeKind = string(input.scopeKind, "usage scope kind", 32);
+    if (scopeKind !== "workspace" && scopeKind !== "project" && scopeKind !== "thread") {
+      throw new TypeError("usage scope kind is invalid");
+    }
+    const window = string(input.window, "usage window", 32);
+    if (window !== "last_7_days" && window !== "last_30_days" && window !== "all_time") {
+      throw new TypeError("usage window is invalid");
+    }
+    const scopeId = input.scopeId === undefined ? undefined : identifier(input.scopeId, "usage scope id");
+    if (scopeKind === "workspace") {
+      if (scopeId !== undefined) throw new TypeError("workspace usage summary must not include a scope id");
+      return { kind, scopeKind, window };
+    }
+    if (scopeId === undefined) throw new TypeError("usage scope id is required");
+    return { kind, scopeKind, scopeId, window };
+  }
   if (kind === "daemon.selectChatModel") {
     exactKeys(input, ["kind", "expectedRevision", "modelId", "idempotencyKey"], "chat model selection request");
     return {
