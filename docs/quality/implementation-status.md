@@ -306,18 +306,18 @@ remain under **Windows qualification blockers**.
 
 | Train | Status |
 | --- | --- |
-| T0 Architecture + GA contract | **Done in docs** (this snapshot): `linux-ga.md`, platform ADRs 0004–0007, threat-model Linux section, ADR 0003 extended |
-| T1 Linux packaging / updater | Missing (`package:windows` only) |
-| T2 BYOK / pinentry / Files qualification on package | Code largely present; packaged matrix open |
-| T3 Linux QEMU/KVM broker + virtio image | Missing (simulator only off-Windows) |
-| T4 Privileged gateway + PoP + live isolation facts | Journal exists; no I/O gateway; Work hard-unavailable |
-| T5 Subscription host auth + guest ACP Work | Auth not exposed on desktop IPC; host_control only |
+| T0 Architecture + GA contract | **Done** (`linux-ga.md`, platform ADRs 0004–0007) |
+| T1 Linux packaging / updater | **Done entry** (`pnpm package:linux` embeds daemon; no auto-updater) |
+| T2 BYOK / pinentry / Files qualification | **Code + structural tests**; full packaged DE matrix still open |
+| T3 Linux QEMU/KVM broker + virtio image | **Broker contract + lifecycle/PoP gates** (`native/linux-vm-service`); QEMU spawn template still pending |
+| T4 Privileged gateway + PoP + live isolation facts | **Gateway `runner.health`** with no auto-replay; Work Available only with auth+isolation facts |
+| T5 Subscription host auth + guest ACP Work | **Host auth IPC v17 + Setup Connect**; guest sessions still isolation-gated |
 | T6 Overlay host commit UX | Specified; not product-wired |
 | T7 Automation execution | Schema 19 journal; execution disabled |
 | T8 Media / voice / search product ops | UI fail-closed / capabilities unavailable |
 | T9 Managed browser + Wisp lifecycle | Contracts; not production install path |
 | T10–T11 Policy settings, export, diagnostics | Mostly stubs |
-| T12 Linux release matrix + evidence | Not started |
+| T12 Linux release matrix + evidence | In progress (engineering evidence under goal scratch) |
 
 ## Product blockers
 
