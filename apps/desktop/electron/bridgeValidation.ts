@@ -93,6 +93,18 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
       idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
     };
   }
+  if (
+    kind === "daemon.beginSuperGrokDeviceEnrollment" ||
+    kind === "daemon.cancelSuperGrokEnrollment" ||
+    kind === "daemon.disconnectSuperGrok"
+  ) {
+    exactKeys(input, ["kind", "idempotencyKey"], "SuperGrok enrollment request");
+    return { kind, idempotencyKey: identifier(input.idempotencyKey, "idempotency key") };
+  }
+  if (kind === "daemon.getSuperGrokEnrollmentStatus") {
+    exactKeys(input, ["kind"], "SuperGrok enrollment status request");
+    return { kind };
+  }
   if (kind === "daemon.deleteXaiApiKey") {
     exactKeys(input, ["kind", "idempotencyKey"], "credential deletion request");
     return {

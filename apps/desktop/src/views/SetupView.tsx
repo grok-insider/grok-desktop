@@ -26,7 +26,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Button, PageHeader } from "../components/ui";
 import { useDesktopClient } from "../services/DesktopClientContext";
-import type { AccountSetupState, ReadinessCheck } from "../services/desktopClient";
+import type {
+  AccountSetupState,
+  ReadinessCheck,
+  SuperGrokEnrollmentStatus,
+} from "../services/desktopClient";
 import { GROK_BUILD_AUTH_UNAVAILABLE_REASON } from "../services/productAvailability";
 
 type SetupStep = "grok" | "api" | "readiness";
@@ -76,13 +80,16 @@ export function SetupView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [superGrok, setSuperGrok] = useState<SuperGrokEnrollmentStatus | null>(null);
 
   useEffect(() => {
     let active = true;
-    void client
-      .getAccountSetup()
-      .then((value) => {
-        if (active) setSetup(value);
+    void Promise.all([client.getAccountSetup(), client.getSuperGrokEnrollmentStatus()])
+      .then(([value, superGrokStatus]) => {
+        if (active) {
+          setSetup(value);
+          setSuperGrok(superGrokStatus);
+        }
       })
       .catch((error: unknown) => {
         if (active) {
@@ -96,6 +103,60 @@ export function SetupView() {
       active = false;
     };
   }, [client]);
+
+  useEffect(() => {
+    if (superGrok?.state !== "awaiting_user" && superGrok?.state !== "starting") return;
+    const timer = window.setInterval(() => {
+      void client.getSuperGrokEnrollmentStatus().then((status) => {
+        setSuperGrok(status);
+        if (status.state === "connected") {
+          void client.getAccountSetup().then(setSetup);
+          setNotice("SuperGrok API Chat connected. New conversations now use your plan API allowance.");
+        }
+      }).catch((error: unknown) => {
+        setNotice(error instanceof Error ? error.message : "SuperGrok status could not be refreshed.");
+      });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [client, superGrok?.state]);
+
+  const beginSuperGrok = async () => {
+    setBusy(true);
+    setNotice("");
+    try {
+      const status = await client.beginSuperGrokDeviceEnrollment();
+      setSuperGrok(status);
+      if (status.verificationUri) void client.openExternalUrl(status.verificationUri);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "SuperGrok connection could not be started.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelSuperGrok = async () => {
+    setBusy(true);
+    try {
+      setSuperGrok(await client.cancelSuperGrokEnrollment());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "SuperGrok connection could not be cancelled.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnectSuperGrok = async () => {
+    setBusy(true);
+    try {
+      setSuperGrok(await client.disconnectSuperGrok());
+      setSetup(await client.getAccountSetup());
+      setNotice("SuperGrok API Chat disconnected. New conversations use the xAI API-key rail when configured.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "SuperGrok could not be disconnected.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const enrollKey = async () => {
     setBusy(true);
@@ -280,9 +341,62 @@ export function SetupView() {
               <div className="max-w-[65ch]">
                 <SetupHeading icon={<KeyRound size={22} />} id="api-setup-heading" title="xAI API key" />
                 <p className="m-0 text-body-lg text-muted-foreground">
-                  Direct xAI capabilities require a user-owned key stored through a native secure credential prompt.
-                  Subscription OAuth remains separate.
+                  Choose an official API credential rail. SuperGrok uses your plan&apos;s API allowance; a user-owned key
+                  uses xAI API billing. Grok Build usage remains separate.
                 </p>
+
+                <div className="mt-6 rounded-lg border border-border bg-muted p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="m-0 text-title-sm text-foreground">SuperGrok plan</h3>
+                      <p className="mt-1 mb-0 text-body-sm text-muted-foreground">
+                        Fresh authorization through the official xAI device flow. No browser cookies are imported.
+                      </p>
+                    </div>
+                    <Badge variant={superGrok?.state === "connected" ? "success" : "neutral"}>
+                      {superGrok?.state === "connected" ? "Connected · active" : "Not connected"}
+                    </Badge>
+                  </div>
+
+                  {superGrok?.state === "awaiting_user" ? (
+                    <div className="mt-4 rounded-md border border-input bg-card p-4" role="status">
+                      <p className="m-0 text-body font-semibold text-foreground">Enter this code at xAI</p>
+                      <p className="mt-2 mb-0 font-mono text-title font-semibold tracking-[0.06em] text-foreground">
+                        {superGrok.userCode}
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => void client.openExternalUrl(superGrok.verificationUri)}
+                        >
+                          <ExternalLink size={15} aria-hidden="true" /> Open verification page
+                        </Button>
+                        <Button variant="ghost" disabled={busy} onClick={() => void cancelSuperGrok()}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : superGrok?.state === "connected" ? (
+                    <Button className="mt-4" variant="danger" disabled={busy} onClick={() => void disconnectSuperGrok()}>
+                      Disconnect SuperGrok
+                    </Button>
+                  ) : (
+                    <Button className="mt-4" variant="primary" loading={busy} disabled={busy} onClick={() => void beginSuperGrok()}>
+                      <ExternalLink size={15} aria-hidden="true" /> Connect SuperGrok
+                    </Button>
+                  )}
+                  {superGrok?.state === "failed" ? (
+                    <p className="mt-3 mb-0 text-body-sm text-destructive" role="alert">
+                      Authorization failed ({superGrok.reasonCode || "provider_unavailable"}).
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 rounded-lg border border-border bg-card p-4">
+                  <h3 className="m-0 text-title-sm text-foreground">User-owned xAI API key</h3>
+                  <p className="mt-1 mb-0 text-body-sm text-muted-foreground">
+                    Stored through a native secure credential prompt and billed to your xAI API account.
+                  </p>
 
                 {loading ? (
                   <CredentialStatusSkeleton label="Loading credential status" />
@@ -310,6 +424,7 @@ export function SetupView() {
                     </Button>
                   </div>
                 )}
+                </div>
 
                 <Button className="mt-6 px-0" variant="ghost" disabled={busy} onClick={() => setStep("readiness")}>
                   Continue to readiness <ArrowRight size={14} aria-hidden="true" />

@@ -26,6 +26,7 @@ import type {
   DaemonRun,
   DaemonRunState,
   DaemonStatus,
+  DaemonSuperGrokEnrollmentStatus,
   DaemonThread,
   DaemonWorkspaceSnapshot,
   DaemonWorkspaceSearchResults,
@@ -63,6 +64,7 @@ import {
   type CapabilityStatus,
   type Run,
   type RunEvent,
+  type SuperGrokEnrollmentStatus,
   RunEventKind,
   RunState,
   ThreadState,
@@ -360,6 +362,30 @@ export class DaemonSupervisor {
     const state = await this.requireProtocol().enrollXaiApiKey(parentWindowToken, idempotencyKey);
     this.setConnected();
     return mapAccountState(state);
+  }
+
+  async beginSuperGrokDeviceEnrollment(idempotencyKey: string): Promise<DaemonSuperGrokEnrollmentStatus> {
+    await this.start();
+    return mapSuperGrokEnrollmentStatus(
+      await this.requireProtocol().beginSuperGrokDeviceEnrollment(idempotencyKey),
+    );
+  }
+
+  async getSuperGrokEnrollmentStatus(): Promise<DaemonSuperGrokEnrollmentStatus> {
+    await this.start();
+    return mapSuperGrokEnrollmentStatus(await this.requireProtocol().getSuperGrokEnrollmentStatus());
+  }
+
+  async cancelSuperGrokEnrollment(idempotencyKey: string): Promise<DaemonSuperGrokEnrollmentStatus> {
+    await this.start();
+    return mapSuperGrokEnrollmentStatus(
+      await this.requireProtocol().cancelSuperGrokEnrollment(idempotencyKey),
+    );
+  }
+
+  async disconnectSuperGrok(idempotencyKey: string): Promise<DaemonSuperGrokEnrollmentStatus> {
+    await this.start();
+    return mapSuperGrokEnrollmentStatus(await this.requireProtocol().disconnectSuperGrok(idempotencyKey));
   }
 
   async deleteXaiApiKey(idempotencyKey: string): Promise<DaemonAccountState> {
@@ -2020,6 +2046,27 @@ function mapAccountState(
     xaiApiKeyConfigured: state.xaiApiKeyConfigured,
     xaiCapabilitiesResolved: state.xaiCapabilitiesResolved,
     grokBuildAuthenticated: state.grokBuildAuthenticated === true,
+  };
+}
+
+function mapSuperGrokEnrollmentStatus(
+  status: SuperGrokEnrollmentStatus,
+): DaemonSuperGrokEnrollmentStatus {
+  const states = new Set(["disconnected", "starting", "awaiting_user", "connected", "failed"]);
+  if (!states.has(status.state)) {
+    throw new DaemonProtocolError("daemon returned an invalid SuperGrok enrollment state");
+  }
+  return {
+    state: status.state as DaemonSuperGrokEnrollmentStatus["state"],
+    verificationUri: status.verificationUri
+      ? boundedHttpsUrl(status.verificationUri, "SuperGrok verification URI", 2_048)
+      : "",
+    userCode: status.userCode ? boundedString(status.userCode, "SuperGrok user code", 128) : "",
+    expiresAtUnixMs: safeNumber(status.expiresAtUnixMs, "SuperGrok enrollment expiry"),
+    credentialGeneration: safeNumber(status.credentialGeneration, "SuperGrok credential generation"),
+    reasonCode: status.reasonCode
+      ? boundedString(status.reasonCode, "SuperGrok failure reason", 128)
+      : "",
   };
 }
 

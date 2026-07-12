@@ -42,6 +42,7 @@ import type {
   ManagedIntegrationDetail,
   MediaCreation,
   StartRunInput,
+  SuperGrokEnrollmentStatus,
   VoiceSession,
   VoiceSetup,
   WorkspaceSearchResults,
@@ -470,6 +471,7 @@ export class ElectronDesktopClient implements DesktopClient {
     const workAvailable = work?.available === true;
     return {
       grokBuild: grokConnected ? "connected" : "not_connected",
+      superGrok: "not_connected",
       xaiApiKey: apiKeyConfigured ? "configured" : "not_configured",
       limitedMode: !workAvailable,
       checks: [
@@ -647,6 +649,49 @@ export class ElectronDesktopClient implements DesktopClient {
     };
     await this.refreshDaemonSnapshot();
     return { status: "success", value: await this.getAccountSetup() };
+  }
+
+  async beginSuperGrokDeviceEnrollment(): Promise<SuperGrokEnrollmentStatus> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.beginSuperGrokDeviceEnrollment",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.superGrokEnrollmentStatus") {
+      throw new Error("invalid SuperGrok enrollment bridge response");
+    }
+    return response.status;
+  }
+
+  async getSuperGrokEnrollmentStatus(): Promise<SuperGrokEnrollmentStatus> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({ kind: "daemon.getSuperGrokEnrollmentStatus" });
+    if (response.kind !== "daemon.superGrokEnrollmentStatus") {
+      throw new Error("invalid SuperGrok enrollment status bridge response");
+    }
+    return response.status;
+  }
+
+  async cancelSuperGrokEnrollment(): Promise<SuperGrokEnrollmentStatus> {
+    const response = await this.bridge.request({
+      kind: "daemon.cancelSuperGrokEnrollment",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.superGrokEnrollmentStatus") {
+      throw new Error("invalid SuperGrok cancellation bridge response");
+    }
+    return response.status;
+  }
+
+  async disconnectSuperGrok(): Promise<SuperGrokEnrollmentStatus> {
+    const response = await this.bridge.request({
+      kind: "daemon.disconnectSuperGrok",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.superGrokEnrollmentStatus") {
+      throw new Error("invalid SuperGrok disconnect bridge response");
+    }
+    return response.status;
   }
 
   async enrollXaiApiKey(): Promise<ClientResult<AccountSetupState>> {

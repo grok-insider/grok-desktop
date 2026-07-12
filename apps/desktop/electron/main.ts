@@ -518,6 +518,22 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
       const catalog = await daemon.getChatModelCatalog();
       return { kind: "daemon.chatModelCatalog", catalog };
     }
+    if (request.kind === "daemon.beginSuperGrokDeviceEnrollment") {
+      const status = await daemon.beginSuperGrokDeviceEnrollment(request.idempotencyKey);
+      return { kind: "daemon.superGrokEnrollmentStatus", status };
+    }
+    if (request.kind === "daemon.getSuperGrokEnrollmentStatus") {
+      const status = await daemon.getSuperGrokEnrollmentStatus();
+      return { kind: "daemon.superGrokEnrollmentStatus", status };
+    }
+    if (request.kind === "daemon.cancelSuperGrokEnrollment") {
+      const status = await daemon.cancelSuperGrokEnrollment(request.idempotencyKey);
+      return { kind: "daemon.superGrokEnrollmentStatus", status };
+    }
+    if (request.kind === "daemon.disconnectSuperGrok") {
+      const status = await daemon.disconnectSuperGrok(request.idempotencyKey);
+      return { kind: "daemon.superGrokEnrollmentStatus", status };
+    }
     if (request.kind === "daemon.selectChatModel") {
       const preference = await daemon.selectChatModel(
         request.expectedRevision,

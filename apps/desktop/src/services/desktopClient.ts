@@ -165,9 +165,19 @@ export interface ReadinessCheck {
 
 export interface AccountSetupState {
   grokBuild: "connected" | "not_connected" | "checking";
+  superGrok: "connected" | "not_connected";
   xaiApiKey: "configured" | "not_configured";
   limitedMode: boolean;
   checks: ReadinessCheck[];
+}
+
+export interface SuperGrokEnrollmentStatus {
+  state: "disconnected" | "starting" | "awaiting_user" | "connected" | "failed";
+  verificationUri: string;
+  userCode: string;
+  expiresAtUnixMs: number;
+  credentialGeneration: number;
+  reasonCode: string;
 }
 
 export interface GrokAuthChallenge {
@@ -412,6 +422,10 @@ export interface DesktopClient {
   selectChatModel(input: { expectedRevision: number; modelId: string }): Promise<ChatModelPreference>;
   beginGrokBuildAuth(): Promise<ClientResult<GrokAuthChallenge>>;
   completeGrokBuildAuth(): Promise<ClientResult<AccountSetupState>>;
+  beginSuperGrokDeviceEnrollment(): Promise<SuperGrokEnrollmentStatus>;
+  getSuperGrokEnrollmentStatus(): Promise<SuperGrokEnrollmentStatus>;
+  cancelSuperGrokEnrollment(): Promise<SuperGrokEnrollmentStatus>;
+  disconnectSuperGrok(): Promise<SuperGrokEnrollmentStatus>;
   enrollXaiApiKey(): Promise<ClientResult<AccountSetupState>>;
   deleteXaiApiKey(): Promise<ClientResult<AccountSetupState>>;
   getConversation(threadId: string): Promise<ClientResult<ConversationDetail>>;

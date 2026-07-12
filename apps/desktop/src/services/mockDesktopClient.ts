@@ -19,6 +19,7 @@ import type {
   LibraryItem,
   MediaCreation,
   StartRunInput,
+  SuperGrokEnrollmentStatus,
   VoiceSession,
   VoiceSetup,
   WorkspaceSearchHit,
@@ -39,6 +40,14 @@ export class MockDesktopClient implements DesktopClient {
   private readonly conversations = seedConversations();
   private media = seedMedia();
   private account: AccountSetupState = accountState(true, true);
+  private superGrokStatus: SuperGrokEnrollmentStatus = {
+    state: "disconnected",
+    verificationUri: "",
+    userCode: "",
+    expiresAtUnixMs: 0,
+    credentialGeneration: 0,
+    reasonCode: "",
+  };
   private voiceSession: VoiceSession | undefined;
   private desktopPreferences: DesktopPreferences = {
     keepRunningInNotificationArea: true,
@@ -200,6 +209,10 @@ export class MockDesktopClient implements DesktopClient {
   }
 
   async getAccountSetup(): Promise<AccountSetupState> {
+    this.account = {
+      ...this.account,
+      superGrok: this.superGrokStatus.state === "connected" ? "connected" : "not_connected",
+    };
     return structuredClone(this.account);
   }
 
@@ -258,6 +271,33 @@ export class MockDesktopClient implements DesktopClient {
   async completeGrokBuildAuth(): Promise<ClientResult<AccountSetupState>> {
     this.account = accountState(true, this.account.xaiApiKey === "configured");
     return success(structuredClone(this.account));
+  }
+
+  async beginSuperGrokDeviceEnrollment(): Promise<SuperGrokEnrollmentStatus> {
+    this.superGrokStatus = {
+      state: "awaiting_user",
+      verificationUri: "https://accounts.x.ai/device",
+      userCode: "GROK-DESKTOP",
+      expiresAtUnixMs: Date.now() + 600_000,
+      credentialGeneration: 0,
+      reasonCode: "",
+    };
+    return structuredClone(this.superGrokStatus);
+  }
+
+  async getSuperGrokEnrollmentStatus(): Promise<SuperGrokEnrollmentStatus> {
+    return structuredClone(this.superGrokStatus);
+  }
+
+  async cancelSuperGrokEnrollment(): Promise<SuperGrokEnrollmentStatus> {
+    this.superGrokStatus = { ...this.superGrokStatus, state: "disconnected", verificationUri: "", userCode: "" };
+    return structuredClone(this.superGrokStatus);
+  }
+
+  async disconnectSuperGrok(): Promise<SuperGrokEnrollmentStatus> {
+    this.superGrokStatus = { ...this.superGrokStatus, state: "disconnected", verificationUri: "", userCode: "" };
+    this.account = { ...this.account, superGrok: "not_connected" };
+    return structuredClone(this.superGrokStatus);
   }
 
   async enrollXaiApiKey(): Promise<ClientResult<AccountSetupState>> {
@@ -869,6 +909,7 @@ function success<T>(value: T): ClientResult<T> {
 function accountState(grok: boolean, api: boolean): AccountSetupState {
   return {
     grokBuild: grok ? "connected" : "not_connected",
+    superGrok: "not_connected",
     xaiApiKey: api ? "configured" : "not_configured",
     limitedMode: !grok,
     checks: [
@@ -930,5 +971,3 @@ function seedMedia(): MediaCreation[] {
     { id: "media-4", kind: "video", prompt: "Animate the launch storyboard with subtle interface movement", status: "queued", progress: 0, createdAt: "Now", duration: "6s", aspectRatio: "16:9", provenance: { generator: "Grok Imagine", watermark: true, createdWithGrok: true }, palette: "linear-gradient(135deg, #e5e1ec, #665d79)" },
   ];
 }
-
-

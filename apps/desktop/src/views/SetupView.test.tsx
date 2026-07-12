@@ -57,6 +57,19 @@ describe("SetupView", () => {
     expect(screen.getByText("xAI API key configured")).toBeInTheDocument();
   });
 
+  it("shows only the device code and returns to disconnected after cancellation", async () => {
+    renderSetup();
+
+    fireEvent.click(screen.getByRole("button", { name: /xAI API key/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Connect SuperGrok" }));
+    expect(await screen.findByText("GROK-DESKTOP")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open verification page" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("button", { name: "Connect SuperGrok" })).toBeInTheDocument();
+    expect(screen.queryByText("GROK-DESKTOP")).not.toBeInTheDocument();
+  });
+
   it("reserves the readiness layout while account state is loading", () => {
     renderSetup(new PendingSetupClient());
 

@@ -33,6 +33,15 @@ export interface DaemonStatus {
   updatedAtUnixMs: number;
 }
 
+export interface DaemonSuperGrokEnrollmentStatus {
+  state: "disconnected" | "starting" | "awaiting_user" | "connected" | "failed";
+  verificationUri: string;
+  userCode: string;
+  expiresAtUnixMs: number;
+  credentialGeneration: number;
+  reasonCode: string;
+}
+
 export type DaemonCapabilityId =
   | "chat"
   | "work"
@@ -408,6 +417,10 @@ export type BridgeRequest =
   | { kind: "daemon.getAccountState" }
   | { kind: "daemon.startGrokBuildAuth"; idempotencyKey: string }
   | { kind: "daemon.getGrokBuildAuthStatus" }
+  | { kind: "daemon.beginSuperGrokDeviceEnrollment"; idempotencyKey: string }
+  | { kind: "daemon.getSuperGrokEnrollmentStatus" }
+  | { kind: "daemon.cancelSuperGrokEnrollment"; idempotencyKey: string }
+  | { kind: "daemon.disconnectSuperGrok"; idempotencyKey: string }
   | { kind: "daemon.getManagedIntegration"; integrationId: string }
   | {
       kind: "daemon.changeManagedIntegration";
@@ -455,6 +468,7 @@ export type BridgeResponse =
   | { kind: "daemon.bootstrap"; status: DaemonStatus; capabilities: DaemonCapabilityStatus[]; accountState: DaemonAccountState; workspace: DaemonWorkspaceSnapshot }
   | { kind: "daemon.accountState"; accountState: DaemonAccountState }
   | { kind: "daemon.grokBuildAuthStatus"; state: string; authenticated: boolean }
+  | { kind: "daemon.superGrokEnrollmentStatus"; status: DaemonSuperGrokEnrollmentStatus }
   | {
       kind: "daemon.managedIntegration";
       integration: {
