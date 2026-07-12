@@ -911,7 +911,9 @@ export class DaemonSupervisor {
 
   private spawnDaemon(executable: string): ChildProcess {
     const child = spawn(executable, [], {
-      cwd: this.options.appPath,
+      // Packaged appPath points at app.asar, which is a file. The verified
+      // daemon directory is a real, fixed working directory on every platform.
+      cwd: path.dirname(executable),
       env: daemonEnvironment(
         this.endpoint,
         this.platform,

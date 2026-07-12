@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   linuxDaemonCandidates,
+  linuxAppImageUpdateInformation,
   parseLinuxPackageArguments,
   renderLinuxVmServiceEnvironment,
   renderLinuxVmServiceUnit,
@@ -25,6 +26,18 @@ test("parseLinuxPackageArguments defaults arch from host and rejects bad options
   assert.throws(() => parseLinuxPackageArguments(["--nope", "1"]), /unsupported/);
   assert.throws(() => parseLinuxPackageArguments(["--vm-service", "/bin/true"]), /daemon-uid/);
   assert.throws(() => parseLinuxPackageArguments(["--acp-catalog", "/tmp/catalog"]), /requires/);
+  assert.throws(() => parseLinuxPackageArguments(["--appimagetool", "/tmp/tool"]), /sha256/);
+  assert.equal(parseLinuxPackageArguments([
+    "--appimagetool", "/tmp/tool", "--appimagetool-sha256", "a".repeat(64),
+  ]).appimagetoolSha256, "a".repeat(64));
+});
+
+test("pins AppImage updates to the canonical stable GitHub release asset", () => {
+  assert.equal(
+    linuxAppImageUpdateInformation("x64"),
+    "gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-stable-x64.AppImage.zsync",
+  );
+  assert.throws(() => linuxAppImageUpdateInformation("ia32"), /architecture/);
 });
 
 test("renders a fixed private systemd broker policy with explicit daemon uid", () => {

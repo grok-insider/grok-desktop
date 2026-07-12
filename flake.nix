@@ -35,6 +35,7 @@
               govulncheck
               gnumake
               jq
+              appimageupdate
               nixfmt
               nodejs_22
               corepack_22

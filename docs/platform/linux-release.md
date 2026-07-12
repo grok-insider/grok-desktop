@@ -12,13 +12,17 @@ verified input set.
 ```sh
 pnpm --filter @grok-desktop/desktop build
 cargo build -p grok-daemon --release   # or use target/debug
-pnpm package:linux -- --arch x64
+pnpm package:linux -- --arch x64 \
+  --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
+  --appimagetool-sha256 <lowercase-sha256>
 ```
 
 Optional:
 
 ```sh
-pnpm package:linux -- --arch x64 --daemon /path/to/grok-daemon --out /path/to/out
+pnpm package:linux -- --arch x64 --daemon /path/to/grok-daemon --out /path/to/out \
+  --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
+  --appimagetool-sha256 <lowercase-sha256>
 ```
 
 For the product inputs, build the daemon with both public trust bindings, then
@@ -33,8 +37,15 @@ pnpm package:linux -- \
   --acp-trust-file /path/to/acp-public-keys.txt \
   --vm-service /path/to/grok-linux-vm-service \
   --daemon-uid 1000 \
-  --service-group grok-desktop-broker
+  --service-group grok-desktop-broker \
+  --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
+  --appimagetool-sha256 <lowercase-sha256>
 ```
+
+The package command verifies the explicitly supplied `appimagetool` digest,
+preserves the already-verified Electron layout, and emits a stable AppImage plus
+its `.zsync` differential-update metadata. Release workers pin the tool bytes;
+the packaging command never downloads or discovers a tool at runtime.
 
 `GROK_ACP_CATALOG_TRUSTED_KEYS` and its
 `grok-acp-catalog-trust-v1:<sha256-of-raw-value>` build binding must be embedded

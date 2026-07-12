@@ -5,12 +5,13 @@
  * a desktop entry + layout manifest. Does not claim Work isolation; the Linux
  * VM broker is packaged separately when present.
  */
-import { cp, lstat, mkdir, mkdtemp, open, readFile, rm, stat, writeFile, chmod } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, open, readFile, rm, stat, symlink, writeFile, chmod } from "node:fs/promises";
 import { constants as fsConstants, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { packager } from "@electron/packager";
 import {
   inspectDaemonAcpCatalogTrustBytes,
@@ -43,7 +44,7 @@ export function parseLinuxPackageArguments(argv) {
     if (!option?.startsWith("--") || value === undefined) {
       throw new Error("linux package arguments must be option/value pairs");
     }
-    if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component",
+    if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component", "--appimagetool", "--appimagetool-sha256",
       "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
       throw new Error(`unsupported linux package option ${option}`);
     }
@@ -59,6 +60,11 @@ export function parseLinuxPackageArguments(argv) {
     throw new Error("signed ACP staging requires catalog, component, and trust file together");
   }
   const vmService = values["--vm-service"] ? path.resolve(values["--vm-service"]) : undefined;
+  const appimagetool = values["--appimagetool"] ? path.resolve(values["--appimagetool"]) : undefined;
+  const appimagetoolSha256 = values["--appimagetool-sha256"];
+  if (appimagetool && !/^[a-f0-9]{64}$/.test(appimagetoolSha256 ?? "")) {
+    throw new Error("--appimagetool-sha256 is required and must be lowercase SHA-256");
+  }
   if (!vmService && values["--daemon-uid"] !== undefined) {
     throw new Error("--daemon-uid is valid only with --vm-service");
   }
@@ -80,9 +86,75 @@ export function parseLinuxPackageArguments(argv) {
     acpComponent: values["--acp-component"] ? path.resolve(values["--acp-component"]) : undefined,
     acpTrustFile: values["--acp-trust-file"] ? path.resolve(values["--acp-trust-file"]) : undefined,
     vmService,
+    appimagetool,
+    appimagetoolSha256,
     daemonUid: vmService ? Number(values["--daemon-uid"]) : undefined,
     serviceGroup,
   };
+}
+
+export function linuxAppImageUpdateInformation(architecture) {
+  if (!LINUX_PACKAGE_ARCHITECTURES.has(architecture)) throw new Error("unsupported AppImage architecture");
+  return `gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-stable-${architecture}.AppImage.zsync`;
+}
+
+async function createLinuxAppImage(appDirectory, out, options, version) {
+  if (!options.appimagetool) throw new Error("--appimagetool is required to produce the public AppImage");
+  await assertExecutableFile(options.appimagetool, "appimagetool");
+  if (await sha256File(options.appimagetool) !== options.appimagetoolSha256) {
+    throw new Error("appimagetool does not match the pinned release digest");
+  }
+  const appDir = path.join(out, "AppDir");
+  const bin = path.join(appDir, "usr", "bin");
+  await mkdir(bin, { recursive: true, mode: 0o755 });
+  await cp(appDirectory, bin, { recursive: true, dereference: false, errorOnExist: true });
+  const applicationDirectory = path.join(appDir, "usr", "share", "applications");
+  const iconDirectory = path.join(appDir, "usr", "share", "icons", "hicolor", "32x32", "apps");
+  const metadataDirectory = path.join(appDir, "usr", "share", "metainfo");
+  await mkdir(applicationDirectory, { recursive: true, mode: 0o755 });
+  await mkdir(iconDirectory, { recursive: true, mode: 0o755 });
+  await mkdir(metadataDirectory, { recursive: true, mode: 0o755 });
+  await writeFile(
+    path.join(applicationDirectory, "grok-desktop.desktop"),
+    renderLinuxDesktopEntry({ name: productName, execPath: executableName, iconPath: executableName, version }),
+    { encoding: "utf8", mode: 0o644, flag: "wx" },
+  );
+  await cp(
+    path.join(appDirectory, "resources", "tray", "tray-dark-32.png"),
+    path.join(iconDirectory, "grok-desktop.png"),
+    { errorOnExist: true },
+  );
+  await writeFile(
+    path.join(metadataDirectory, "grok-desktop.appdata.xml"),
+    `<?xml version="1.0" encoding="UTF-8"?>\n<component type="desktop-application">\n  <id>io.grokinsider.GrokDesktop</id>\n  <name>Grok Desktop</name>\n  <summary>Official Grok and xAI desktop workspace</summary>\n  <metadata_license>CC0-1.0</metadata_license>\n  <project_license>AGPL-3.0-or-later</project_license>\n  <launchable type="desktop-id">grok-desktop.desktop</launchable>\n  <releases><release version="${version}" /></releases>\n</component>\n`,
+    { encoding: "utf8", mode: 0o644, flag: "wx" },
+  );
+  await writeFile(
+    path.join(appDir, "AppRun"),
+    '#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$HERE/usr/bin/grok-desktop" "$@"\n',
+    { encoding: "utf8", mode: 0o755, flag: "wx" },
+  );
+  await symlink("usr/share/applications/grok-desktop.desktop", path.join(appDir, "grok-desktop.desktop"));
+  await symlink("usr/share/icons/hicolor/32x32/apps/grok-desktop.png", path.join(appDir, "grok-desktop.png"));
+  const appImage = path.join(out, `GrokDesktop-stable-${options.architecture}.AppImage`);
+  await new Promise((resolve, reject) => {
+    const child = spawn(options.appimagetool, ["--updateinformation", linuxAppImageUpdateInformation(options.architecture), appDir, appImage], {
+      cwd: out,
+      env: {
+        PATH: process.env.PATH ?? "",
+        ARCH: options.architecture === "x64" ? "x86_64" : "aarch64",
+        APPIMAGE_EXTRACT_AND_RUN: "1",
+      },
+      stdio: "inherit",
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0 && signal === null) resolve();
+      else reject(new Error("appimagetool failed to produce the AppImage"));
+    });
+  });
+  await assertExecutableFile(appImage, "AppImage");
+  return appImage;
 }
 
 /** Resolves the daemon binary candidates used by development and package embeds. */
@@ -255,7 +327,7 @@ Comment=Official Grok and xAI desktop workspace
 Exec=${execPath} %u
 Icon=${iconPath}
 Terminal=false
-Categories=Network;Office;
+Categories=Office;
 MimeType=x-scheme-handler/grok-desktop;
 StartupWMClass=${name}
 X-GrokDesktop-Version=${version}
@@ -493,6 +565,7 @@ async function main() {
     });
 
     await verifyLinuxPackagedLayout(appDirectory);
+    const appImage = await createLinuxAppImage(appDirectory, options.out, options, packageMetadata.version);
 
     const record = {
       schemaVersion: 1,
@@ -502,6 +575,8 @@ async function main() {
       architecture: options.architecture,
       appDirectory,
       executable,
+      appImage,
+      appImageSha256: await sha256File(appImage),
       daemonSha256: await sha256File(packagedDaemon),
       daemonSource,
       acp: stagedAcp ? {
@@ -528,7 +603,7 @@ async function main() {
       "utf8",
     );
     process.stdout.write(
-      `${JSON.stringify({ ok: true, appDirectory, recordPath: path.join(options.out, "linux-package.json") })}\n`,
+      `${JSON.stringify({ ok: true, appDirectory, appImage, recordPath: path.join(options.out, "linux-package.json") })}\n`,
     );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
