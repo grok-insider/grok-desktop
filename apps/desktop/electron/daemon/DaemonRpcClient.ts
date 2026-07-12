@@ -32,10 +32,11 @@ import {
   type Thread,
   type ThreadList,
   type WorkspaceSearchResults,
+  type SuperGrokEnrollmentStatus,
 } from "../generated/daemon/v1/daemon.js";
 
-// Epoch twenty withdraws unsafe scheduler execution and managed-integration mutations.
-export const PROTOCOL_VERSION = 20;
+// Epoch twenty-one adds daemon-owned SuperGrok enrollment while preserving epoch twenty fail-closed surfaces.
+export const PROTOCOL_VERSION = 21;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;
@@ -103,6 +104,7 @@ type ResultValueMap = {
   artifactOperation: Extract<ResponseResult, { $case: "artifactOperation" }>["value"];
   grokBuildAuthStatus: Extract<ResponseResult, { $case: "grokBuildAuthStatus" }>["value"];
   managedIntegration: Extract<ResponseResult, { $case: "managedIntegration" }>["value"];
+  supergrokEnrollmentStatus: Extract<ResponseResult, { $case: "supergrokEnrollmentStatus" }>["value"];
 };
 
 type RequestOperation = NonNullable<Request["operation"]>;
@@ -879,6 +881,43 @@ export class DaemonProtocolClient {
         value: { integrationId },
       }),
       "managedIntegration",
+    );
+  }
+
+  async beginSuperGrokDeviceEnrollment(idempotencyKey: string): Promise<SuperGrokEnrollmentStatus> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "beginSupergrokDeviceEnrollment", value: {} },
+        idempotencyKey,
+      ),
+      "supergrokEnrollmentStatus",
+    );
+  }
+
+  async getSuperGrokEnrollmentStatus(): Promise<SuperGrokEnrollmentStatus> {
+    return expectResult(
+      await this.rpc.request({ $case: "getSupergrokEnrollmentStatus", value: {} }),
+      "supergrokEnrollmentStatus",
+    );
+  }
+
+  async cancelSuperGrokEnrollment(idempotencyKey: string): Promise<SuperGrokEnrollmentStatus> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "cancelSupergrokEnrollment", value: {} },
+        idempotencyKey,
+      ),
+      "supergrokEnrollmentStatus",
+    );
+  }
+
+  async disconnectSuperGrok(idempotencyKey: string): Promise<SuperGrokEnrollmentStatus> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "disconnectSupergrok", value: {} },
+        idempotencyKey,
+      ),
+      "supergrokEnrollmentStatus",
     );
   }
 

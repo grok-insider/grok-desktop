@@ -1,10 +1,11 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use grok_domain::{ChatModelPreference, DEFAULT_XAI_CHAT_MODEL_ID};
+use grok_domain::{ChatModelPreference, ChatRail, DEFAULT_XAI_CHAT_MODEL_ID};
 
 use crate::{
     ApplicationError, ChatModelPreferenceStore, Clock, ConversationModelFactory, CredentialService,
-    ModelDescriptor, ModelError, ModelErrorKind, mutations::mutation_command_bytes,
+    ModelDescriptor, ModelError, ModelErrorKind, SuperGrokEnrollmentService,
+    mutations::mutation_command_bytes,
 };
 
 const MAX_DISCOVERED_MODELS: usize = 256;
@@ -59,6 +60,9 @@ pub struct ChatModelService {
     store: Arc<dyn ChatModelPreferenceStore>,
     credentials: Arc<CredentialService>,
     factory: Arc<dyn ConversationModelFactory>,
+    supergrok: Option<Arc<SuperGrokEnrollmentService>>,
+    supergrok_factory: Option<Arc<dyn ConversationModelFactory>>,
+    rail: Arc<crate::ChatRailSelection>,
     clock: Arc<dyn Clock>,
 }
 
@@ -75,6 +79,31 @@ impl ChatModelService {
             store,
             credentials,
             factory,
+            supergrok: None,
+            supergrok_factory: None,
+            rail: Arc::new(crate::ChatRailSelection::new(ChatRail::XaiApiKey)),
+            clock,
+        }
+    }
+
+    /// Creates a catalog service for one explicit credential rail.
+    #[must_use]
+    pub fn new_with_supergrok(
+        store: Arc<dyn ChatModelPreferenceStore>,
+        credentials: Arc<CredentialService>,
+        api_key_factory: Arc<dyn ConversationModelFactory>,
+        supergrok: Arc<SuperGrokEnrollmentService>,
+        supergrok_factory: Arc<dyn ConversationModelFactory>,
+        rail: Arc<crate::ChatRailSelection>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            store,
+            credentials,
+            factory: api_key_factory,
+            supergrok: Some(supergrok),
+            supergrok_factory: Some(supergrok_factory),
+            rail,
             clock,
         }
     }
@@ -148,14 +177,38 @@ impl ChatModelService {
     }
 
     async fn discover(&self) -> Result<Vec<ChatModelCatalogEntry>, ApplicationError> {
-        let (credential, _credential_use) =
-            self.credentials.load_xai_api_credential_for_use().await?;
-        let (api_key, _) = credential.into_parts();
-        let model = self.factory.create(api_key).map_err(map_model_error)?;
-        let models = tokio::time::timeout(MODEL_DISCOVERY_TIMEOUT, model.list_models())
-            .await
-            .map_err(|_| ApplicationError::DeadlineExceeded)?
-            .map_err(map_model_error)?;
+        let models = match self.rail.current() {
+            ChatRail::XaiApiKey => {
+                let (credential, _credential_use) =
+                    self.credentials.load_xai_api_credential_for_use().await?;
+                let (api_key, _) = credential.into_parts();
+                let model = self.factory.create(api_key).map_err(map_model_error)?;
+                tokio::time::timeout(MODEL_DISCOVERY_TIMEOUT, model.list_models())
+                    .await
+                    .map_err(|_| ApplicationError::DeadlineExceeded)?
+                    .map_err(map_model_error)?
+            }
+            ChatRail::SuperGrokApi => {
+                let service = self.supergrok.as_ref().ok_or_else(|| {
+                    ApplicationError::Unavailable("SuperGrok API Chat is not configured".into())
+                })?;
+                let factory = self.supergrok_factory.as_ref().ok_or_else(|| {
+                    ApplicationError::Unavailable("SuperGrok API Chat is not configured".into())
+                })?;
+                let now_ms = i64::try_from(self.clock.now()).unwrap_or(i64::MAX);
+                let (credential, _credential_use) =
+                    service.credential_for_use(now_ms, 120_000).await?;
+                let secret = crate::SecretValue::new(credential.access_token.as_bytes().to_vec())
+                    .map_err(|_| {
+                    ApplicationError::Integrity("OAuth credential is invalid".into())
+                })?;
+                let model = factory.create(secret).map_err(map_model_error)?;
+                tokio::time::timeout(MODEL_DISCOVERY_TIMEOUT, model.list_models())
+                    .await
+                    .map_err(|_| ApplicationError::DeadlineExceeded)?
+                    .map_err(map_model_error)?
+            }
+        };
         validate_catalog(models)
     }
 }

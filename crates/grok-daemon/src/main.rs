@@ -26,14 +26,15 @@ use grok_application::{
     AgentPermissionDecision, AgentRuntime, AgentRuntimeErrorKind, ApplicationError,
     ApprovalService, ArtifactContentRetention, ArtifactContentStore, ArtifactOpener,
     ArtifactService, ArtifactStore, AutomationSchedulerService, AutomationSchedulerStore,
-    CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ConversationModelFactory,
-    ConversationService, ConversationTurnStore, CredentialEnrollmentService,
-    CredentialMutationStore, CredentialService, DesktopPreferencesService, DesktopPreferencesStore,
-    ExecutionStore, IdGenerator, IsolationProbe, IsolationProbeError, IsolationRuntime,
-    MAX_ARTIFACT_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
-    MAX_CONVERSATION_RECOVERY_BATCH, MAX_PRIVILEGED_RECOVERY_BATCH, PrivilegedGatewayError,
-    PrivilegedGuestControlTransport, PrivilegedOperationService, PrivilegedOperationStore,
-    RunService, SecretName, SecretValue, SecretVault, VaultError, WorkspaceService, WorkspaceStore,
+    CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ChatRailSelection,
+    ConversationModelFactory, ConversationService, ConversationTurnStore,
+    CredentialEnrollmentService, CredentialMutationStore, CredentialService,
+    DesktopPreferencesService, DesktopPreferencesStore, ExecutionStore, IdGenerator,
+    IsolationProbe, IsolationProbeError, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH,
+    MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_CONVERSATION_RECOVERY_BATCH,
+    MAX_PRIVILEGED_RECOVERY_BATCH, PrivilegedGatewayError, PrivilegedGuestControlTransport,
+    PrivilegedOperationService, PrivilegedOperationStore, RunService, SecretName, SecretValue,
+    SecretVault, SuperGrokEnrollmentService, VaultError, WorkspaceService, WorkspaceStore,
 };
 #[cfg(target_os = "linux")]
 use grok_artifact_storage::LinuxArtifactContent;
@@ -42,14 +43,18 @@ use grok_credential_enrollment::NativeCredentialEnrollment;
 use grok_daemon::{
     AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, serve_connection,
 };
-use grok_domain::AutomationSchedulerOwnerId;
+use grok_domain::{AutomationSchedulerOwnerId, ChatRail};
 use grok_memory::{
     EphemeralKeyProvider, InMemoryExecutionStore, InMemorySecretVault, SystemClock, UuidGenerator,
 };
 use grok_sqlcipher::{DatabaseLock, SqlCipherStore};
 use grok_vault::OsVault;
 use grok_vm_service_client::VmServiceIsolationProbe;
-use grok_xai::{OfficialXaiApiKeyValidator, OfficialXaiConversationModelFactory};
+use grok_xai::oauth::XaiOAuthClient;
+use grok_xai::{
+    OfficialXaiApiKeyValidator, OfficialXaiConversationModelFactory,
+    OfficialXaiOAuthConversationModelFactory,
+};
 use sha2::{Digest, Sha256};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -201,10 +206,23 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
             false
         }
     };
+    let supergrok_oauth = Arc::new(XaiOAuthClient::new()?);
+    let supergrok_enrollment = Arc::new(SuperGrokEnrollmentService::new(
+        supergrok_oauth,
+        stores.vault.clone(),
+    )?);
+    let default_chat_rail = if supergrok_enrollment.connection_status()?.is_some() {
+        ChatRail::SuperGrokApi
+    } else {
+        ChatRail::XaiApiKey
+    };
+    let chat_rail = Arc::new(ChatRailSelection::new(default_chat_rail));
     let (chat_models, conversation) = configured_chat_services(
         &stores,
         workspace.clone(),
         credentials.clone(),
+        supergrok_enrollment.clone(),
+        chat_rail.clone(),
         clock.clone(),
         ids.clone(),
     );
@@ -231,6 +249,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     .with_chat_models(chat_models)
     .with_conversation(conversation)
     .with_runtime_capability_facts(runtime_capability_facts);
+    daemon = daemon.with_supergrok_enrollment(supergrok_enrollment, chat_rail);
     daemon = daemon.with_credential_enrollment(configured_credential_enrollment(
         credentials,
         credential_mutations,
@@ -301,6 +320,7 @@ impl PrivilegedGuestControlTransport for EnvGuestHealthTransport {
             )),
         }
     }
+
 }
 
 /// Configures the signed Wisp lifecycle when `GROK_WISP_BUNDLE_ROOT` points at a
@@ -658,22 +678,32 @@ fn configured_chat_services(
     stores: &Stores,
     workspace: Arc<WorkspaceService>,
     credentials: Arc<CredentialService>,
+    supergrok: Arc<SuperGrokEnrollmentService>,
+    default_rail: Arc<ChatRailSelection>,
     clock: Arc<dyn grok_application::Clock>,
     ids: Arc<dyn IdGenerator>,
 ) -> (Arc<ChatModelService>, Arc<ConversationService>) {
     let model_factory: Arc<dyn ConversationModelFactory> =
         Arc::new(OfficialXaiConversationModelFactory);
-    let chat_models = Arc::new(ChatModelService::new(
+    let oauth_factory: Arc<dyn ConversationModelFactory> =
+        Arc::new(OfficialXaiOAuthConversationModelFactory);
+    let chat_models = Arc::new(ChatModelService::new_with_supergrok(
         stores.chat_model_preferences.clone(),
         credentials.clone(),
         model_factory.clone(),
+        supergrok.clone(),
+        oauth_factory.clone(),
+        default_rail.clone(),
         clock.clone(),
     ));
-    let conversation = Arc::new(ConversationService::new(
+    let conversation = Arc::new(ConversationService::new_with_supergrok(
         stores.conversation.clone(),
         workspace,
         credentials,
         model_factory,
+        supergrok,
+        oauth_factory,
+        default_rail,
         clock,
         ids,
         stores.chat_model_preferences.clone(),
@@ -2247,5 +2277,4 @@ mod tests {
             "x86_64"
         }
     }
-
 }

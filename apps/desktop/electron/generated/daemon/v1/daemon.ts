@@ -380,6 +380,10 @@ export interface Request {
     /** Epoch 20: status remains readable; lifecycle mutation fails unavailable. */
     { $case: "getManagedIntegration"; value: GetManagedIntegrationRequest }
     | { $case: "changeManagedIntegration"; value: ChangeManagedIntegrationRequest }
+    | { $case: "beginSupergrokDeviceEnrollment"; value: BeginSuperGrokDeviceEnrollmentRequest }
+    | { $case: "getSupergrokEnrollmentStatus"; value: GetSuperGrokEnrollmentStatusRequest }
+    | { $case: "cancelSupergrokEnrollment"; value: CancelSuperGrokEnrollmentRequest }
+    | { $case: "disconnectSupergrok"; value: DisconnectSuperGrokRequest }
     | undefined;
 }
 
@@ -416,7 +420,32 @@ export interface Response {
     | { $case: "artifactOperation"; value: ArtifactOperationResult }
     | { $case: "grokBuildAuthStatus"; value: GrokBuildAuthStatus }
     | { $case: "managedIntegration"; value: ManagedIntegration }
+    | { $case: "supergrokEnrollmentStatus"; value: SuperGrokEnrollmentStatus }
     | undefined;
+}
+
+/** Epoch 21: non-secret projection of daemon-owned SuperGrok OAuth enrollment. */
+export interface BeginSuperGrokDeviceEnrollmentRequest {
+}
+
+export interface GetSuperGrokEnrollmentStatusRequest {
+}
+
+export interface CancelSuperGrokEnrollmentRequest {
+}
+
+export interface DisconnectSuperGrokRequest {
+}
+
+export interface SuperGrokEnrollmentStatus {
+  /** disconnected | starting | awaiting_user | connected | failed */
+  state: string;
+  verificationUri: string;
+  userCode: string;
+  expiresAtUnixMs: bigint;
+  credentialGeneration: bigint;
+  /** Empty unless state is failed. Stable and sanitized; never provider text. */
+  reasonCode: string;
 }
 
 /**
@@ -1538,6 +1567,18 @@ export const Request: MessageFns<Request> = {
       case "changeManagedIntegration":
         ChangeManagedIntegrationRequest.encode(message.operation.value, writer.uint32(490).fork()).join();
         break;
+      case "beginSupergrokDeviceEnrollment":
+        BeginSuperGrokDeviceEnrollmentRequest.encode(message.operation.value, writer.uint32(498).fork()).join();
+        break;
+      case "getSupergrokEnrollmentStatus":
+        GetSuperGrokEnrollmentStatusRequest.encode(message.operation.value, writer.uint32(506).fork()).join();
+        break;
+      case "cancelSupergrokEnrollment":
+        CancelSuperGrokEnrollmentRequest.encode(message.operation.value, writer.uint32(514).fork()).join();
+        break;
+      case "disconnectSupergrok":
+        DisconnectSuperGrokRequest.encode(message.operation.value, writer.uint32(522).fork()).join();
+        break;
     }
     return writer;
   },
@@ -2033,6 +2074,50 @@ export const Request: MessageFns<Request> = {
           };
           continue;
         }
+        case 62: {
+          if (tag !== 498) {
+            break;
+          }
+
+          message.operation = {
+            $case: "beginSupergrokDeviceEnrollment",
+            value: BeginSuperGrokDeviceEnrollmentRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 63: {
+          if (tag !== 506) {
+            break;
+          }
+
+          message.operation = {
+            $case: "getSupergrokEnrollmentStatus",
+            value: GetSuperGrokEnrollmentStatusRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 64: {
+          if (tag !== 514) {
+            break;
+          }
+
+          message.operation = {
+            $case: "cancelSupergrokEnrollment",
+            value: CancelSuperGrokEnrollmentRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 65: {
+          if (tag !== 522) {
+            break;
+          }
+
+          message.operation = {
+            $case: "disconnectSupergrok",
+            value: DisconnectSuperGrokRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2462,6 +2547,42 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "beginSupergrokDeviceEnrollment": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "beginSupergrokDeviceEnrollment",
+            value: BeginSuperGrokDeviceEnrollmentRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "getSupergrokEnrollmentStatus": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "getSupergrokEnrollmentStatus",
+            value: GetSuperGrokEnrollmentStatusRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "cancelSupergrokEnrollment": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "cancelSupergrokEnrollment",
+            value: CancelSuperGrokEnrollmentRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "disconnectSupergrok": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "disconnectSupergrok",
+            value: DisconnectSuperGrokRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2566,6 +2687,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "managedIntegration":
         ManagedIntegration.encode(message.result.value, writer.uint32(258).fork()).join();
+        break;
+      case "supergrokEnrollmentStatus":
+        SuperGrokEnrollmentStatus.encode(message.result.value, writer.uint32(266).fork()).join();
         break;
     }
     return writer;
@@ -2841,6 +2965,17 @@ export const Response: MessageFns<Response> = {
           message.result = { $case: "managedIntegration", value: ManagedIntegration.decode(reader, reader.uint32()) };
           continue;
         }
+        case 33: {
+          if (tag !== 266) {
+            break;
+          }
+
+          message.result = {
+            $case: "supergrokEnrollmentStatus",
+            value: SuperGrokEnrollmentStatus.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3072,7 +3207,275 @@ export const Response: MessageFns<Response> = {
         }
         break;
       }
+      case "supergrokEnrollmentStatus": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = {
+            $case: "supergrokEnrollmentStatus",
+            value: SuperGrokEnrollmentStatus.fromPartial(object.result.value),
+          };
+        }
+        break;
+      }
     }
+    return message;
+  },
+};
+
+function createBaseBeginSuperGrokDeviceEnrollmentRequest(): BeginSuperGrokDeviceEnrollmentRequest {
+  return {};
+}
+
+export const BeginSuperGrokDeviceEnrollmentRequest: MessageFns<BeginSuperGrokDeviceEnrollmentRequest> = {
+  encode(_: BeginSuperGrokDeviceEnrollmentRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): BeginSuperGrokDeviceEnrollmentRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseBeginSuperGrokDeviceEnrollmentRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<BeginSuperGrokDeviceEnrollmentRequest>): BeginSuperGrokDeviceEnrollmentRequest {
+    return BeginSuperGrokDeviceEnrollmentRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<BeginSuperGrokDeviceEnrollmentRequest>): BeginSuperGrokDeviceEnrollmentRequest {
+    const message = createBaseBeginSuperGrokDeviceEnrollmentRequest();
+    return message;
+  },
+};
+
+function createBaseGetSuperGrokEnrollmentStatusRequest(): GetSuperGrokEnrollmentStatusRequest {
+  return {};
+}
+
+export const GetSuperGrokEnrollmentStatusRequest: MessageFns<GetSuperGrokEnrollmentStatusRequest> = {
+  encode(_: GetSuperGrokEnrollmentStatusRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetSuperGrokEnrollmentStatusRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetSuperGrokEnrollmentStatusRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetSuperGrokEnrollmentStatusRequest>): GetSuperGrokEnrollmentStatusRequest {
+    return GetSuperGrokEnrollmentStatusRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<GetSuperGrokEnrollmentStatusRequest>): GetSuperGrokEnrollmentStatusRequest {
+    const message = createBaseGetSuperGrokEnrollmentStatusRequest();
+    return message;
+  },
+};
+
+function createBaseCancelSuperGrokEnrollmentRequest(): CancelSuperGrokEnrollmentRequest {
+  return {};
+}
+
+export const CancelSuperGrokEnrollmentRequest: MessageFns<CancelSuperGrokEnrollmentRequest> = {
+  encode(_: CancelSuperGrokEnrollmentRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): CancelSuperGrokEnrollmentRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseCancelSuperGrokEnrollmentRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<CancelSuperGrokEnrollmentRequest>): CancelSuperGrokEnrollmentRequest {
+    return CancelSuperGrokEnrollmentRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<CancelSuperGrokEnrollmentRequest>): CancelSuperGrokEnrollmentRequest {
+    const message = createBaseCancelSuperGrokEnrollmentRequest();
+    return message;
+  },
+};
+
+function createBaseDisconnectSuperGrokRequest(): DisconnectSuperGrokRequest {
+  return {};
+}
+
+export const DisconnectSuperGrokRequest: MessageFns<DisconnectSuperGrokRequest> = {
+  encode(_: DisconnectSuperGrokRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): DisconnectSuperGrokRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseDisconnectSuperGrokRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<DisconnectSuperGrokRequest>): DisconnectSuperGrokRequest {
+    return DisconnectSuperGrokRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<DisconnectSuperGrokRequest>): DisconnectSuperGrokRequest {
+    const message = createBaseDisconnectSuperGrokRequest();
+    return message;
+  },
+};
+
+function createBaseSuperGrokEnrollmentStatus(): SuperGrokEnrollmentStatus {
+  return {
+    state: "",
+    verificationUri: "",
+    userCode: "",
+    expiresAtUnixMs: 0n,
+    credentialGeneration: 0n,
+    reasonCode: "",
+  };
+}
+
+export const SuperGrokEnrollmentStatus: MessageFns<SuperGrokEnrollmentStatus> = {
+  encode(message: SuperGrokEnrollmentStatus, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.state !== "") {
+      writer.uint32(10).string(message.state);
+    }
+    if (message.verificationUri !== "") {
+      writer.uint32(18).string(message.verificationUri);
+    }
+    if (message.userCode !== "") {
+      writer.uint32(26).string(message.userCode);
+    }
+    if (message.expiresAtUnixMs !== 0n) {
+      if (BigInt.asUintN(64, message.expiresAtUnixMs) !== message.expiresAtUnixMs) {
+        throw new globalThis.Error("value provided for field message.expiresAtUnixMs of type uint64 too large");
+      }
+      writer.uint32(32).uint64(message.expiresAtUnixMs);
+    }
+    if (message.credentialGeneration !== 0n) {
+      if (BigInt.asUintN(64, message.credentialGeneration) !== message.credentialGeneration) {
+        throw new globalThis.Error("value provided for field message.credentialGeneration of type uint64 too large");
+      }
+      writer.uint32(40).uint64(message.credentialGeneration);
+    }
+    if (message.reasonCode !== "") {
+      writer.uint32(50).string(message.reasonCode);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SuperGrokEnrollmentStatus {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseSuperGrokEnrollmentStatus();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.verificationUri = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.userCode = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.expiresAtUnixMs = reader.uint64() as bigint;
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.credentialGeneration = reader.uint64() as bigint;
+          continue;
+        }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.reasonCode = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<SuperGrokEnrollmentStatus>): SuperGrokEnrollmentStatus {
+    return SuperGrokEnrollmentStatus.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SuperGrokEnrollmentStatus>): SuperGrokEnrollmentStatus {
+    const message = createBaseSuperGrokEnrollmentStatus();
+    message.state = object.state ?? "";
+    message.verificationUri = object.verificationUri ?? "";
+    message.userCode = object.userCode ?? "";
+    message.expiresAtUnixMs = (object.expiresAtUnixMs !== undefined && object.expiresAtUnixMs !== null)
+      ? BigInt(object.expiresAtUnixMs)
+      : 0n;
+    message.credentialGeneration = (object.credentialGeneration !== undefined && object.credentialGeneration !== null)
+      ? BigInt(object.credentialGeneration)
+      : 0n;
+    message.reasonCode = object.reasonCode ?? "";
     return message;
   },
 };

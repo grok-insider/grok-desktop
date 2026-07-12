@@ -17,8 +17,8 @@ use crate::{
     ApplicationError, ChatModelPreferenceStore, Citation, Clock, ContentPart, ConversationEvent,
     ConversationMessage, ConversationModelFactory, ConversationRequest, ConversationRole,
     CredentialService, IdGenerator, ModelError, ModelErrorKind, ModelFailureCertainty,
-    MutationCommand, NewRunEvent, Page, StoreError, Usage, WorkspaceService,
-    mutations::mutation_command,
+    MutationCommand, NewRunEvent, Page, StoreError, SuperGrokEnrollmentService, Usage,
+    WorkspaceService, mutations::mutation_command,
 };
 
 /// Maximum canonical messages copied into one immutable provider request.
@@ -798,9 +798,21 @@ pub struct ConversationService {
     workspace: Arc<WorkspaceService>,
     credentials: Arc<CredentialService>,
     factory: Arc<dyn ConversationModelFactory>,
+    supergrok: Option<Arc<SuperGrokEnrollmentService>>,
+    supergrok_factory: Option<Arc<dyn ConversationModelFactory>>,
+    default_rail: Arc<crate::ChatRailSelection>,
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     model_preferences: Arc<dyn ChatModelPreferenceStore>,
+}
+
+enum ConversationCredentialUseGuard<'a> {
+    Xai {
+        _guard: crate::credentials::XaiCredentialUseGuard<'a>,
+    },
+    SuperGrok {
+        _guard: tokio::sync::OwnedRwLockReadGuard<()>,
+    },
 }
 
 impl ConversationService {
@@ -820,6 +832,40 @@ impl ConversationService {
             workspace,
             credentials,
             factory,
+            supergrok: None,
+            supergrok_factory: None,
+            default_rail: Arc::new(crate::ChatRailSelection::new(
+                grok_domain::ChatRail::XaiApiKey,
+            )),
+            clock,
+            ids,
+            model_preferences,
+        }
+    }
+
+    /// Creates a coordinator with both official credential rails.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_supergrok(
+        store: Arc<dyn ConversationTurnStore>,
+        workspace: Arc<WorkspaceService>,
+        credentials: Arc<CredentialService>,
+        api_key_factory: Arc<dyn ConversationModelFactory>,
+        supergrok: Arc<SuperGrokEnrollmentService>,
+        supergrok_factory: Arc<dyn ConversationModelFactory>,
+        default_rail: Arc<crate::ChatRailSelection>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        model_preferences: Arc<dyn ChatModelPreferenceStore>,
+    ) -> Self {
+        Self {
+            store,
+            workspace,
+            credentials,
+            factory: api_key_factory,
+            supergrok: Some(supergrok),
+            supergrok_factory: Some(supergrok_factory),
+            default_rail,
             clock,
             ids,
             model_preferences,
@@ -1142,6 +1188,7 @@ impl ConversationService {
         }
 
         let kind = request.kind();
+        let source_rail = source.lineage.rail;
         let model_id = source.turn.model_id.clone();
         // Build and validate the complete renderer-influenced plan before any
         // credential-bearing model discovery or provider I/O.
@@ -1172,7 +1219,13 @@ impl ConversationService {
             ApplicationError::Integrity("a dispatching fork is missing its deadline".into())
         })?;
         let (model, current_binding, _cancellation) = self
-            .preflight_model(&model_id, true, Some(&source_binding), cancellation)
+            .preflight_model(
+                source_rail,
+                &model_id,
+                true,
+                Some(&source_binding),
+                cancellation,
+            )
             .await?;
         if current_binding != source_binding {
             return Err(ApplicationError::Integrity(
@@ -1458,17 +1511,18 @@ impl ConversationService {
     ) -> Result<(MutationCommand, String, bool), ApplicationError> {
         let model_preference = self.model_preferences.get_chat_model_preference().await?;
         let selected_model = model_preference.selected_model_id;
-        let command = mutation_command(
-            CONVERSATION_COMMAND_SCOPE,
-            idempotency_key,
-            &[
-                input.thread_id.clone(),
-                selected_model.clone(),
-                input.content.clone(),
-                "tools:none".into(),
-                "provider_store:false".into(),
-            ],
-        )?;
+        let mut command_parts = vec![
+            input.thread_id.clone(),
+            selected_model.clone(),
+            input.content.clone(),
+            "tools:none".into(),
+            "provider_store:false".into(),
+        ];
+        if self.default_rail.current() == grok_domain::ChatRail::SuperGrokApi {
+            command_parts.push("rail:supergrok_api".into());
+        }
+        let command =
+            mutation_command(CONVERSATION_COMMAND_SCOPE, idempotency_key, &command_parts)?;
         Ok((command, selected_model, model_preference.revision > 0))
     }
 
@@ -1532,6 +1586,7 @@ impl ConversationService {
 
         let (model, credential_binding_id, cancellation) = self
             .preflight_model(
+                self.default_rail.current(),
                 &selected_model,
                 require_canonical_model,
                 expected_credential_binding.as_deref(),
@@ -1568,7 +1623,10 @@ impl ConversationService {
             .store
             .reserve_turn(
                 turn,
-                ConversationTurnLineage::original(credential_binding_id)?,
+                ConversationTurnLineage::original_on(
+                    self.default_rail.current(),
+                    credential_binding_id,
+                )?,
                 ConversationTurnReservationSource::CurrentThread,
                 user_message,
                 run,
@@ -1673,7 +1731,13 @@ impl ConversationService {
         }
         let model_id = source.turn.model_id.clone();
         let (model, current_binding, _cancellation) = self
-            .preflight_model(&model_id, true, Some(source_binding), cancellation)
+            .preflight_model(
+                source.lineage.rail,
+                &model_id,
+                true,
+                Some(source_binding),
+                cancellation,
+            )
             .await?;
         let source_retry_depth = source.lineage.retry_depth;
 
@@ -1770,10 +1834,23 @@ impl ConversationService {
                     "conversation dispatch is missing its credential binding".into(),
                 )
             })?;
-        let credential_use = self
-            .credentials
-            .acquire_xai_credential_use(credential_binding)
-            .await?;
+        let credential_use = match snapshot.lineage.rail {
+            grok_domain::ChatRail::XaiApiKey => ConversationCredentialUseGuard::Xai {
+                _guard: self
+                    .credentials
+                    .acquire_xai_credential_use(credential_binding)
+                    .await?,
+            },
+            grok_domain::ChatRail::SuperGrokApi => {
+                let generation = parse_supergrok_binding(credential_binding)?;
+                let service = self.supergrok.as_ref().ok_or_else(|| {
+                    ApplicationError::Unavailable("SuperGrok API Chat is not configured".into())
+                })?;
+                ConversationCredentialUseGuard::SuperGrok {
+                    _guard: service.acquire_credential_use(generation).await?,
+                }
+            }
+        };
         let provider_fingerprint = provider_request_fingerprint(&request);
         let started = match self
             .start_provider(snapshot.clone(), provider_fingerprint)
@@ -1828,6 +1905,7 @@ impl ConversationService {
 
     async fn preflight_model(
         &self,
+        rail: grok_domain::ChatRail,
         selected_model: &str,
         require_canonical: bool,
         expected_credential_binding: Option<&str>,
@@ -1840,25 +1918,79 @@ impl ConversationService {
         ),
         ApplicationError,
     > {
-        let (credential, _credential_use) =
-            self.credentials.load_xai_api_credential_for_use().await?;
-        let (api_key, credential_binding_id) = credential.into_parts();
-        if expected_credential_binding.is_some_and(|expected| expected != credential_binding_id) {
-            return Err(ApplicationError::InvalidState(
-                "the xAI credential changed after this conversation thread was bound; start a new thread to use the current credential"
-                    .into(),
-            ));
-        }
-        let model = self.factory.create(api_key).map_err(map_preflight_error)?;
-        let (models, cancellation) = race_cancellation(model.list_models(), cancellation)
-            .await
-            .map_err(|()| ApplicationError::DeadlineExceeded)?;
+        let (model, credential_binding_id, models, cancellation) = match rail {
+            grok_domain::ChatRail::XaiApiKey => {
+                let (credential, _credential_use) =
+                    self.credentials.load_xai_api_credential_for_use().await?;
+                let (secret, binding) = credential.into_parts();
+                if expected_credential_binding.is_some_and(|expected| expected != binding) {
+                    return Err(ApplicationError::InvalidState(
+                        "the Chat credential changed after this conversation thread was bound; start a new thread to use the current credential"
+                            .into(),
+                    ));
+                }
+                let model = self.factory.create(secret).map_err(map_preflight_error)?;
+                let (models, cancellation) = race_cancellation(model.list_models(), cancellation)
+                    .await
+                    .map_err(|()| ApplicationError::DeadlineExceeded)?;
+                (model, binding, models, cancellation)
+            }
+            grok_domain::ChatRail::SuperGrokApi => {
+                let (credential, _credential_use) =
+                    self.load_supergrok_credential_for_use().await?;
+                let binding = supergrok_binding(credential.generation);
+                if expected_credential_binding.is_some_and(|expected| expected != binding) {
+                    return Err(ApplicationError::InvalidState(
+                        "the Chat credential changed after this conversation thread was bound; start a new thread to use the current credential"
+                            .into(),
+                    ));
+                }
+                let secret = crate::SecretValue::new(credential.access_token.as_bytes().to_vec())
+                    .map_err(|_| {
+                    ApplicationError::Integrity("OAuth credential is invalid".into())
+                })?;
+                let factory = self.supergrok_factory.as_ref().ok_or_else(|| {
+                    ApplicationError::Unavailable("SuperGrok API Chat is not configured".into())
+                })?;
+                let model = factory.create(secret).map_err(map_preflight_error)?;
+                let (models, cancellation) = race_cancellation(model.list_models(), cancellation)
+                    .await
+                    .map_err(|()| ApplicationError::DeadlineExceeded)?;
+                (model, binding, models, cancellation)
+            }
+        };
         ensure_selected_model(
             selected_model,
             models.map_err(map_preflight_error)?,
             require_canonical,
         )?;
         Ok((model, credential_binding_id, cancellation))
+    }
+
+    async fn load_supergrok_credential(
+        &self,
+    ) -> Result<crate::SuperGrokCredential, ApplicationError> {
+        let service = self.supergrok.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("SuperGrok API Chat is not configured".into())
+        })?;
+        let now_ms = i64::try_from(self.clock.now()).unwrap_or(i64::MAX);
+        service.credential(now_ms, 120_000).await
+    }
+
+    async fn load_supergrok_credential_for_use(
+        &self,
+    ) -> Result<
+        (
+            crate::SuperGrokCredential,
+            tokio::sync::OwnedRwLockReadGuard<()>,
+        ),
+        ApplicationError,
+    > {
+        let service = self.supergrok.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("SuperGrok API Chat is not configured".into())
+        })?;
+        let now_ms = i64::try_from(self.clock.now()).unwrap_or(i64::MAX);
+        service.credential_for_use(now_ms, 120_000).await
     }
 
     /// Converts at most `limit` crash-left reservations and in-flight calls into
@@ -2022,11 +2154,19 @@ impl ConversationService {
         else {
             return Ok(false);
         };
-        Ok(thread_binding == source_binding
-            && self
+        if thread_binding != source_binding {
+            return Ok(false);
+        }
+        match snapshot.lineage.rail {
+            grok_domain::ChatRail::XaiApiKey => Ok(self
                 .credentials
                 .current_xai_credential_binding_id()
-                .is_ok_and(|current| current == source_binding))
+                .is_ok_and(|current| current == source_binding)),
+            grok_domain::ChatRail::SuperGrokApi => Ok(self
+                .load_supergrok_credential()
+                .await
+                .is_ok_and(|current| supergrok_binding(current.generation) == source_binding)),
+        }
     }
 
     /// Commits an exact durable cancellation classification before task abort.
@@ -3092,6 +3232,18 @@ fn ensure_selected_model(
         ));
     }
     Ok(())
+}
+
+fn supergrok_binding(generation: u64) -> String {
+    format!("supergrok-api:{generation}")
+}
+
+fn parse_supergrok_binding(binding: &str) -> Result<u64, ApplicationError> {
+    binding
+        .strip_prefix("supergrok-api:")
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| ApplicationError::Integrity("SuperGrok binding is invalid".into()))
 }
 
 fn map_preflight_error(error: ModelError) -> ApplicationError {

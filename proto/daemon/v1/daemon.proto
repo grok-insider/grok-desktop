@@ -73,6 +73,10 @@ message Request {
     // Epoch 20: status remains readable; lifecycle mutation fails unavailable.
     GetManagedIntegrationRequest get_managed_integration = 60;
     ChangeManagedIntegrationRequest change_managed_integration = 61;
+    BeginSuperGrokDeviceEnrollmentRequest begin_supergrok_device_enrollment = 62;
+    GetSuperGrokEnrollmentStatusRequest get_supergrok_enrollment_status = 63;
+    CancelSuperGrokEnrollmentRequest cancel_supergrok_enrollment = 64;
+    DisconnectSuperGrokRequest disconnect_supergrok = 65;
   }
 }
 
@@ -112,7 +116,25 @@ message Response {
     ArtifactOperationResult artifact_operation = 30;
     GrokBuildAuthStatus grok_build_auth_status = 31;
     ManagedIntegration managed_integration = 32;
+    SuperGrokEnrollmentStatus supergrok_enrollment_status = 33;
   }
+}
+
+// Epoch 21: non-secret projection of daemon-owned SuperGrok OAuth enrollment.
+message BeginSuperGrokDeviceEnrollmentRequest {}
+message GetSuperGrokEnrollmentStatusRequest {}
+message CancelSuperGrokEnrollmentRequest {}
+message DisconnectSuperGrokRequest {}
+
+message SuperGrokEnrollmentStatus {
+  // disconnected | starting | awaiting_user | connected | failed
+  string state = 1;
+  string verification_uri = 2;
+  string user_code = 3;
+  uint64 expires_at_unix_ms = 4;
+  uint64 credential_generation = 5;
+  // Empty unless state is failed. Stable and sanitized; never provider text.
+  string reason_code = 6;
 }
 
 // Epoch 20: persisted managed integration status remains readable while

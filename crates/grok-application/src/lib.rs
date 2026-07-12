@@ -6,6 +6,7 @@ mod artifacts;
 mod automation_scheduler;
 mod capabilities;
 mod chat_models;
+mod chat_rail;
 mod conversation;
 mod credential_enrollment;
 mod credentials;
@@ -59,6 +60,7 @@ pub use automation_scheduler::{
 };
 pub use capabilities::{CapabilityFacts, CapabilityResolver};
 pub use chat_models::{ChatModelCatalog, ChatModelCatalogEntry, ChatModelService, SelectChatModel};
+pub use chat_rail::ChatRailSelection;
 pub use conversation::{
     AcknowledgeConversationForkDelivery, BranchConversationThread, CancelConversationTurnCommit,
     ConversationCancellationSignal, ConversationForkCommandResolution, ConversationForkDelivery,

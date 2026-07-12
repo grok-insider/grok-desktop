@@ -5,13 +5,14 @@ mod validation;
 
 /// Current compatibility epoch accepted by the daemon.
 ///
-/// Epoch twenty withdraws automatic scheduler execution and managed-integration
+/// Epoch twenty-one adds daemon-owned SuperGrok device OAuth enrollment while
+/// retaining epoch twenty's withdrawal of automatic scheduler execution and managed-integration
 /// mutations until their atomic execution and durable trust boundaries are
 /// qualified. Definitions and persisted integration records remain readable.
 /// The Protobuf package remains the canonical v1 schema family, while the
 /// envelope version prevents either side from silently accepting a different
 /// operation set.
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// Generated messages for the canonical daemon schema family.
 #[allow(clippy::all, clippy::pedantic, missing_docs)]

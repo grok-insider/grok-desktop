@@ -10,7 +10,7 @@ use std::{
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{ApplicationError, SecretName, SecretValue, SecretVault, VaultError};
@@ -169,7 +169,8 @@ impl OAuthCancellation {
         self.0.cancelled.load(Ordering::Acquire)
     }
 
-    async fn cancelled(&self) {
+    /// Waits until cancellation is requested.
+    pub async fn cancelled(&self) {
         if self.is_cancelled() {
             return;
         }
@@ -242,6 +243,7 @@ pub struct SuperGrokEnrollmentService {
     vault: Arc<dyn SecretVault>,
     vault_name: SecretName,
     refresh_gate: Mutex<()>,
+    credential_use_gate: Arc<RwLock<()>>,
     sleeper: Arc<dyn PollSleeper>,
 }
 
@@ -275,6 +277,7 @@ impl SuperGrokEnrollmentService {
             vault_name: SecretName::new(SUPERGROK_OAUTH_VAULT_NAME)
                 .map_err(|_| ApplicationError::Integrity("OAuth vault name is invalid".into()))?,
             refresh_gate: Mutex::new(()),
+            credential_use_gate: Arc::new(RwLock::new(())),
             sleeper: Arc::new(TokioPollSleeper),
         })
     }
@@ -326,7 +329,16 @@ impl SuperGrokEnrollmentService {
                 .poll_device_token(&authorization.device_code, now_ms)
                 .await
             {
-                Ok(grant) => return self.persist_grant(grant, 1, now_ms),
+                Ok(grant) => {
+                    if cancellation.is_cancelled() {
+                        return Err(ApplicationError::Cancelled);
+                    }
+                    let _guard = self.credential_use_gate.write().await;
+                    if cancellation.is_cancelled() {
+                        return Err(ApplicationError::Cancelled);
+                    }
+                    return self.persist_grant(grant, 1, now_ms);
+                }
                 Err(OAuthFailure::Pending) => {}
                 Err(OAuthFailure::SlowDown) => {
                     interval = interval
@@ -365,6 +377,7 @@ impl SuperGrokEnrollmentService {
         }
         drop(token);
         let _guard = self.refresh_gate.lock().await;
+        let _use_guard = self.credential_use_gate.write().await;
         let token = self.load()?;
         if token.expires_at_ms.saturating_sub(now_ms) > refresh_before_ms {
             return Ok(to_credential(&token));
@@ -385,15 +398,72 @@ impl SuperGrokEnrollmentService {
         Ok(to_credential(&self.load()?))
     }
 
+    /// Loads a current credential and leases it against refresh or disconnect.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized vault, provider, integrity, or generation error.
+    pub async fn credential_for_use(
+        &self,
+        now_ms: i64,
+        refresh_before_ms: i64,
+    ) -> Result<(SuperGrokCredential, OwnedRwLockReadGuard<()>), ApplicationError> {
+        let credential = self.credential(now_ms, refresh_before_ms).await?;
+        let guard = Arc::clone(&self.credential_use_gate).read_owned().await;
+        let current = self.load()?;
+        if current.generation != credential.generation {
+            return Err(ApplicationError::InvalidState(
+                "OAuth credential changed before use".into(),
+            ));
+        }
+        Ok((to_credential(&current), guard))
+    }
+
+    /// Acquires a generation-checked lease through provider initiation.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid-state when the generation changed, or a sanitized vault
+    /// or integrity error when current state cannot be loaded.
+    pub async fn acquire_credential_use(
+        &self,
+        expected_generation: u64,
+    ) -> Result<OwnedRwLockReadGuard<()>, ApplicationError> {
+        let guard = Arc::clone(&self.credential_use_gate).read_owned().await;
+        if self.load()?.generation != expected_generation {
+            return Err(ApplicationError::InvalidState(
+                "OAuth credential changed before provider dispatch".into(),
+            ));
+        }
+        Ok(guard)
+    }
+
     /// Deletes the daemon-owned grant. Missing state is treated as disconnected.
     ///
     /// # Errors
     ///
     /// Returns a sanitized vault error when deletion cannot be completed.
-    pub fn disconnect(&self) -> Result<(), ApplicationError> {
+    pub async fn disconnect(&self) -> Result<(), ApplicationError> {
+        let _guard = self.credential_use_gate.write().await;
         match self.vault.delete(&self.vault_name) {
             Ok(()) | Err(VaultError::NotFound) => Ok(()),
             Err(error) => Err(map_vault(error)),
+        }
+    }
+
+    /// Returns the non-secret persisted connection projection without refreshing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized vault or integrity error. Missing state is reported as `None`.
+    pub fn connection_status(&self) -> Result<Option<SuperGrokEnrollmentStatus>, ApplicationError> {
+        match self.load() {
+            Ok(token) => Ok(Some(SuperGrokEnrollmentStatus::Connected {
+                expires_at_ms: token.expires_at_ms,
+                generation: token.generation,
+            })),
+            Err(ApplicationError::NotFound) => Ok(None),
+            Err(error) => Err(error),
         }
     }
 
@@ -769,11 +839,114 @@ mod tests {
         assert_eq!(&*refreshed.access_token, "new-access");
         assert_eq!(refreshed.generation, 2);
         assert_eq!(*oauth.refreshes.lock().unwrap(), 1);
-        service.disconnect().unwrap();
+        service.disconnect().await.unwrap();
         assert!(matches!(
             service.credential(0, 0).await,
             Err(ApplicationError::NotFound)
         ));
+    }
+
+    #[tokio::test]
+    async fn disconnect_waits_for_an_in_flight_provider_lease() {
+        let oauth = Arc::new(FakeOAuth {
+            polls: StdMutex::new(VecDeque::from([Ok(grant("access", "refresh", i64::MAX))])),
+            refreshes: StdMutex::new(0),
+        });
+        let service = Arc::new(service(oauth, Arc::new(MemoryVault::default())));
+        let auth = service.begin_device(1).await.unwrap();
+        service
+            .complete_device(&auth, &OAuthCancellation::default())
+            .await
+            .unwrap();
+
+        let (_, lease) = service.credential_for_use(10, 0).await.unwrap();
+        let disconnect = tokio::spawn({
+            let service = Arc::clone(&service);
+            async move { service.disconnect().await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!disconnect.is_finished());
+
+        drop(lease);
+        disconnect.await.unwrap().unwrap();
+        assert!(matches!(
+            service.credential(0, 0).await,
+            Err(ApplicationError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn refresh_waits_for_an_in_flight_provider_lease() {
+        let oauth = Arc::new(FakeOAuth {
+            polls: StdMutex::new(VecDeque::from([Ok(grant("access", "refresh", i64::MAX))])),
+            refreshes: StdMutex::new(0),
+        });
+        let service = Arc::new(service(oauth.clone(), Arc::new(MemoryVault::default())));
+        let auth = service.begin_device(1).await.unwrap();
+        service
+            .complete_device(&auth, &OAuthCancellation::default())
+            .await
+            .unwrap();
+
+        let (_, lease) = service.credential_for_use(10, 0).await.unwrap();
+        let refresh = tokio::spawn({
+            let service = Arc::clone(&service);
+            async move { service.credential(i64::MAX - 1, i64::MAX).await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!refresh.is_finished());
+        assert_eq!(*oauth.refreshes.lock().unwrap(), 0);
+
+        drop(lease);
+        assert_eq!(refresh.await.unwrap().unwrap().generation, 2);
+        assert_eq!(*oauth.refreshes.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn provider_lease_rejects_a_stale_generation() {
+        let oauth = Arc::new(FakeOAuth {
+            polls: StdMutex::new(VecDeque::from([Ok(grant("access", "refresh", i64::MAX))])),
+            refreshes: StdMutex::new(0),
+        });
+        let service = service(oauth, Arc::new(MemoryVault::default()));
+        let auth = service.begin_device(1).await.unwrap();
+        service
+            .complete_device(&auth, &OAuthCancellation::default())
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            service.acquire_credential_use(2).await,
+            Err(ApplicationError::InvalidState(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_waiting_to_commit_never_persists_the_grant() {
+        let oauth = Arc::new(FakeOAuth {
+            polls: StdMutex::new(VecDeque::from([Ok(grant("access", "refresh", i64::MAX))])),
+            refreshes: StdMutex::new(0),
+        });
+        let service = Arc::new(service(oauth, Arc::new(MemoryVault::default())));
+        let authorization = Arc::new(service.begin_device(1).await.unwrap());
+        let cancellation = OAuthCancellation::default();
+        let commit_blocker = Arc::clone(&service.credential_use_gate).read_owned().await;
+        let completion = tokio::spawn({
+            let service = Arc::clone(&service);
+            let authorization = Arc::clone(&authorization);
+            let cancellation = cancellation.clone();
+            async move { service.complete_device(&authorization, &cancellation).await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!completion.is_finished());
+
+        cancellation.cancel();
+        drop(commit_blocker);
+        assert!(matches!(
+            completion.await.unwrap(),
+            Err(ApplicationError::Cancelled)
+        ));
+        assert!(matches!(service.connection_status(), Ok(None)));
     }
 
     #[tokio::test]

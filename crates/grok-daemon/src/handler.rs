@@ -16,10 +16,11 @@ use grok_application::{
     ConversationService, ConversationTurnSnapshot, CreateAutomation, CreateProject, CreateThread,
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
     DesktopPreferencesService, EditAndBranchConversationTurn, GrokBuildAuthService,
-    GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH, RegenerateConversationTurn,
-    RetryConversationTurn, RunService, SelectChatModel, StartConversationTurn,
-    StartedConversationFork, StartedConversationTurn, UpdateAutomation, UpdateDesktopPreferences,
-    UpdateProject, UpdateThread, WorkspaceService,
+    GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH, OAuthCancellation,
+    RegenerateConversationTurn, RetryConversationTurn, RunService, SelectChatModel,
+    StartConversationTurn, StartedConversationFork, StartedConversationTurn,
+    SuperGrokEnrollmentService, SuperGrokEnrollmentStatus, UpdateAutomation,
+    UpdateDesktopPreferences, UpdateProject, UpdateThread, WorkspaceService,
 };
 use grok_domain::{
     ApprovalId, ArtifactId, AutomationId, ConversationTurnId, ConversationTurnState, MessageId,
@@ -176,6 +177,30 @@ async fn run_artifact_removal_recovery(
 struct ConversationTaskRegistry {
     slots: Arc<Semaphore>,
     state: AsyncMutex<ConversationTaskRegistryState>,
+}
+
+#[derive(Clone)]
+enum SuperGrokEnrollmentProjection {
+    Idle,
+    Starting {
+        generation: u64,
+    },
+    Awaiting {
+        generation: u64,
+        verification_uri: String,
+        user_code: String,
+        expires_at_ms: i64,
+        cancellation: OAuthCancellation,
+    },
+    Failed {
+        reason_code: &'static str,
+    },
+}
+
+struct SuperGrokEnrollmentRuntime {
+    next_generation: u64,
+    projection: SuperGrokEnrollmentProjection,
+    changed: Arc<tokio::sync::Notify>,
 }
 
 struct ConversationTaskRegistryState {
@@ -355,6 +380,39 @@ fn optional(value: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
 
+fn supergrok_status_wire(
+    state: &str,
+    verification_uri: &str,
+    user_code: &str,
+    expires_at_ms: i64,
+    credential_generation: u64,
+    reason_code: &str,
+) -> v1::SuperGrokEnrollmentStatus {
+    v1::SuperGrokEnrollmentStatus {
+        state: state.into(),
+        verification_uri: verification_uri.into(),
+        user_code: user_code.into(),
+        expires_at_unix_ms: u64::try_from(expires_at_ms).unwrap_or(0),
+        credential_generation,
+        reason_code: reason_code.into(),
+    }
+}
+
+const fn supergrok_failure_reason(error: &ApplicationError) -> &'static str {
+    match error {
+        ApplicationError::Unauthorized(_) => "authorization_rejected",
+        ApplicationError::DeadlineExceeded => "authorization_expired",
+        ApplicationError::Cancelled => "cancelled",
+        ApplicationError::Unavailable(_) => "provider_unavailable",
+        ApplicationError::Storage(_) => "vault_write_failed",
+        ApplicationError::Integrity(_) => "provider_response_invalid",
+        ApplicationError::InvalidInput(_)
+        | ApplicationError::NotFound
+        | ApplicationError::Conflict
+        | ApplicationError::InvalidState(_) => "internal_failure",
+    }
+}
+
 const fn operation_dispatch_limit(operation: &v1::request::Operation) -> Duration {
     match operation {
         v1::request::Operation::EnrollXaiApiKey(_) => MAX_CREDENTIAL_ENROLLMENT_DURATION,
@@ -499,6 +557,10 @@ pub struct Daemon {
     grok_build_auth: Option<Arc<GrokBuildAuthService>>,
     isolation_runtime: Option<Arc<IsolationRuntime>>,
     managed_integrations: Option<Arc<crate::ManagedIntegrationService>>,
+    supergrok_enrollment: Option<Arc<SuperGrokEnrollmentService>>,
+    chat_rail: Option<Arc<grok_application::ChatRailSelection>>,
+    supergrok_enrollment_runtime: Arc<AsyncMutex<SuperGrokEnrollmentRuntime>>,
+    supergrok_lifetime_cancellation: OAuthCancellation,
 }
 
 impl Daemon {
@@ -543,7 +605,27 @@ impl Daemon {
             grok_build_auth: None,
             isolation_runtime: None,
             managed_integrations: None,
+            supergrok_enrollment: None,
+            chat_rail: None,
+            supergrok_enrollment_runtime: Arc::new(AsyncMutex::new(SuperGrokEnrollmentRuntime {
+                next_generation: 0,
+                projection: SuperGrokEnrollmentProjection::Idle,
+                changed: Arc::new(tokio::sync::Notify::new()),
+            })),
+            supergrok_lifetime_cancellation: OAuthCancellation::default(),
         }
+    }
+
+    /// Attaches daemon-owned SuperGrok OAuth enrollment and vault persistence.
+    #[must_use]
+    pub fn with_supergrok_enrollment(
+        mut self,
+        service: Arc<SuperGrokEnrollmentService>,
+        chat_rail: Arc<grok_application::ChatRailSelection>,
+    ) -> Self {
+        self.supergrok_enrollment = Some(service);
+        self.chat_rail = Some(chat_rail);
+        self
     }
 
     /// Attaches a live isolation probe + privileged guest-health gateway.
@@ -892,6 +974,18 @@ impl Daemon {
             Some(v1::request::Operation::ChangeManagedIntegration(request)) => {
                 self.change_managed_integration(request).await
             }
+            Some(v1::request::Operation::BeginSupergrokDeviceEnrollment(_)) => {
+                self.begin_supergrok_device_enrollment().await
+            }
+            Some(v1::request::Operation::GetSupergrokEnrollmentStatus(_)) => {
+                self.get_supergrok_enrollment_status().await
+            }
+            Some(v1::request::Operation::CancelSupergrokEnrollment(_)) => {
+                self.cancel_supergrok_enrollment().await
+            }
+            Some(v1::request::Operation::DisconnectSupergrok(_)) => {
+                self.disconnect_supergrok().await
+            }
             None => Err(ApplicationError::InvalidInput(
                 "request operation is required".into(),
             )),
@@ -1057,6 +1151,205 @@ impl Daemon {
             // Epoch 20 preserves the record projection but does not attest the
             // legacy bundle verifier's result as trusted lifecycle readiness.
             managed_integration_to_wire(&record, false),
+        ))
+    }
+
+    async fn begin_supergrok_device_enrollment(
+        &self,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let service = self.supergrok_enrollment.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("SuperGrok enrollment is not configured".into())
+        })?;
+        let generation = {
+            let mut runtime = self.supergrok_enrollment_runtime.lock().await;
+            if matches!(
+                runtime.projection,
+                SuperGrokEnrollmentProjection::Starting { .. }
+                    | SuperGrokEnrollmentProjection::Awaiting { .. }
+            ) {
+                return Err(ApplicationError::Conflict);
+            }
+            runtime.next_generation = runtime.next_generation.checked_add(1).ok_or_else(|| {
+                ApplicationError::InvalidState("OAuth enrollment generation exhausted".into())
+            })?;
+            let generation = runtime.next_generation;
+            runtime.projection = SuperGrokEnrollmentProjection::Starting { generation };
+            generation
+        };
+        let authorization = match service.begin_device(self.clock.now() as i64).await {
+            Ok(authorization) => authorization,
+            Err(error) => {
+                let mut runtime = self.supergrok_enrollment_runtime.lock().await;
+                if matches!(runtime.projection, SuperGrokEnrollmentProjection::Starting { generation: current } if current == generation)
+                {
+                    runtime.projection = SuperGrokEnrollmentProjection::Failed {
+                        reason_code: supergrok_failure_reason(&error),
+                    };
+                }
+                return Err(error);
+            }
+        };
+        let verification_uri = authorization.verification_uri.clone();
+        let user_code = authorization.user_code.clone();
+        let expires_at_ms = authorization.expires_at_ms;
+        let cancellation = OAuthCancellation::default();
+        {
+            let mut runtime = self.supergrok_enrollment_runtime.lock().await;
+            if !matches!(runtime.projection, SuperGrokEnrollmentProjection::Starting { generation: current } if current == generation)
+            {
+                return Err(ApplicationError::Cancelled);
+            }
+            runtime.projection = SuperGrokEnrollmentProjection::Awaiting {
+                generation,
+                verification_uri: verification_uri.clone(),
+                user_code: user_code.clone(),
+                expires_at_ms,
+                cancellation: cancellation.clone(),
+            };
+        }
+        let service = Arc::clone(service);
+        let runtime = Arc::clone(&self.supergrok_enrollment_runtime);
+        let chat_rail = self.chat_rail.clone();
+        let lifetime_cancellation = self.supergrok_lifetime_cancellation.clone();
+        tokio::spawn(async move {
+            let result = tokio::select! {
+                result = service.complete_device(&authorization, &cancellation) => result,
+                () = lifetime_cancellation.cancelled() => Err(ApplicationError::Cancelled),
+            };
+            let mut runtime = runtime.lock().await;
+            let current = matches!(
+                runtime.projection,
+                SuperGrokEnrollmentProjection::Awaiting { generation: current, .. }
+                    if current == generation
+            );
+            if !current {
+                return;
+            }
+            runtime.projection = match result {
+                Ok(_) => {
+                    if let Some(chat_rail) = chat_rail {
+                        chat_rail.set(grok_domain::ChatRail::SuperGrokApi);
+                    }
+                    SuperGrokEnrollmentProjection::Idle
+                }
+                Err(ApplicationError::Cancelled) => SuperGrokEnrollmentProjection::Idle,
+                Err(error) => SuperGrokEnrollmentProjection::Failed {
+                    reason_code: supergrok_failure_reason(&error),
+                },
+            };
+            runtime.changed.notify_waiters();
+        });
+        Ok(v1::response::Result::SupergrokEnrollmentStatus(
+            supergrok_status_wire(
+                "awaiting_user",
+                &verification_uri,
+                &user_code,
+                expires_at_ms,
+                0,
+                "",
+            ),
+        ))
+    }
+
+    async fn get_supergrok_enrollment_status(
+        &self,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let service = self.supergrok_enrollment.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("SuperGrok enrollment is not configured".into())
+        })?;
+        let projection = self
+            .supergrok_enrollment_runtime
+            .lock()
+            .await
+            .projection
+            .clone();
+        let wire = match projection {
+            SuperGrokEnrollmentProjection::Awaiting {
+                verification_uri,
+                user_code,
+                expires_at_ms,
+                ..
+            } => supergrok_status_wire(
+                "awaiting_user",
+                &verification_uri,
+                &user_code,
+                expires_at_ms,
+                0,
+                "",
+            ),
+            SuperGrokEnrollmentProjection::Starting { .. } => {
+                supergrok_status_wire("starting", "", "", 0, 0, "")
+            }
+            SuperGrokEnrollmentProjection::Failed { reason_code, .. } => {
+                supergrok_status_wire("failed", "", "", 0, 0, reason_code)
+            }
+            SuperGrokEnrollmentProjection::Idle => match service.connection_status()? {
+                Some(SuperGrokEnrollmentStatus::Connected {
+                    expires_at_ms,
+                    generation,
+                }) => supergrok_status_wire("connected", "", "", expires_at_ms, generation, ""),
+                Some(SuperGrokEnrollmentStatus::AwaitingUser { .. }) => {
+                    return Err(ApplicationError::Integrity(
+                        "persisted OAuth state has an invalid projection".into(),
+                    ));
+                }
+                None => supergrok_status_wire("disconnected", "", "", 0, 0, ""),
+            },
+        };
+        Ok(v1::response::Result::SupergrokEnrollmentStatus(wire))
+    }
+
+    async fn cancel_supergrok_enrollment(&self) -> Result<v1::response::Result, ApplicationError> {
+        let wait = {
+            let runtime = self.supergrok_enrollment_runtime.lock().await;
+            if let SuperGrokEnrollmentProjection::Awaiting {
+                generation,
+                cancellation,
+                ..
+            } = &runtime.projection
+            {
+                cancellation.cancel();
+                Some((*generation, Arc::clone(&runtime.changed)))
+            } else {
+                None
+            }
+        };
+        if let Some((generation, changed)) = wait {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let notified = changed.notified();
+                    let still_active = matches!(
+                        self.supergrok_enrollment_runtime.lock().await.projection,
+                        SuperGrokEnrollmentProjection::Awaiting { generation: current, .. }
+                            if current == generation
+                    );
+                    if !still_active {
+                        break;
+                    }
+                    notified.await;
+                }
+            })
+            .await
+            .map_err(|_| ApplicationError::DeadlineExceeded)?;
+        }
+        self.get_supergrok_enrollment_status().await
+    }
+
+    async fn disconnect_supergrok(&self) -> Result<v1::response::Result, ApplicationError> {
+        let service = self.supergrok_enrollment.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("SuperGrok enrollment is not configured".into())
+        })?;
+        let mut runtime = self.supergrok_enrollment_runtime.lock().await;
+        if let SuperGrokEnrollmentProjection::Awaiting { cancellation, .. } = &runtime.projection {
+            cancellation.cancel();
+        }
+        service.disconnect().await?;
+        if let Some(chat_rail) = &self.chat_rail {
+            chat_rail.set(grok_domain::ChatRail::XaiApiKey);
+        }
+        runtime.projection = SuperGrokEnrollmentProjection::Idle;
+        Ok(v1::response::Result::SupergrokEnrollmentStatus(
+            supergrok_status_wire("disconnected", "", "", 0, 0, ""),
         ))
     }
 
@@ -2288,6 +2581,12 @@ impl Daemon {
     }
 }
 
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        self.supergrok_lifetime_cancellation.cancel();
+    }
+}
+
 /// Keeps a valid paged response inside the exact transport envelope budget.
 ///
 /// Conversation turns contain bounded one-megabyte messages, so a fixed item
@@ -2495,11 +2794,12 @@ mod tests {
         ConversationTurnSnapshot, ConversationTurnStore, CreateMessage, CreateRun,
         CredentialEnrollment, CredentialEnrollmentError, CredentialEnrollmentRequest,
         CredentialEnrollmentService, CredentialMutationStore, CredentialService,
-        DEFAULT_XAI_CHAT_MODEL_ID, ExecutionStore, IdGenerator, ModelDescriptor, ModelError,
-        ModelErrorKind, ModelFailureCertainty, MutationCommand, NewRunEvent,
-        PreparedArtifactContent, ProviderStartCommit, RequestApproval, SecretName, SecretValue,
-        SecretVault, SelectedSourcePath, StoreError, TerminalTurnCommit, WorkspaceService,
-        WorkspaceStore, XaiApiKeyValidation, XaiApiKeyValidationError, XaiApiKeyValidator,
+        DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization, ExecutionStore, IdGenerator,
+        ModelDescriptor, ModelError, ModelErrorKind, ModelFailureCertainty, MutationCommand,
+        NewRunEvent, OAuthFailure, OAuthTokenGrant, PreparedArtifactContent, ProviderStartCommit,
+        RequestApproval, SecretName, SecretValue, SecretVault, SelectedSourcePath, StoreError,
+        SuperGrokOAuth, TerminalTurnCommit, WorkspaceService, WorkspaceStore, XaiApiKeyValidation,
+        XaiApiKeyValidationError, XaiApiKeyValidator,
     };
     use grok_artifact_storage::UnavailableArtifactContent;
     use grok_domain::{
@@ -2521,6 +2821,47 @@ mod tests {
 
     #[derive(Debug)]
     struct AcceptXaiKey;
+
+    struct PendingSuperGrokOAuth;
+
+    #[async_trait::async_trait]
+    impl SuperGrokOAuth for PendingSuperGrokOAuth {
+        async fn begin_device_authorization(
+            &self,
+            _now_ms: i64,
+        ) -> Result<DeviceAuthorization, OAuthFailure> {
+            DeviceAuthorization::new(
+                "https://accounts.x.ai/device".into(),
+                "ABCD-EFGH".into(),
+                "secret-device-code".into(),
+                i64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis(),
+                )
+                .unwrap()
+                .saturating_add(60_000),
+                60,
+            )
+        }
+
+        async fn poll_device_token(
+            &self,
+            _device_code: &str,
+            _now_ms: i64,
+        ) -> Result<OAuthTokenGrant, OAuthFailure> {
+            Err(OAuthFailure::Pending)
+        }
+
+        async fn refresh_token(
+            &self,
+            _refresh_token: &str,
+            _now_ms: i64,
+        ) -> Result<OAuthTokenGrant, OAuthFailure> {
+            Err(OAuthFailure::Unavailable)
+        }
+    }
 
     #[derive(Debug, Default)]
     struct SuccessfulArtifactContent {
@@ -3549,6 +3890,24 @@ mod tests {
         daemon_with_credentials(Arc::new(InMemorySecretVault::new()), Arc::new(AcceptXaiKey))
     }
 
+    fn daemon_with_pending_supergrok() -> (Daemon, Arc<FixedClock>) {
+        let (daemon, clock) = daemon();
+        let service = SuperGrokEnrollmentService::new(
+            Arc::new(PendingSuperGrokOAuth),
+            Arc::new(InMemorySecretVault::new()),
+        )
+        .expect("SuperGrok service");
+        (
+            daemon.with_supergrok_enrollment(
+                Arc::new(service),
+                Arc::new(grok_application::ChatRailSelection::new(
+                    grok_domain::ChatRail::XaiApiKey,
+                )),
+            ),
+            clock,
+        )
+    }
+
     fn daemon_with_credentials(
         vault: Arc<InMemorySecretVault>,
         validator: Arc<dyn XaiApiKeyValidator>,
@@ -3898,7 +4257,7 @@ mod tests {
         let Some(response::Result::Health(health)) = response.result else {
             panic!("health response")
         };
-        assert_eq!(health.protocol_version, 20);
+        assert_eq!(health.protocol_version, PROTOCOL_VERSION);
         assert_eq!(
             health.automation_scheduler,
             v1::AutomationSchedulerHealth::DegradedExecutionDisabled as i32
@@ -3977,6 +4336,51 @@ mod tests {
             assert_eq!(journal.claimed_count, 0);
             assert_eq!(journal.run_linked_count, 0);
         }
+    }
+
+    #[tokio::test]
+    async fn supergrok_device_enrollment_exposes_only_non_secret_state_and_cancels() {
+        let (daemon, _) = daemon_with_pending_supergrok();
+        let response = daemon
+            .handle(request(request::Operation::BeginSupergrokDeviceEnrollment(
+                v1::BeginSuperGrokDeviceEnrollmentRequest {},
+            )))
+            .await
+            .expect("begin response");
+        let envelope::Payload::Response(response) = response.payload.expect("payload") else {
+            panic!("response payload");
+        };
+        let Some(response::Result::SupergrokEnrollmentStatus(status)) = response.result else {
+            panic!("enrollment status");
+        };
+        assert_eq!(status.state, "awaiting_user");
+        assert_eq!(status.verification_uri, "https://accounts.x.ai/device");
+        assert_eq!(status.user_code, "ABCD-EFGH");
+        assert!(status.expires_at_unix_ms > 0);
+        assert_eq!(status.credential_generation, 0);
+        assert!(status.reason_code.is_empty());
+        let encoded = status.encode_to_vec();
+        assert!(
+            !encoded
+                .windows(b"secret-device-code".len())
+                .any(|window| window == b"secret-device-code")
+        );
+
+        let response = daemon
+            .handle(request(request::Operation::CancelSupergrokEnrollment(
+                v1::CancelSuperGrokEnrollmentRequest {},
+            )))
+            .await
+            .expect("cancel response");
+        let envelope::Payload::Response(response) = response.payload.expect("payload") else {
+            panic!("response payload");
+        };
+        let Some(response::Result::SupergrokEnrollmentStatus(status)) = response.result else {
+            panic!("enrollment status");
+        };
+        assert_eq!(status.state, "disconnected");
+        assert!(status.verification_uri.is_empty());
+        assert!(status.user_code.is_empty());
     }
 
     #[tokio::test]

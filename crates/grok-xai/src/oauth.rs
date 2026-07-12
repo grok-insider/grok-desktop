@@ -516,8 +516,9 @@ fn bounded_visible(value: String, maximum: usize) -> Result<String, OAuthError> 
 
 fn verified_https_url(value: &str) -> Result<Url, OAuthError> {
     let url = Url::parse(value).map_err(|_| OAuthError::Protocol)?;
+    let approved_host = matches!(url.host_str(), Some("x.ai" | "accounts.x.ai" | "auth.x.ai"));
     if url.scheme() != "https"
-        || url.host_str().is_none()
+        || !approved_host
         || url.username() != ""
         || url.password().is_some()
     {
@@ -593,6 +594,10 @@ mod tests {
         );
         assert_eq!(
             verified_https_url("https://user@x.ai/device"),
+            Err(OAuthError::Protocol)
+        );
+        assert_eq!(
+            verified_https_url("https://example.com/device"),
             Err(OAuthError::Protocol)
         );
     }
