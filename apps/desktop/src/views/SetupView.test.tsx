@@ -61,6 +61,7 @@ describe("SetupView", () => {
     renderSetup();
 
     fireEvent.click(screen.getByRole("button", { name: /xAI API key/ }));
+    expect(await screen.findByRole("heading", { name: "SuperGrok plan · API" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Connect SuperGrok" }));
     expect(await screen.findByText("GROK-DESKTOP")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open verification page" })).toBeInTheDocument();

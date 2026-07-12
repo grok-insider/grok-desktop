@@ -348,7 +348,7 @@ export function SetupView() {
                 <div className="mt-6 rounded-lg border border-border bg-muted p-4">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                      <h3 className="m-0 text-title-sm text-foreground">SuperGrok plan</h3>
+                      <h3 className="m-0 text-title-sm text-foreground">SuperGrok plan · API</h3>
                       <p className="mt-1 mb-0 text-body-sm text-muted-foreground">
                         Fresh authorization through the official xAI device flow. No browser cookies are imported.
                       </p>
