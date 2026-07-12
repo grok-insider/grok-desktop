@@ -5,24 +5,14 @@ mod validation;
 
 /// Current compatibility epoch accepted by the daemon.
 ///
-/// Epoch sixteen exposes only the daemon scheduler kernel lifecycle while
-/// scheduled execution remains disabled, and removes renderer authority to
-/// request an enabled automation definition. Epoch fifteen added daemon-owned
-/// artifact removal with durable private-namespace retention recovery. It does
-/// not resurrect the permanently reserved generic
-/// artifact delete producer. Epoch fourteen added daemon-owned artifact import
-/// and exact-version open receipts without exposing a source path, storage
-/// path, digest, or object locator. Epoch thirteen removed daemon-private artifact storage paths from
-/// renderer wire projections. Epoch twelve removed renderer-accessible generic message
-/// mutations, while retaining daemon-owned message reads and inward-facing
-/// production APIs.
-/// Epoch eleven removed renderer-accessible artifact metadata mutations, while
-/// retaining daemon-owned artifact reads and inward-facing production APIs.
-/// Epoch ten added acknowledged fork-result delivery so an ambiguous renderer
-/// response cannot create another billable child after a process restart. The
-/// Protobuf package remains the canonical v1 schema family, while the envelope
-/// version prevents either side from silently accepting a different operation
-/// set.
+/// Epoch seventeen exposes daemon-owned Grok Build host authentication status
+/// over public IPC while Work remains gated on isolation facts. Epoch sixteen
+/// exposes only the daemon scheduler kernel lifecycle while scheduled execution
+/// remains disabled, and removes renderer authority to request an enabled
+/// automation definition. Epoch fifteen added daemon-owned artifact removal
+/// with durable private-namespace retention recovery. The Protobuf package
+/// remains the canonical v1 schema family, while the envelope version prevents
+/// either side from silently accepting a different operation set.
 pub const PROTOCOL_VERSION: u32 = 17;
 
 /// Generated messages for the canonical daemon schema family.

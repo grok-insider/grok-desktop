@@ -32,8 +32,8 @@ const navigation = [
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/library", label: "Library", icon: Library },
-  { to: "/automations", label: "Automations", icon: Clock3 },
-  { to: "/extensions", label: "Extensions", icon: Blocks },
+  { to: "/automations", label: "Definitions", icon: Clock3 },
+  // Extensions/Wisp install lifecycle is not a shipped product surface yet.
 ];
 
 /* Sidebar text collapses at the rail breakpoint or when the user collapses the shell. */

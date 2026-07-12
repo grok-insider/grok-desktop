@@ -16,7 +16,7 @@ use grok_application::{
     ConversationService, ConversationTurnSnapshot, CreateAutomation, CreateProject, CreateThread,
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
     DesktopPreferencesService, EditAndBranchConversationTurn, GrokBuildAuthService,
-    GrokBuildAuthStatus, MAX_ARTIFACT_RECOVERY_BATCH, RegenerateConversationTurn,
+    GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH, RegenerateConversationTurn,
     RetryConversationTurn, RunService, SelectChatModel, StartConversationTurn,
     StartedConversationFork, StartedConversationTurn, UpdateAutomation, UpdateDesktopPreferences,
     UpdateProject, UpdateThread, WorkspaceService,
@@ -495,6 +495,7 @@ pub struct Daemon {
     chat_models: Option<Arc<ChatModelService>>,
     runtime_capability_facts: CapabilityFacts,
     grok_build_auth: Option<Arc<GrokBuildAuthService>>,
+    isolation_runtime: Option<Arc<IsolationRuntime>>,
 }
 
 impl Daemon {
@@ -537,7 +538,15 @@ impl Daemon {
             chat_models: None,
             runtime_capability_facts: CapabilityFacts::default(),
             grok_build_auth: None,
+            isolation_runtime: None,
         }
+    }
+
+    /// Attaches a live isolation probe + privileged guest-health gateway.
+    #[must_use]
+    pub fn with_isolation_runtime(mut self, runtime: Arc<IsolationRuntime>) -> Self {
+        self.isolation_runtime = Some(runtime);
+        self
     }
 
     /// Adds canonical durable workspace use cases to the daemon composition.
@@ -935,6 +944,20 @@ impl Daemon {
         };
         if let Some(auth) = &self.grok_build_auth {
             facts.subscription_authenticated = auth.is_authenticated().await;
+        }
+        if let Some(isolation) = &self.isolation_runtime {
+            // Refresh is best-effort; probe unavailability clears readiness.
+            let key = format!(
+                "isolation-refresh-{:016x}",
+                self.clock.now().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            );
+            if let Ok(live) = isolation.refresh(&key).await {
+                facts.isolation_broker_qualified = live.broker_qualified;
+                facts.strong_isolation_ready = live.strong_isolation_ready;
+            } else {
+                facts.isolation_broker_qualified = false;
+                facts.strong_isolation_ready = false;
+            }
         }
         Ok(facts)
     }
@@ -3790,7 +3813,7 @@ mod tests {
         let Some(response::Result::Health(health)) = response.result else {
             panic!("health response")
         };
-        assert_eq!(health.protocol_version, 16);
+        assert_eq!(health.protocol_version, 17);
         assert_eq!(
             health.automation_scheduler,
             v1::AutomationSchedulerHealth::DegradedExecutionDisabled as i32

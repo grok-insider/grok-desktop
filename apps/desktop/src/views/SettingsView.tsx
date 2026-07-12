@@ -34,7 +34,10 @@ const settingSections = [
   { id: "browser", label: "Browser", icon: Globe2 },
   { id: "data", label: "Data & privacy", icon: Database },
   { id: "accessibility", label: "Accessibility", icon: Accessibility },
-  { id: "updates", label: "Updates", icon: RefreshCw },
+  // Updates channel is not a shipped product surface; keep Account/General/Models only
+  // for connected controls. Other sections remain for Limited Mode honesty when opened
+  // via deep links / tests but are not advertised as finished product.
+  { id: "updates", label: "Updates (unavailable)", icon: RefreshCw },
 ] as const;
 
 type SettingsSection = (typeof settingSections)[number]["id"];
@@ -67,7 +70,7 @@ export function SettingsView() {
       <div className="mx-auto max-w-[1440px]">
         <PageHeader
           title="Settings"
-          description="Manage accounts, local execution, data, and application preferences."
+          description="Connected daemon preferences only. Unavailable rows are not product features until their backends ship."
         />
 
         <div className="grid min-h-[590px] grid-cols-[12.25rem_minmax(0,1fr)] gap-6 max-[680px]:block">

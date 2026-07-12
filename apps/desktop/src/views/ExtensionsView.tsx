@@ -113,7 +113,7 @@ export function ExtensionsView() {
     <div className="min-h-full px-[clamp(24px,3.2vw,48px)] pt-8 pb-11 max-[680px]:px-4 max-[680px]:pt-6 max-[680px]:pb-8">
       <div className="mx-auto max-w-[1440px]">
         <PageHeader
-          title="Extensions"
+          title="Managed integrations (preview)"
           description="Daemon-reported integrations and managed add-on readiness."
           actions={
             <Button disabled title="Adding MCP servers requires daemon protocol support" variant="outline">

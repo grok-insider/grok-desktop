@@ -13,6 +13,7 @@ mod effects;
 mod error;
 mod grok_build_auth;
 mod isolation;
+mod isolation_runtime;
 mod models;
 mod mutations;
 mod ports;
@@ -91,6 +92,7 @@ pub use isolation::{
     IsolationBackend, IsolationBrokerCapabilities, IsolationBrokerOperation,
     IsolationContractVersion, IsolationProbe, IsolationProbeError, IsolationWorkspaceMode,
 };
+pub use isolation_runtime::{IsolationRuntime, IsolationRuntimeFacts};
 pub use models::{
     Citation, ContentPart, ConversationEvent, ConversationMessage, ConversationModel,
     ConversationModelFactory, ConversationRequest, ConversationRole, ConversationStream,

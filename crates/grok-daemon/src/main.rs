@@ -26,9 +26,10 @@ use grok_application::{
     CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ConversationModelFactory,
     ConversationService, ConversationTurnStore, CredentialEnrollmentService,
     CredentialMutationStore, CredentialService, DesktopPreferencesService, DesktopPreferencesStore,
-    ExecutionStore, IdGenerator, IsolationProbe, IsolationProbeError, MAX_ARTIFACT_RECOVERY_BATCH,
-    MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_CONVERSATION_RECOVERY_BATCH,
-    MAX_PRIVILEGED_RECOVERY_BATCH, PrivilegedOperationService, PrivilegedOperationStore,
+    ExecutionStore, IdGenerator, IsolationProbe, IsolationProbeError, IsolationRuntime,
+    MAX_ARTIFACT_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
+    MAX_CONVERSATION_RECOVERY_BATCH, MAX_PRIVILEGED_RECOVERY_BATCH, PrivilegedGatewayError,
+    PrivilegedGuestControlTransport, PrivilegedOperationService, PrivilegedOperationStore,
     RunService, SecretName, SecretValue, SecretVault, VaultError, WorkspaceService, WorkspaceStore,
 };
 #[cfg(target_os = "linux")]
@@ -202,7 +203,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         workspace.clone(),
         credentials.clone(),
         clock.clone(),
-        ids,
+        ids.clone(),
     );
     recover_conversation_turns(&conversation).await?;
     let mut runtime_capability_facts = provider_network_policy(isolation_broker_qualified);
@@ -212,7 +213,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         runs,
         approvals,
         credentials.clone(),
-        clock,
+        clock.clone(),
         startup_nonce.value,
         instance_id,
     )
@@ -230,6 +231,14 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     daemon = daemon.with_credential_enrollment(configured_credential_enrollment(
         credentials,
         credential_mutations,
+    ));
+    // Journaled guest health gateway: strong isolation is ready only after a
+    // successful runner.health through PrivilegedGateway (never host-exec).
+    daemon = daemon.with_isolation_runtime(configured_isolation_runtime(
+        Arc::new(VmServiceIsolationProbe::new()),
+        stores.privileged_operations.clone(),
+        clock.clone(),
+        ids.clone(),
     ));
     let daemon = Arc::new(match configured_agent_runtime(runtime_vault).await {
         AgentRuntimeConfiguration::NotConfigured => daemon,
@@ -250,6 +259,65 @@ fn new_daemon_instance_identity()
     let instance_id = format!("daemon-{}", uuid::Uuid::new_v4());
     let owner_id = AutomationSchedulerOwnerId::new(instance_id.clone())?;
     Ok((instance_id, owner_id))
+}
+
+/// Guest-control transport that never fakes a guest response.
+///
+/// Lab/production dialers replace this when a live linux-vm-service grant exists.
+struct FailClosedGuestHealthTransport;
+
+#[async_trait::async_trait]
+impl PrivilegedGuestControlTransport for FailClosedGuestHealthTransport {
+    async fn runner_health(
+        &self,
+        _vm_id: &str,
+    ) -> Result<Vec<u8>, PrivilegedGatewayError> {
+        Err(PrivilegedGatewayError::Unavailable(
+            "guest runner.health dial is not configured".into(),
+        ))
+    }
+}
+
+/// Optional lab transport: `GROK_ISOLATION_FAKE_GUEST_HEALTH=ok` returns a body
+/// only for automated isolation-path tests. Production leaves the env unset.
+struct EnvGuestHealthTransport;
+
+#[async_trait::async_trait]
+impl PrivilegedGuestControlTransport for EnvGuestHealthTransport {
+    async fn runner_health(
+        &self,
+        vm_id: &str,
+    ) -> Result<Vec<u8>, PrivilegedGatewayError> {
+        match std::env::var("GROK_ISOLATION_FAKE_GUEST_HEALTH").as_deref() {
+            Ok("ok") => Ok(format!(r#"{{"status":"ok","vm":"{vm_id}","source":"lab"}}"#).into_bytes()),
+            _ => Err(PrivilegedGatewayError::Unavailable(
+                "guest runner.health dial is not configured".into(),
+            )),
+        }
+    }
+}
+
+fn configured_isolation_runtime(
+    probe: Arc<dyn IsolationProbe>,
+    privileged_operations: Arc<dyn PrivilegedOperationStore>,
+    clock: Arc<dyn grok_application::Clock>,
+    ids: Arc<dyn IdGenerator>,
+) -> Arc<IsolationRuntime> {
+    let transport: Arc<dyn PrivilegedGuestControlTransport> =
+        if std::env::var("GROK_ISOLATION_FAKE_GUEST_HEALTH").is_ok() {
+            Arc::new(EnvGuestHealthTransport)
+        } else {
+            Arc::new(FailClosedGuestHealthTransport)
+        };
+    Arc::new(IsolationRuntime::new(
+        probe,
+        privileged_operations,
+        clock,
+        ids,
+        transport,
+        "work-vm",
+        "authority-grant-isolation-default",
+    ))
 }
 
 /// Performs exactly one bounded, journal-only recovery pass before IPC starts.

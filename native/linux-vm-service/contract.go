@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -117,6 +118,18 @@ type PeerIdentity struct {
 	ExecutablePath string
 }
 
+// HypervisorProcess is a live guest hypervisor process owned by the broker.
+type HypervisorProcess interface {
+	// Kill terminates the process tree. Idempotent.
+	Kill() error
+	// Alive reports whether the process has not exited.
+	Alive() bool
+}
+
+// HypervisorSpawn starts a closed-template hypervisor for one VM.
+// Callers must not expose QMP/monitor sockets to unprivileged clients.
+type HypervisorSpawn func(ctx context.Context, vm Vm, imageAbsolutePath string) (HypervisorProcess, error)
+
 // Config configures storage roots and allowed daemon binaries.
 type Config struct {
 	// ImageRoot is the service-owned directory for verified images.
@@ -129,8 +142,17 @@ type Config struct {
 	Now func() time.Time
 	// KVMPresent overrides kvm detection in tests (nil = probe /dev/kvm).
 	KVMPresent *bool
-	// RunnerHealthHook runs for guest_control method runner.health in tests.
+	// Spawn starts the hypervisor. When nil, LookPath("qemu-system-x86_64") is used.
+	// Tests inject a fake spawn; production fails closed if QEMU is absent.
+	Spawn HypervisorSpawn
+	// QemuBinary overrides LookPath for the default spawn implementation.
+	QemuBinary string
+	// RunnerHealthHook, when set, is the only path that may answer runner.health
+	// without a live guest dialer (test/lab harness). Production leaves it nil
+	// and requires Spawn + Alive process before guest control.
 	RunnerHealthHook func(vmID string) ([]byte, error)
+	// GuestHealthDial, when set, is preferred for runner.health over the hook.
+	GuestHealthDial func(ctx context.Context, vmID string, bootID string) ([]byte, error)
 }
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,62}$`)
@@ -138,11 +160,12 @@ var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // Service is the closed privileged surface.
 type Service struct {
-	mu      sync.Mutex
-	config  Config
-	images  map[string]Image
-	vms     map[string]*Vm
-	granted map[string]bool // vmID -> guest control granted for this process lifetime after PoP
+	mu        sync.Mutex
+	config    Config
+	images    map[string]Image
+	vms       map[string]*Vm
+	granted   map[string]bool // vmID -> guest control granted for this process lifetime after PoP
+	processes map[string]HypervisorProcess
 }
 
 // NewService constructs a broker. ImageRoot must exist and be private.
@@ -174,11 +197,15 @@ func NewService(config Config) (*Service, error) {
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
+	if config.Spawn == nil {
+		config.Spawn = defaultQemuSpawn(config.QemuBinary)
+	}
 	return &Service{
-		config:  config,
-		images:  make(map[string]Image),
-		vms:     make(map[string]*Vm),
-		granted: make(map[string]bool),
+		config:    config,
+		images:    make(map[string]Image),
+		vms:       make(map[string]*Vm),
+		granted:   make(map[string]bool),
+		processes: make(map[string]HypervisorProcess),
 	}, nil
 }
 
@@ -327,7 +354,8 @@ func (s *Service) CreateVm(ctx context.Context, peer PeerIdentity, vmID, imageID
 	return *vm, nil
 }
 
-// StartVm transitions created/stopped → running and assigns a boot id.
+// StartVm spawns the closed hypervisor template then marks the VM running.
+// Without a successful spawn, the VM remains non-running (fail closed).
 func (s *Service) StartVm(ctx context.Context, peer PeerIdentity, vmID string) (Vm, error) {
 	if err := ctx.Err(); err != nil {
 		return Vm{}, err
@@ -339,28 +367,62 @@ func (s *Service) StartVm(ctx context.Context, peer PeerIdentity, vmID string) (
 		return Vm{}, fmt.Errorf("%w: kvm unavailable", ErrUnavailable)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	vm, ok := s.vms[vmID]
 	if !ok {
+		s.mu.Unlock()
 		return Vm{}, fmt.Errorf("%w: vm", ErrNotFound)
 	}
 	if vm.State == VmStateRunning {
+		proc := s.processes[vmID]
+		s.mu.Unlock()
+		if proc == nil || !proc.Alive() {
+			return Vm{}, fmt.Errorf("%w: hypervisor process missing", ErrUnavailable)
+		}
 		return *vm, nil
 	}
 	if vm.State != VmStateCreated && vm.State != VmStateStopped {
+		s.mu.Unlock()
 		return Vm{}, fmt.Errorf("%w: invalid state", ErrInvalid)
 	}
-	// Closed template: do not spawn unconstrained QEMU here. Lifecycle is
-	// recorded; process attachment is a later gate. Fail closed for real
-	// hypervisor spawn until QEMU template lands — still non-simulated broker.
+	image, ok := s.images[vm.ImageID]
+	if !ok {
+		s.mu.Unlock()
+		return Vm{}, fmt.Errorf("%w: image not ensured", ErrNotFound)
+	}
+	imagePath := filepath.Join(s.config.ImageRoot, image.RelativePath)
+	vmCopy := *vm
+	s.mu.Unlock()
+
+	if s.config.Spawn == nil {
+		return Vm{}, fmt.Errorf("%w: hypervisor spawn not configured", ErrUnavailable)
+	}
+	proc, err := s.config.Spawn(ctx, vmCopy, imagePath)
+	if err != nil {
+		return Vm{}, fmt.Errorf("%w: hypervisor spawn: %v", ErrUnavailable, err)
+	}
+	if proc == nil || !proc.Alive() {
+		if proc != nil {
+			_ = proc.Kill()
+		}
+		return Vm{}, fmt.Errorf("%w: hypervisor process not alive after spawn", ErrUnavailable)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	vm, ok = s.vms[vmID]
+	if !ok {
+		_ = proc.Kill()
+		return Vm{}, fmt.Errorf("%w: vm", ErrNotFound)
+	}
 	boot := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%d", vmID, s.config.Now().UnixNano()))))
 	vm.State = VmStateRunning
 	vm.BootID = boot[:32]
 	vm.UpdatedAt = s.config.Now()
+	s.processes[vmID] = proc
 	return *vm, nil
 }
 
-// StopVm stops a running VM and clears guest-control grants.
+// StopVm stops a running VM, kills its hypervisor process, and clears grants.
 func (s *Service) StopVm(ctx context.Context, peer PeerIdentity, vmID string) (Vm, error) {
 	if err := ctx.Err(); err != nil {
 		return Vm{}, err
@@ -373,6 +435,10 @@ func (s *Service) StopVm(ctx context.Context, peer PeerIdentity, vmID string) (V
 	vm, ok := s.vms[vmID]
 	if !ok {
 		return Vm{}, fmt.Errorf("%w: vm", ErrNotFound)
+	}
+	if proc := s.processes[vmID]; proc != nil {
+		_ = proc.Kill()
+		delete(s.processes, vmID)
 	}
 	vm.State = VmStateStopped
 	vm.BootID = ""
@@ -483,15 +549,91 @@ func (s *Service) GuestControl(ctx context.Context, peer PeerIdentity, req Guest
 	if vm.State != VmStateRunning {
 		return GuestControlResponse{}, fmt.Errorf("%w: vm not running", ErrInvalid)
 	}
+	proc := s.processes[req.VmID]
+	bootID := vm.BootID
+	if proc == nil || !proc.Alive() {
+		return GuestControlResponse{}, fmt.Errorf("%w: hypervisor process not alive", ErrUnavailable)
+	}
+
 	var body []byte
 	var err error
-	if s.config.RunnerHealthHook != nil {
+	switch {
+	case s.config.GuestHealthDial != nil:
+		body, err = s.config.GuestHealthDial(ctx, req.VmID, bootID)
+	case s.config.RunnerHealthHook != nil:
+		// Lab/test harness only: still requires a live hypervisor process above.
 		body, err = s.config.RunnerHealthHook(req.VmID)
-	} else {
-		body = []byte(`{"status":"ok","source":"linux-vm-service"}`)
+	default:
+		return GuestControlResponse{}, fmt.Errorf("%w: guest health dial not configured", ErrUnavailable)
 	}
 	if err != nil {
 		return GuestControlResponse{}, err
 	}
+	if len(body) == 0 {
+		return GuestControlResponse{}, fmt.Errorf("%w: empty guest health response", ErrUnavailable)
+	}
 	return GuestControlResponse{Method: req.Method, Body: body}, nil
+}
+
+// defaultQemuSpawn returns a closed QEMU/KVM template with no general NIC.
+func defaultQemuSpawn(qemuBinary string) HypervisorSpawn {
+	return func(ctx context.Context, vm Vm, imageAbsolutePath string) (HypervisorProcess, error) {
+		binary := qemuBinary
+		if binary == "" {
+			var err error
+			binary, err = exec.LookPath("qemu-system-x86_64")
+			if err != nil {
+				return nil, fmt.Errorf("qemu-system-x86_64 not found: %w", err)
+			}
+		}
+		if _, err := os.Stat(imageAbsolutePath); err != nil {
+			return nil, fmt.Errorf("image path: %w", err)
+		}
+		// Closed template: no user networking, no QMP/monitor socket exposure.
+		args := []string{
+			"-enable-kvm",
+			"-nographic",
+			"-nodefaults",
+			"-no-reboot",
+			"-machine", "q35",
+			"-cpu", "host",
+			"-m", fmt.Sprintf("%d", vm.MemoryMiB),
+			"-smp", fmt.Sprintf("%d", vm.VCPUCount),
+			"-drive", fmt.Sprintf("file=%s,if=virtio,format=raw,readonly=on", imageAbsolutePath),
+			"-device", "vhost-vsock-pci,guest-cid=3",
+			"-serial", "none",
+			"-monitor", "none",
+		}
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		return &qemuProcess{cmd: cmd}, nil
+	}
+}
+
+type qemuProcess struct {
+	cmd *exec.Cmd
+}
+
+func (p *qemuProcess) Kill() error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Kill()
+}
+
+func (p *qemuProcess) Alive() bool {
+	if p.cmd.Process == nil {
+		return false
+	}
+	// ProcessState set after Wait; nil means still running (or not waited).
+	if p.cmd.ProcessState != nil {
+		return !p.cmd.ProcessState.Exited()
+	}
+	// Non-blocking signal 0 check via FindProcess is racy; use ProcessState only.
+	// After Start without Wait, treat as alive until Kill.
+	return true
 }

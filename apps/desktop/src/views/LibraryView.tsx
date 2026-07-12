@@ -127,7 +127,7 @@ export function LibraryView() {
       <div className="mx-auto max-w-[1540px]">
         <PageHeader
           title="Library"
-          description="Daemon-reported files, artifacts, and Grok Imagine creations across your projects."
+          description="Daemon-reported files and imported artifacts. Media generation is not available in this build."
           actions={
             tab === "files" ? (
               <ImportArtifactAction

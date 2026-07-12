@@ -10,6 +10,7 @@ rust-version.workspace = true
 debug-acp-descriptor = []
 
 [dependencies]
+async-trait.workspace = true
 directories.workspace = true
 grok-acp = { path = "../grok-acp", version = "0.1.0" }
 grok-artifact-storage = { path = "../grok-artifact-storage", version = "0.1.0" }

@@ -4,10 +4,24 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+type fakeProc struct {
+	alive bool
+	kills int
+}
+
+func (p *fakeProc) Kill() error {
+	p.kills++
+	p.alive = false
+	return nil
+}
+
+func (p *fakeProc) Alive() bool { return p.alive }
 
 func TestLifecycleAndGuestControlGates(t *testing.T) {
 	root := t.TempDir()
@@ -27,11 +41,21 @@ func TestLifecycleAndGuestControlGates(t *testing.T) {
 	digest := hex.EncodeToString(sum[:])
 
 	kvm := true
+	alive := &fakeProc{alive: true}
 	svc, err := NewService(Config{
 		ImageRoot:          root,
 		AllowedDaemonPaths: []string{daemonPath},
 		RequireKVM:         true,
 		KVMPresent:         &kvm,
+		Spawn: func(ctx context.Context, vm Vm, imageAbsolutePath string) (HypervisorProcess, error) {
+			if imageAbsolutePath == "" {
+				t.Fatal("spawn requires image path")
+			}
+			if !alive.alive {
+				return nil, fmt.Errorf("dead")
+			}
+			return alive, nil
+		},
 		RunnerHealthHook: func(vmID string) ([]byte, error) {
 			return []byte(`{"status":"ok","vm":"` + vmID + `"}`), nil
 		},
@@ -115,6 +139,83 @@ func TestLifecycleAndGuestControlGates(t *testing.T) {
 	}
 	if err := svc.DeleteVm(ctx, peer, "vm-1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStartVmWithoutSpawnFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	daemonPath := filepath.Join(root, "grok-daemon")
+	_ = os.WriteFile(daemonPath, []byte("x"), 0o755)
+	imageBytes := []byte("img")
+	rel := "images/guest.raw"
+	_ = os.MkdirAll(filepath.Join(root, "images"), 0o700)
+	_ = os.WriteFile(filepath.Join(root, rel), imageBytes, 0o600)
+	sum := sha256.Sum256(imageBytes)
+	kvm := true
+	svc, err := NewService(Config{
+		ImageRoot:          root,
+		AllowedDaemonPaths: []string{daemonPath},
+		RequireKVM:         true,
+		KVMPresent:         &kvm,
+		Spawn: func(ctx context.Context, vm Vm, imageAbsolutePath string) (HypervisorProcess, error) {
+			return nil, fmt.Errorf("qemu missing")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := PeerIdentity{UID: 1, PID: 2, ExecutablePath: daemonPath}
+	ctx := context.Background()
+	if _, err := svc.EnsureImage(ctx, peer, "guest-v1", rel, hex.EncodeToString(sum[:]), int64(len(imageBytes))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateVm(ctx, peer, "vm-1", "guest-v1", 2, 1024); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartVm(ctx, peer, "vm-1"); err == nil {
+		t.Fatal("expected start failure without hypervisor")
+	}
+}
+
+func TestGuestControlWithoutHealthDialFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	daemonPath := filepath.Join(root, "grok-daemon")
+	_ = os.WriteFile(daemonPath, []byte("x"), 0o755)
+	imageBytes := []byte("img2")
+	rel := "images/guest.raw"
+	_ = os.MkdirAll(filepath.Join(root, "images"), 0o700)
+	_ = os.WriteFile(filepath.Join(root, rel), imageBytes, 0o600)
+	sum := sha256.Sum256(imageBytes)
+	kvm := true
+	svc, err := NewService(Config{
+		ImageRoot:          root,
+		AllowedDaemonPaths: []string{daemonPath},
+		RequireKVM:         true,
+		KVMPresent:         &kvm,
+		Spawn: func(ctx context.Context, vm Vm, imageAbsolutePath string) (HypervisorProcess, error) {
+			return &fakeProc{alive: true}, nil
+		},
+		// No RunnerHealthHook and no GuestHealthDial.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := PeerIdentity{UID: 1, PID: 2, ExecutablePath: daemonPath}
+	ctx := context.Background()
+	if _, err := svc.EnsureImage(ctx, peer, "guest-v1", rel, hex.EncodeToString(sum[:]), int64(len(imageBytes))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateVm(ctx, peer, "vm-1", "guest-v1", 2, 1024); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartVm(ctx, peer, "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.GrantGuestControl(ctx, peer, "vm-1", "proof-of-possession-token-32b-min"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GuestControl(ctx, peer, GuestControlRequest{VmID: "vm-1", Method: "runner.health"}); err == nil {
+		t.Fatal("expected guest control failure without dial")
 	}
 }
 
