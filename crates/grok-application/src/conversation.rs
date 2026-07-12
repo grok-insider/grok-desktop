@@ -18,8 +18,8 @@ use crate::{
     ConversationMessage, ConversationModelFactory, ConversationRequest, ConversationRole,
     CredentialService, GetUsageSummary, IdGenerator, ModelError, ModelErrorKind,
     ModelFailureCertainty, MutationCommand, NewRunEvent, PRODUCT_CHAT_SYSTEM_PROMPT_V2, Page,
-    StoreError, SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary, UsageWindow,
-    WorkspaceService, mutations::mutation_command,
+    ServerTool, StoreError, SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary,
+    UsageWindow, WorkspaceService, mutations::mutation_command,
 };
 
 /// Maximum canonical messages copied into one immutable provider request.
@@ -3297,6 +3297,22 @@ fn provider_request_fingerprint(request: &ConversationRequest) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hash_part(&mut hasher, request.model.as_bytes());
     hash_part(&mut hasher, &[u8::from(request.store)]);
+    match &request.continuation {
+        Some(continuation) => {
+            hash_part(&mut hasher, b"continuation");
+            hash_part(&mut hasher, continuation.as_bytes());
+        }
+        None => hash_part(&mut hasher, b"continuation:none"),
+    }
+    for tool in &request.tools {
+        hash_part(
+            &mut hasher,
+            match tool {
+                ServerTool::WebSearch => b"tool:web_search",
+                ServerTool::XSearch => b"tool:x_search",
+            },
+        );
+    }
     for message in &request.messages {
         let role = match message.role {
             ConversationRole::System => b"system".as_slice(),
@@ -3322,6 +3338,51 @@ fn provider_request_fingerprint(request: &ConversationRequest) -> [u8; 32] {
         }
     }
     hasher.finalize().into()
+}
+
+#[cfg(test)]
+mod provider_request_fingerprint_tests {
+    use super::provider_request_fingerprint;
+    use crate::{ConversationRequest, ServerTool};
+
+    fn request() -> ConversationRequest {
+        ConversationRequest {
+            model: "grok-test".into(),
+            messages: Vec::new(),
+            continuation: None,
+            tools: Vec::new(),
+            store: false,
+        }
+    }
+
+    #[test]
+    fn fingerprint_binds_continuation_and_ordered_server_tools() {
+        let baseline = provider_request_fingerprint(&request());
+        assert_ne!(
+            baseline,
+            provider_request_fingerprint(&ConversationRequest {
+                continuation: Some("response-1".into()),
+                ..request()
+            })
+        );
+        assert_ne!(
+            baseline,
+            provider_request_fingerprint(&ConversationRequest {
+                tools: vec![ServerTool::WebSearch],
+                ..request()
+            })
+        );
+        assert_ne!(
+            provider_request_fingerprint(&ConversationRequest {
+                tools: vec![ServerTool::WebSearch],
+                ..request()
+            }),
+            provider_request_fingerprint(&ConversationRequest {
+                tools: vec![ServerTool::XSearch],
+                ..request()
+            })
+        );
+    }
 }
 
 fn dispatch_exit_idempotency_key(turn_id: &ConversationTurnId) -> String {

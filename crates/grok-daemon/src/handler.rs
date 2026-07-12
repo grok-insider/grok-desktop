@@ -3831,6 +3831,7 @@ mod tests {
         let mut hasher = Sha256::new();
         hash_part(&mut hasher, model_id.as_bytes());
         hash_part(&mut hasher, &[0]);
+        hash_part(&mut hasher, b"continuation:none");
         hash_part(&mut hasher, b"system");
         hash_part(&mut hasher, b"text");
         hash_part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V2.as_bytes());
