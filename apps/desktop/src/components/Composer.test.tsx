@@ -34,6 +34,53 @@ async function chooseModel(modelId: string) {
   fireEvent.click(await screen.findByRole("menuitemradio", { name: new RegExp(modelId) }));
 }
 
+describe("Composer Imagine tools", () => {
+  it("gates Imagine tools when capabilities are unavailable", async () => {
+    class NoImagineClient extends CapturingClient {
+      override async getSnapshot() {
+        const snapshot = await super.getSnapshot();
+        return {
+          ...snapshot,
+          capabilities: snapshot.capabilities.map((capability) =>
+            capability.id === "imagine_image" || capability.id === "imagine_video"
+              ? { ...capability, available: false }
+              : capability,
+          ),
+        };
+      }
+    }
+    renderComposer(new NoImagineClient());
+    const tools = await screen.findByRole("button", { name: "Tools" });
+    expect(tools).toBeDisabled();
+  });
+
+  it("starts Imagine media without changing the selected chat model", async () => {
+    const client = renderComposer() as CapturingClient;
+    const createMedia = vi.spyOn(client, "createMedia");
+    await chooseModel("grok-4.3-fast");
+    expect(screen.getByRole("button", { name: "Choose model, Grok 4.3 Fast" })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Tools" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Imagine image" }));
+    expect(screen.getByLabelText("Imagine image tool")).toBeInTheDocument();
+
+    const mediaPrompt = screen.getByLabelText("Media prompt");
+    fireEvent.change(mediaPrompt, { target: { value: "A charcoal studio still life" } });
+    // Chat model must still be the override after opening the tool.
+    expect(screen.getByRole("button", { name: "Choose model, Grok 4.3 Fast" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(createMedia).toHaveBeenCalledWith({
+      kind: "image",
+      prompt: "A charcoal studio still life",
+      aspectRatio: "1:1",
+    }));
+    // Selecting Imagine must not clear or change the chat model override.
+    expect(screen.getByRole("button", { name: "Choose model, Grok 4.3 Fast" })).toBeInTheDocument();
+    expect(client.starts).toHaveLength(0);
+  });
+});
+
 describe("Composer model selection", () => {
   it("applies a temporary model to one new conversation and clears it after success", async () => {
     const client = renderComposer() as CapturingClient;

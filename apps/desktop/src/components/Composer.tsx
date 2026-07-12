@@ -1,5 +1,16 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Check, ChevronDown, CircleAlert, Mic, RefreshCw } from "lucide-react";
+import {
+  ArrowUp,
+  AtSign,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Image as ImageIcon,
+  Mic,
+  Plus,
+  RefreshCw,
+  Video,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type { StartRunInput } from "../services/desktopClient";
@@ -9,6 +20,8 @@ import { IconButton } from "./ui";
 import { VoiceOverlay } from "./VoiceOverlay";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+type ImagineToolKind = "image" | "video";
 
 const modeTabClass = (active: boolean) =>
   cn(
@@ -28,11 +41,36 @@ export function Composer() {
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
   const [modelOverride, setModelOverride] = useState<string | undefined>();
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [imagineKind, setImagineKind] = useState<ImagineToolKind | null>(null);
+  const [mediaPrompt, setMediaPrompt] = useState("");
+  const [aspectRatio, setAspectRatio] = useState("1:1");
+  const [duration, setDuration] = useState("6s");
+  const [creatingMedia, setCreatingMedia] = useState(false);
   const models = useChatModelCatalog();
+  const toolsRootRef = useRef<HTMLDivElement>(null);
+  const modelOverrideRef = useRef(modelOverride);
+  modelOverrideRef.current = modelOverride;
 
   useEffect(() => {
     if (!projectId && snapshot?.projects[0]) setProjectId(snapshot.projects[0].id);
   }, [projectId, snapshot]);
+
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!toolsRootRef.current?.contains(event.target as Node)) setToolsOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setToolsOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [toolsOpen]);
 
   const capabilitiesLoaded = (snapshot?.capabilities.length ?? 0) > 0;
   const interfacePreview = snapshot?.connection.interfacePreview === true;
@@ -40,6 +78,11 @@ export function Composer() {
   const modeAvailable = capabilitiesLoaded && modeCapability?.available === true;
   const workCapability = snapshot?.capabilities.find((item) => item.id === "work");
   const workAvailable = capabilitiesLoaded && workCapability?.available === true;
+  const imagineImageCapability = snapshot?.capabilities.find((item) => item.id === "imagine_image");
+  const imagineVideoCapability = snapshot?.capabilities.find((item) => item.id === "imagine_video");
+  const imagineImageAvailable = capabilitiesLoaded && imagineImageCapability?.available === true;
+  const imagineVideoAvailable = capabilitiesLoaded && imagineVideoCapability?.available === true;
+  const anyImagineTool = imagineImageAvailable || imagineVideoAvailable;
 
   const submit = async () => {
     const value = prompt.trim();
@@ -65,6 +108,54 @@ export function Composer() {
       setError(cause instanceof Error ? cause.message : "The request could not be started.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openImagineTool = (kind: ImagineToolKind) => {
+    setToolsOpen(false);
+    setImagineKind(kind);
+    setMediaPrompt(prompt.trim());
+    setError("");
+  };
+
+  const createImagine = async () => {
+    if (!imagineKind || creatingMedia) return;
+    const value = mediaPrompt.trim();
+    if (!value) {
+      setError("Describe the image or video to create.");
+      return;
+    }
+    // Capture before async work so a concurrent model change cannot be blamed on tools.
+    const modelBefore = modelOverrideRef.current;
+    setCreatingMedia(true);
+    setError("");
+    try {
+      const result = await client.createMedia({
+        kind: imagineKind,
+        prompt: value,
+        aspectRatio,
+        ...(imagineKind === "video" ? { duration } : {}),
+      });
+      if (result.status !== "success") {
+        setError(result.reason);
+        return;
+      }
+      if (modelOverrideRef.current !== modelBefore) {
+        // Tools must never change the selected chat model; restore if something else raced.
+        setModelOverride(modelBefore);
+      }
+      setImagineKind(null);
+      setMediaPrompt("");
+      setAnnouncement(
+        imagineKind === "image"
+          ? "Image creation started. Open Library to follow progress."
+          : "Video creation started. Open Library to follow progress.",
+      );
+      navigate(imagineKind === "image" ? "/library/images" : "/library/videos");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Media creation failed.");
+    } finally {
+      setCreatingMedia(false);
     }
   };
 
@@ -101,8 +192,121 @@ export function Composer() {
           rows={3}
           className="block min-h-[72px] w-full resize-none border-0 bg-transparent px-1 py-0.5 text-body-lg text-foreground outline-none placeholder:text-subtle-foreground"
         />
+        {imagineKind && (
+          <div
+            className="mt-2 rounded-lg border border-border bg-muted/60 px-3 py-2.5"
+            aria-label={imagineKind === "image" ? "Imagine image tool" : "Imagine video tool"}
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="m-0 text-body-sm font-semibold text-foreground">
+                {imagineKind === "image" ? "Imagine image" : "Imagine video"}
+              </p>
+              <button
+                type="button"
+                className="text-label font-medium text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setImagineKind(null);
+                  setError("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            <label htmlFor="imagine-prompt" className="sr-only">
+              Media prompt
+            </label>
+            <textarea
+              id="imagine-prompt"
+              value={mediaPrompt}
+              onChange={(event) => setMediaPrompt(event.target.value)}
+              rows={2}
+              placeholder={imagineKind === "image" ? "Describe the image to create" : "Describe the video and motion"}
+              className="mb-2 block w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-body-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1 font-mono text-label text-muted-foreground">
+                Aspect
+                <select
+                  aria-label="Aspect ratio"
+                  value={aspectRatio}
+                  onChange={(event) => setAspectRatio(event.target.value)}
+                  className="h-7 rounded-md border border-input bg-card px-1.5 text-label text-foreground"
+                >
+                  {["1:1", "16:9", "9:16", "3:2", "2:3"].map((ratio) => (
+                    <option key={ratio} value={ratio}>{ratio}</option>
+                  ))}
+                </select>
+              </label>
+              {imagineKind === "video" && (
+                <label className="flex items-center gap-1 font-mono text-label text-muted-foreground">
+                  Duration
+                  <select
+                    aria-label="Video duration"
+                    value={duration}
+                    onChange={(event) => setDuration(event.target.value)}
+                    className="h-7 rounded-md border border-input bg-card px-1.5 text-label text-foreground"
+                  >
+                    {["6s", "10s"].map((value) => (
+                      <option key={value} value={value}>{value}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <Button
+                className="ml-auto"
+                disabled={!mediaPrompt.trim() || creatingMedia}
+                onClick={() => void createImagine()}
+              >
+                {creatingMedia ? "Starting…" : "Create"}
+              </Button>
+            </div>
+            <p className="m-0 mt-2 text-label text-subtle-foreground">
+              Uses the Imagine capability. Does not change the chat model for this conversation.
+            </p>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
-          <div className="flex items-center gap-1" />
+          <div className="relative flex items-center gap-1" ref={toolsRootRef}>
+            <IconButton
+              label="Tools"
+              disabled={mode !== "chat" || submitting || !anyImagineTool}
+              title={!anyImagineTool ? "Imagine tools require a ready xAI media capability" : "Chat tools"}
+              className={cn(toolsOpen && "border-border bg-muted")}
+              onClick={() => setToolsOpen((value) => !value)}
+            >
+              <Plus size={18} />
+            </IconButton>
+            {toolsOpen && (
+              <div
+                className="absolute bottom-[calc(100%+8px)] left-0 z-30 min-w-[220px] overflow-hidden rounded-xl border border-input bg-popover p-1.5 shadow-overlay"
+                role="menu"
+                aria-label="Composer tools"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!imagineImageAvailable}
+                  title={!imagineImageAvailable ? imagineImageCapability?.reason : undefined}
+                  onClick={() => openImagineTool("image")}
+                >
+                  <ImageIcon size={16} aria-hidden="true" />
+                  Imagine image
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!imagineVideoAvailable}
+                  title={!imagineVideoAvailable ? imagineVideoCapability?.reason : undefined}
+                  onClick={() => openImagineTool("video")}
+                >
+                  <Video size={16} aria-hidden="true" />
+                  Imagine video
+                </button>
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-1">
             <ComposerModelMenu
               disabled={mode !== "chat" || submitting}
