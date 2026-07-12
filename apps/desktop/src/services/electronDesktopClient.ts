@@ -1179,18 +1179,53 @@ export class ElectronDesktopClient implements DesktopClient {
   }
 
   async getManagedIntegration(_integrationId: "wisp"): Promise<ClientResult<ManagedIntegrationDetail>> {
-    // Product does not advertise Wisp install until signed lifecycle IPC ships.
-    return unavailable(
-      "Wisp is not offered as a product install surface in this build. The first-party adapter is development source material only.",
-      "configuration_required",
-    );
+    await this.ensureBootstrap();
+    try {
+      const response = await this.bridge.request({
+        kind: "daemon.getManagedIntegration",
+        integrationId: "desktop.grok.wisp",
+      });
+      if (response.kind !== "daemon.managedIntegration") {
+        return unavailable("invalid managed integration bridge response");
+      }
+      return { status: "success", value: mapManagedIntegrationDetail(response.integration) };
+    } catch (error) {
+      return unavailable(
+        error instanceof Error
+          ? error.message
+          : "Managed integration lifecycle is unavailable from the daemon.",
+        "configuration_required",
+      );
+    }
   }
 
-  async changeManagedIntegration(_integrationId: "wisp", _action: "install" | "update" | "rollback"): Promise<ClientResult<ManagedIntegrationDetail>> {
-    return unavailable(
-      "Wisp install, update, and rollback are not product surfaces until signed lifecycle IPC ships.",
-      "configuration_required",
-    );
+  async changeManagedIntegration(
+    _integrationId: "wisp",
+    action: "install" | "update" | "rollback",
+  ): Promise<ClientResult<ManagedIntegrationDetail>> {
+    await this.ensureBootstrap();
+    try {
+      const current = await this.getManagedIntegration("wisp");
+      const expectedRevision = current.status === "success" ? current.value.revision ?? 0 : 0;
+      const response = await this.bridge.request({
+        kind: "daemon.changeManagedIntegration",
+        integrationId: "desktop.grok.wisp",
+        action,
+        expectedRevision,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (response.kind !== "daemon.managedIntegration") {
+        return unavailable("invalid managed integration bridge response");
+      }
+      return { status: "success", value: mapManagedIntegrationDetail(response.integration) };
+    } catch (error) {
+      return unavailable(
+        error instanceof Error
+          ? error.message
+          : "Managed integration lifecycle change failed.",
+        "configuration_required",
+      );
+    }
   }
 
   private async startConversationTurn(
@@ -2969,4 +3004,49 @@ function degradedCapabilities(reason: string): CapabilityStatus[] {
 
 function unavailable<T>(reason: string, status: "configuration_required" | "unavailable" = "unavailable"): ClientResult<T> {
   return { status, reason };
+}
+
+function mapManagedIntegrationDetail(integration: {
+  id: string;
+  state: string;
+  installedVersion: string;
+  availableVersion: string;
+  rollbackVersion: string;
+  revision: number;
+  signatureVerified: boolean;
+}): ManagedIntegrationDetail {
+  const state = (
+    integration.state === "installed"
+    || integration.state === "update_available"
+    || integration.state === "rollback_available"
+      ? integration.state
+      : "available"
+  ) as ManagedIntegrationDetail["state"];
+  return {
+    id: "wisp",
+    name: "Wisp",
+    recommended: true,
+    state,
+    installedVersion: integration.installedVersion || undefined,
+    availableVersion: integration.availableVersion || "Not installed",
+    rollbackVersion: integration.rollbackVersion || undefined,
+    revision: integration.revision,
+    signatureVerified: integration.signatureVerified,
+    checks: [
+      {
+        label: "Signed component",
+        state: integration.signatureVerified ? "ready" : "action_required",
+        detail: integration.signatureVerified
+          ? "Ed25519 signature verified against the daemon trust policy"
+          : "Bundle is not verified yet",
+      },
+      {
+        label: "Chat isolation",
+        state: "ready",
+        detail: "Wisp lifecycle is independent of Chat",
+      },
+    ],
+    permissions: ["Observe approved applications", "Send input after scoped approval"],
+    releaseNotes: ["Daemon-owned signed install lifecycle (epoch 19)."],
+  };
 }

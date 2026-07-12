@@ -1,0 +1,58 @@
+{
+  "manifestVersion": 1,
+  "id": "desktop.grok.wisp",
+  "version": "1.0.0-test",
+  "protocol": {
+    "minInclusive": "1.0.0",
+    "maxExclusive": "2.0.0"
+  },
+  "entrypoint": {
+    "command": "bin/adapter",
+    "arguments": [
+      "--stdio"
+    ],
+    "adapter": "adapter.json"
+  },
+  "publisher": {
+    "id": "grok-insider",
+    "name": "Grok Desktop",
+    "trust": "first-party"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "keyId": "test-wisp-key-1",
+    "value": "uEkFOMGKIrRQ+x0lSqgcsvkcrY+1tEEaB2fvSO596bszEf/eKjePPkNuG1rvUXPjJu2VHeLcVrvzEanfQEqtBg=="
+  },
+  "capabilities": [
+    "computer-use.observe"
+  ],
+  "configSchema": "config.schema.json",
+  "permissions": {
+    "filesystem": {
+      "readOnlyRoots": [],
+      "readWriteRoots": []
+    },
+    "network": {
+      "outbound": [],
+      "listen": []
+    },
+    "process": {
+      "spawn": []
+    },
+    "devices": [],
+    "secrets": [],
+    "hostCapabilities": []
+  },
+  "updateChannel": "stable",
+  "lifecycle": {
+    "scope": "integration",
+    "restartPolicy": "on-failure",
+    "shutdownTimeoutMs": 5000,
+    "healthCheck": {
+      "method": "lifecycle.health",
+      "intervalMs": 10000,
+      "timeoutMs": 2000,
+      "failureThreshold": 3
+    }
+  }
+}

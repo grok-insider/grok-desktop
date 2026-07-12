@@ -330,6 +330,8 @@ export interface ManagedIntegrationDetail {
   availableVersion: string;
   rollbackVersion?: string;
   progress?: number;
+  revision?: number;
+  signatureVerified?: boolean;
   checks: { label: string; state: "ready" | "action_required"; detail: string }[];
   permissions: string[];
   releaseNotes: string[];

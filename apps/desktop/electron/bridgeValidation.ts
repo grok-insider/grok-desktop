@@ -43,6 +43,31 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
       idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
     };
   }
+  if (kind === "daemon.getManagedIntegration") {
+    exactKeys(input, ["kind", "integrationId"], "managed integration request");
+    return {
+      kind,
+      integrationId: identifier(input.integrationId, "integration id"),
+    };
+  }
+  if (kind === "daemon.changeManagedIntegration") {
+    exactKeys(
+      input,
+      ["kind", "integrationId", "action", "expectedRevision", "idempotencyKey"],
+      "managed integration change request",
+    );
+    const action = string(input.action, "managed integration action", 32);
+    if (action !== "install" && action !== "update" && action !== "rollback") {
+      throw new TypeError("invalid managed integration action");
+    }
+    return {
+      kind,
+      integrationId: identifier(input.integrationId, "integration id"),
+      action,
+      expectedRevision: unsignedInteger(input.expectedRevision, "integration revision"),
+      idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
+    };
+  }
   if (kind === "daemon.updateDesktopPreferences") {
     exactKeys(input, ["kind", "expectedRevision", "keepRunningInNotificationArea", "idempotencyKey"], "desktop preference request");
     return {

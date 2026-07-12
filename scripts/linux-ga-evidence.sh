@@ -34,6 +34,8 @@ run_log memory-execute-due cargo test -p grok-memory --lib automation_scheduler_
 run_log daemon-wire-test cargo test -p grok-daemon --bin grok-daemon linux_guest_transport || status=1
 run_log daemon-lib-test cargo test -p grok-daemon --lib --tests || status=1
 run_log go-linux-vm-service bash -lc 'cd native/linux-vm-service && go test ./... -count=1' || status=1
+run_log wisp-fixture-verify bash -lc 'cd native/windows-vm-service && go test ./manifestverify -run "TestWispFixture|TestVerifySigned" -count=1' || status=1
+run_log wisp-lifecycle-rust cargo test -p grok-daemon --lib managed_integration || status=1
 
 if command -v pnpm >/dev/null 2>&1; then
   run_log desktop-library-automations \
@@ -42,9 +44,18 @@ if command -v pnpm >/dev/null 2>&1; then
       src/views/AutomationsView.test.tsx \
       src/app/ProductFlows.test.tsx \
       electron/daemon/DaemonSupervisor.test.ts \
+      src/views/ExtensionsView.test.tsx \
     || status=1
 else
   echo "pnpm missing" | tee "$SCRATCH/desktop-library-automations.log"
+  status=1
+fi
+
+if rg -q "verifies_committed_ed25519_wisp_fixture ... ok" "$SCRATCH/wisp-lifecycle-rust.log" 2>/dev/null \
+  && rg -q "TestWispFixtureBundle" "$SCRATCH/wisp-fixture-verify.log" 2>/dev/null; then
+  echo "wisp_lifecycle: ok (signed fixture + host stage service)" | tee "$SCRATCH/wisp-lifecycle-test.log"
+else
+  echo "wisp_lifecycle: missing or failed" | tee "$SCRATCH/wisp-lifecycle-test.log"
   status=1
 fi
 
@@ -69,7 +80,7 @@ GREEN paths captured this run:
 
 Honest residuals (NOT done for full Linux GA):
 - Production QEMU (non-lab Spawn) release matrix and signed guest image catalog promotion
-- Signed Wisp install/update IPC productization (adapter schema exists; install remains fail-closed)
+- Guest catalog.apply privileged dispatch after stage (isolation-gated residual)
 - T6 overlay host-commit UX still deferred
 - Imagine/voice/search product ops not shipped (Library de-advertises media creation)
 - Work Available still requires subscription + strong isolation guest health success
@@ -77,6 +88,12 @@ Honest residuals (NOT done for full Linux GA):
 Shipped product isolation path (lab-qualified):
 - EnsureImage → Create/StartVm → grant → runner.health via GROK_LINUX_VM_SOCKET
 - Peer: SO_PEERCRED + /proc/pid/exe (client peerExe not authoritative)
+
+Wisp AC4 lifecycle (signed host path):
+- Fixture: integrations/testdata/wisp-signed (Ed25519; algorithm none rejected for stable)
+- Host: ManagedIntegrationService verify_signed_bundle + stage_install
+- IPC epoch 19: get_managed_integration / change_managed_integration
+- Chat remains independent (Wisp absence does not block thread/chat paths)
 
 T7 status: durable execute_due + schedule_active + KernelInitializedExecutionEnabled when journal recovers cleanly.
 T8 status: de-advertise only (no Imagine create UI).

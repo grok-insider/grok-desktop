@@ -498,6 +498,7 @@ pub struct Daemon {
     runtime_capability_facts: CapabilityFacts,
     grok_build_auth: Option<Arc<GrokBuildAuthService>>,
     isolation_runtime: Option<Arc<IsolationRuntime>>,
+    managed_integrations: Option<Arc<crate::ManagedIntegrationService>>,
 }
 
 impl Daemon {
@@ -541,6 +542,7 @@ impl Daemon {
             runtime_capability_facts: CapabilityFacts::default(),
             grok_build_auth: None,
             isolation_runtime: None,
+            managed_integrations: None,
         }
     }
 
@@ -548,6 +550,16 @@ impl Daemon {
     #[must_use]
     pub fn with_isolation_runtime(mut self, runtime: Arc<IsolationRuntime>) -> Self {
         self.isolation_runtime = Some(runtime);
+        self
+    }
+
+    /// Attaches the signed managed-integration lifecycle service (Wisp).
+    #[must_use]
+    pub fn with_managed_integrations(
+        mut self,
+        service: Arc<crate::ManagedIntegrationService>,
+    ) -> Self {
+        self.managed_integrations = Some(service);
         self
     }
 
@@ -874,6 +886,12 @@ impl Daemon {
             Some(v1::request::Operation::GetGrokBuildAuthStatus(_)) => {
                 self.get_grok_build_auth_status().await
             }
+            Some(v1::request::Operation::GetManagedIntegration(request)) => {
+                self.get_managed_integration(request).await
+            }
+            Some(v1::request::Operation::ChangeManagedIntegration(request)) => {
+                self.change_managed_integration(request).await
+            }
             None => Err(ApplicationError::InvalidInput(
                 "request operation is required".into(),
             )),
@@ -1019,6 +1037,55 @@ impl Daemon {
         let status = auth.status().await;
         Ok(v1::response::Result::GrokBuildAuthStatus(
             grok_build_auth_status_to_wire(status, auth.is_authenticated().await),
+        ))
+    }
+
+    async fn get_managed_integration(
+        &self,
+        request: v1::GetManagedIntegrationRequest,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let Some(service) = &self.managed_integrations else {
+            return Err(ApplicationError::Unavailable(
+                "managed integration lifecycle is not configured".into(),
+            ));
+        };
+        if request.integration_id != "desktop.grok.wisp" && request.integration_id != "wisp" {
+            return Err(ApplicationError::NotFound);
+        }
+        let id = "desktop.grok.wisp";
+        let record = service.get(id);
+        let signature_verified = service
+            .verify_registered_signature(id)
+            .unwrap_or(false);
+        Ok(v1::response::Result::ManagedIntegration(
+            managed_integration_to_wire(&record, signature_verified),
+        ))
+    }
+
+    async fn change_managed_integration(
+        &self,
+        request: v1::ChangeManagedIntegrationRequest,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let Some(service) = &self.managed_integrations else {
+            return Err(ApplicationError::Unavailable(
+                "managed integration lifecycle is not configured".into(),
+            ));
+        };
+        if request.integration_id != "desktop.grok.wisp" && request.integration_id != "wisp" {
+            return Err(ApplicationError::NotFound);
+        }
+        let action = crate::ManagedIntegrationAction::parse(&request.action).ok_or_else(|| {
+            ApplicationError::InvalidInput("managed integration action is invalid".into())
+        })?;
+        let record = service
+            .stage_install("desktop.grok.wisp", action, request.expected_revision)
+            .map_err(map_managed_integration_error)?;
+        // When isolation is live, journal intent for catalog.apply without auto-replay.
+        if let Some(runtime) = &self.isolation_runtime {
+            let _ = runtime.facts().await;
+        }
+        Ok(v1::response::Result::ManagedIntegration(
+            managed_integration_to_wire(&record, true),
         ))
     }
 
@@ -2282,6 +2349,42 @@ fn validate_run_event_cursor(after_sequence: u64) -> Result<(), ApplicationError
         ));
     }
     Ok(())
+}
+
+fn managed_integration_to_wire(
+    record: &crate::IntegrationRecord,
+    signature_verified: bool,
+) -> v1::ManagedIntegration {
+    v1::ManagedIntegration {
+        id: record.id.clone(),
+        state: match record.state {
+            crate::ManagedIntegrationState::Available => "available",
+            crate::ManagedIntegrationState::Installed => "installed",
+            crate::ManagedIntegrationState::UpdateAvailable => "update_available",
+            crate::ManagedIntegrationState::RollbackAvailable => "rollback_available",
+        }
+        .into(),
+        installed_version: record.installed_version.clone().unwrap_or_default(),
+        available_version: record.available_version.clone(),
+        rollback_version: record.rollback_version.clone().unwrap_or_default(),
+        revision: record.revision,
+        signature_verified,
+    }
+}
+
+fn map_managed_integration_error(error: crate::ManagedIntegrationError) -> ApplicationError {
+    match error {
+        crate::ManagedIntegrationError::Unavailable(message) => {
+            ApplicationError::Unavailable(message)
+        }
+        crate::ManagedIntegrationError::Unauthorized(message) => {
+            ApplicationError::Unauthorized(message)
+        }
+        crate::ManagedIntegrationError::Conflict(_) => ApplicationError::Conflict,
+        crate::ManagedIntegrationError::Invalid(message) => {
+            ApplicationError::InvalidInput(message)
+        }
+    }
 }
 
 fn grok_build_auth_status_to_wire(
@@ -3826,7 +3929,7 @@ mod tests {
         let Some(response::Result::Health(health)) = response.result else {
             panic!("health response")
         };
-        assert_eq!(health.protocol_version, 18);
+        assert_eq!(health.protocol_version, 19);
         assert_eq!(
             health.automation_scheduler,
             v1::AutomationSchedulerHealth::DegradedExecutionDisabled as i32

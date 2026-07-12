@@ -408,6 +408,14 @@ export type BridgeRequest =
   | { kind: "daemon.getAccountState" }
   | { kind: "daemon.startGrokBuildAuth"; idempotencyKey: string }
   | { kind: "daemon.getGrokBuildAuthStatus" }
+  | { kind: "daemon.getManagedIntegration"; integrationId: string }
+  | {
+      kind: "daemon.changeManagedIntegration";
+      integrationId: string;
+      action: "install" | "update" | "rollback";
+      expectedRevision: number;
+      idempotencyKey: string;
+    }
   | { kind: "daemon.getDesktopPreferences" }
   | { kind: "daemon.updateDesktopPreferences"; expectedRevision: number; keepRunningInNotificationArea: boolean; idempotencyKey: string }
   | { kind: "daemon.getChatModelCatalog" }
@@ -447,6 +455,18 @@ export type BridgeResponse =
   | { kind: "daemon.bootstrap"; status: DaemonStatus; capabilities: DaemonCapabilityStatus[]; accountState: DaemonAccountState; workspace: DaemonWorkspaceSnapshot }
   | { kind: "daemon.accountState"; accountState: DaemonAccountState }
   | { kind: "daemon.grokBuildAuthStatus"; state: string; authenticated: boolean }
+  | {
+      kind: "daemon.managedIntegration";
+      integration: {
+        id: string;
+        state: string;
+        installedVersion: string;
+        availableVersion: string;
+        rollbackVersion: string;
+        revision: number;
+        signatureVerified: boolean;
+      };
+    }
   | { kind: "daemon.desktopPreferences"; preferences: DaemonDesktopPreferences }
   | { kind: "daemon.chatModelCatalog"; catalog: DaemonChatModelCatalog }
   | { kind: "daemon.chatModelPreference"; preference: DaemonChatModelPreference }

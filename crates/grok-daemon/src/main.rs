@@ -253,6 +253,9 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         clock.clone(),
         ids.clone(),
     ));
+    if let Some(managed) = configured_managed_integrations() {
+        daemon = daemon.with_managed_integrations(managed);
+    }
     let daemon = Arc::new(match configured_agent_runtime(runtime_vault).await {
         AgentRuntimeConfiguration::NotConfigured => daemon,
         AgentRuntimeConfiguration::Available(runtime) => daemon.with_agent_runtime(runtime),
@@ -338,6 +341,38 @@ impl PrivilegedGuestControlTransport for EnvGuestHealthTransport {
             )),
         }
     }
+}
+
+/// Configures the signed Wisp lifecycle when `GROK_WISP_BUNDLE_ROOT` points at a
+/// verified bundle (lab uses `integrations/testdata/wisp-signed`).
+fn configured_managed_integrations() -> Option<Arc<grok_daemon::ManagedIntegrationService>> {
+    use base64::Engine as _;
+    use grok_daemon::ManagedIntegrationService;
+
+    let bundle = std::env::var_os("GROK_WISP_BUNDLE_ROOT").map(PathBuf::from)?;
+    let state = std::env::var_os("GROK_MANAGED_INTEGRATION_STATE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            directories::ProjectDirs::from("com", "grok", "desktop")
+                .map(|dirs| dirs.data_dir().join("managed-integrations.json"))
+                .unwrap_or_else(|| PathBuf::from("managed-integrations.json"))
+        });
+    let mut service = ManagedIntegrationService::new(state);
+    let pub_path = bundle.join("keys/public.b64");
+    let key_id_path = bundle.join("keys/key-id.txt");
+    let pub_b64 = std::fs::read_to_string(&pub_path).ok()?;
+    let key_id = std::fs::read_to_string(&key_id_path).ok()?;
+    let pub_raw = base64::engine::general_purpose::STANDARD
+        .decode(pub_b64.trim().as_bytes())
+        .ok()?;
+    service
+        .trust_key("grok-insider", key_id.trim(), &pub_raw)
+        .ok()?;
+    let _ = service.load();
+    if let Ok(verified) = service.verify_signed_bundle(&bundle) {
+        let _ = service.register_bundle(&verified);
+    }
+    Some(Arc::new(service))
 }
 
 fn configured_isolation_runtime(

@@ -267,6 +267,46 @@ export class DaemonSupervisor {
     };
   }
 
+  async getManagedIntegration(integrationId: string): Promise<{
+    id: string;
+    state: string;
+    installedVersion: string;
+    availableVersion: string;
+    rollbackVersion: string;
+    revision: number;
+    signatureVerified: boolean;
+  }> {
+    await this.start();
+    const integration = await this.requireProtocol().getManagedIntegration(integrationId);
+    this.setConnected();
+    return mapManagedIntegration(integration);
+  }
+
+  async changeManagedIntegration(
+    integrationId: string,
+    action: string,
+    expectedRevision: number,
+    idempotencyKey: string,
+  ): Promise<{
+    id: string;
+    state: string;
+    installedVersion: string;
+    availableVersion: string;
+    rollbackVersion: string;
+    revision: number;
+    signatureVerified: boolean;
+  }> {
+    await this.start();
+    const integration = await this.requireProtocol().changeManagedIntegration(
+      integrationId,
+      action,
+      BigInt(expectedRevision),
+      idempotencyKey,
+    );
+    this.setConnected();
+    return mapManagedIntegration(integration);
+  }
+
   async getDesktopPreferences(): Promise<DaemonDesktopPreferences> {
     await this.start();
     const preferences = await this.requireProtocol().getDesktopPreferences();
@@ -2364,6 +2404,26 @@ export function mapListedAutomation(
     throw new DaemonProtocolError("daemon automation project does not match the requested project");
   }
   return mapped;
+}
+
+function mapManagedIntegration(integration: import("../generated/daemon/v1/daemon.js").ManagedIntegration): {
+  id: string;
+  state: string;
+  installedVersion: string;
+  availableVersion: string;
+  rollbackVersion: string;
+  revision: number;
+  signatureVerified: boolean;
+} {
+  return {
+    id: boundedString(integration.id, "managed integration id"),
+    state: boundedString(integration.state, "managed integration state", 64),
+    installedVersion: boundedString(integration.installedVersion ?? "", "installed version", 128),
+    availableVersion: boundedString(integration.availableVersion ?? "", "available version", 128),
+    rollbackVersion: boundedString(integration.rollbackVersion ?? "", "rollback version", 128),
+    revision: safeNumber(integration.revision, "managed integration revision"),
+    signatureVerified: integration.signatureVerified === true,
+  };
 }
 
 function mapAutomation(automation: import("../generated/daemon/v1/daemon.js").Automation): DaemonAutomation {

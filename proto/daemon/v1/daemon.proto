@@ -70,6 +70,9 @@ message Request {
     RemoveArtifactRequest remove_artifact = 57;
     StartGrokBuildAuthRequest start_grok_build_auth = 58;
     GetGrokBuildAuthStatusRequest get_grok_build_auth_status = 59;
+    // Epoch 19: daemon-owned signed managed integration lifecycle (Wisp).
+    GetManagedIntegrationRequest get_managed_integration = 60;
+    ChangeManagedIntegrationRequest change_managed_integration = 61;
   }
 }
 
@@ -108,7 +111,31 @@ message Response {
     ConversationForkDelivery conversation_fork_delivery = 29;
     ArtifactOperationResult artifact_operation = 30;
     GrokBuildAuthStatus grok_build_auth_status = 31;
+    ManagedIntegration managed_integration = 32;
   }
+}
+
+// Epoch 19: signed managed integration status and lifecycle.
+message GetManagedIntegrationRequest {
+  string integration_id = 1;
+}
+
+message ChangeManagedIntegrationRequest {
+  string integration_id = 1;
+  // install | update | rollback
+  string action = 2;
+  uint64 expected_revision = 3;
+}
+
+message ManagedIntegration {
+  string id = 1;
+  // available | installed | update_available | rollback_available
+  string state = 2;
+  string installed_version = 3;
+  string available_version = 4;
+  string rollback_version = 5;
+  uint64 revision = 6;
+  bool signature_verified = 7;
 }
 
 message StartGrokBuildAuthRequest {

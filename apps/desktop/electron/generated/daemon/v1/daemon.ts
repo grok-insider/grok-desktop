@@ -376,6 +376,10 @@ export interface Request {
     | { $case: "removeArtifact"; value: RemoveArtifactRequest }
     | { $case: "startGrokBuildAuth"; value: StartGrokBuildAuthRequest }
     | { $case: "getGrokBuildAuthStatus"; value: GetGrokBuildAuthStatusRequest }
+    | //
+    /** Epoch 19: daemon-owned signed managed integration lifecycle (Wisp). */
+    { $case: "getManagedIntegration"; value: GetManagedIntegrationRequest }
+    | { $case: "changeManagedIntegration"; value: ChangeManagedIntegrationRequest }
     | undefined;
 }
 
@@ -411,7 +415,31 @@ export interface Response {
     | { $case: "conversationForkDelivery"; value: ConversationForkDelivery }
     | { $case: "artifactOperation"; value: ArtifactOperationResult }
     | { $case: "grokBuildAuthStatus"; value: GrokBuildAuthStatus }
+    | { $case: "managedIntegration"; value: ManagedIntegration }
     | undefined;
+}
+
+/** Epoch 19: signed managed integration status and lifecycle. */
+export interface GetManagedIntegrationRequest {
+  integrationId: string;
+}
+
+export interface ChangeManagedIntegrationRequest {
+  integrationId: string;
+  /** install | update | rollback */
+  action: string;
+  expectedRevision: bigint;
+}
+
+export interface ManagedIntegration {
+  id: string;
+  /** available | installed | update_available | rollback_available */
+  state: string;
+  installedVersion: string;
+  availableVersion: string;
+  rollbackVersion: string;
+  revision: bigint;
+  signatureVerified: boolean;
 }
 
 export interface StartGrokBuildAuthRequest {
@@ -1501,6 +1529,12 @@ export const Request: MessageFns<Request> = {
       case "getGrokBuildAuthStatus":
         GetGrokBuildAuthStatusRequest.encode(message.operation.value, writer.uint32(474).fork()).join();
         break;
+      case "getManagedIntegration":
+        GetManagedIntegrationRequest.encode(message.operation.value, writer.uint32(482).fork()).join();
+        break;
+      case "changeManagedIntegration":
+        ChangeManagedIntegrationRequest.encode(message.operation.value, writer.uint32(490).fork()).join();
+        break;
     }
     return writer;
   },
@@ -1974,6 +2008,28 @@ export const Request: MessageFns<Request> = {
           };
           continue;
         }
+        case 60: {
+          if (tag !== 482) {
+            break;
+          }
+
+          message.operation = {
+            $case: "getManagedIntegration",
+            value: GetManagedIntegrationRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 61: {
+          if (tag !== 490) {
+            break;
+          }
+
+          message.operation = {
+            $case: "changeManagedIntegration",
+            value: ChangeManagedIntegrationRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2385,6 +2441,24 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "getManagedIntegration": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "getManagedIntegration",
+            value: GetManagedIntegrationRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "changeManagedIntegration": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "changeManagedIntegration",
+            value: ChangeManagedIntegrationRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2486,6 +2560,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "grokBuildAuthStatus":
         GrokBuildAuthStatus.encode(message.result.value, writer.uint32(250).fork()).join();
+        break;
+      case "managedIntegration":
+        ManagedIntegration.encode(message.result.value, writer.uint32(258).fork()).join();
         break;
     }
     return writer;
@@ -2753,6 +2830,14 @@ export const Response: MessageFns<Response> = {
           message.result = { $case: "grokBuildAuthStatus", value: GrokBuildAuthStatus.decode(reader, reader.uint32()) };
           continue;
         }
+        case 32: {
+          if (tag !== 258) {
+            break;
+          }
+
+          message.result = { $case: "managedIntegration", value: ManagedIntegration.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2978,7 +3063,263 @@ export const Response: MessageFns<Response> = {
         }
         break;
       }
+      case "managedIntegration": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = { $case: "managedIntegration", value: ManagedIntegration.fromPartial(object.result.value) };
+        }
+        break;
+      }
     }
+    return message;
+  },
+};
+
+function createBaseGetManagedIntegrationRequest(): GetManagedIntegrationRequest {
+  return { integrationId: "" };
+}
+
+export const GetManagedIntegrationRequest: MessageFns<GetManagedIntegrationRequest> = {
+  encode(message: GetManagedIntegrationRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.integrationId !== "") {
+      writer.uint32(10).string(message.integrationId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetManagedIntegrationRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetManagedIntegrationRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.integrationId = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetManagedIntegrationRequest>): GetManagedIntegrationRequest {
+    return GetManagedIntegrationRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GetManagedIntegrationRequest>): GetManagedIntegrationRequest {
+    const message = createBaseGetManagedIntegrationRequest();
+    message.integrationId = object.integrationId ?? "";
+    return message;
+  },
+};
+
+function createBaseChangeManagedIntegrationRequest(): ChangeManagedIntegrationRequest {
+  return { integrationId: "", action: "", expectedRevision: 0n };
+}
+
+export const ChangeManagedIntegrationRequest: MessageFns<ChangeManagedIntegrationRequest> = {
+  encode(message: ChangeManagedIntegrationRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.integrationId !== "") {
+      writer.uint32(10).string(message.integrationId);
+    }
+    if (message.action !== "") {
+      writer.uint32(18).string(message.action);
+    }
+    if (message.expectedRevision !== 0n) {
+      if (BigInt.asUintN(64, message.expectedRevision) !== message.expectedRevision) {
+        throw new globalThis.Error("value provided for field message.expectedRevision of type uint64 too large");
+      }
+      writer.uint32(24).uint64(message.expectedRevision);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ChangeManagedIntegrationRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseChangeManagedIntegrationRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.integrationId = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.action = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.expectedRevision = reader.uint64() as bigint;
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ChangeManagedIntegrationRequest>): ChangeManagedIntegrationRequest {
+    return ChangeManagedIntegrationRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ChangeManagedIntegrationRequest>): ChangeManagedIntegrationRequest {
+    const message = createBaseChangeManagedIntegrationRequest();
+    message.integrationId = object.integrationId ?? "";
+    message.action = object.action ?? "";
+    message.expectedRevision = (object.expectedRevision !== undefined && object.expectedRevision !== null)
+      ? BigInt(object.expectedRevision)
+      : 0n;
+    return message;
+  },
+};
+
+function createBaseManagedIntegration(): ManagedIntegration {
+  return {
+    id: "",
+    state: "",
+    installedVersion: "",
+    availableVersion: "",
+    rollbackVersion: "",
+    revision: 0n,
+    signatureVerified: false,
+  };
+}
+
+export const ManagedIntegration: MessageFns<ManagedIntegration> = {
+  encode(message: ManagedIntegration, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.id !== "") {
+      writer.uint32(10).string(message.id);
+    }
+    if (message.state !== "") {
+      writer.uint32(18).string(message.state);
+    }
+    if (message.installedVersion !== "") {
+      writer.uint32(26).string(message.installedVersion);
+    }
+    if (message.availableVersion !== "") {
+      writer.uint32(34).string(message.availableVersion);
+    }
+    if (message.rollbackVersion !== "") {
+      writer.uint32(42).string(message.rollbackVersion);
+    }
+    if (message.revision !== 0n) {
+      if (BigInt.asUintN(64, message.revision) !== message.revision) {
+        throw new globalThis.Error("value provided for field message.revision of type uint64 too large");
+      }
+      writer.uint32(48).uint64(message.revision);
+    }
+    if (message.signatureVerified !== false) {
+      writer.uint32(56).bool(message.signatureVerified);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ManagedIntegration {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseManagedIntegration();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.id = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.installedVersion = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.availableVersion = reader.string();
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.rollbackVersion = reader.string();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.revision = reader.uint64() as bigint;
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.signatureVerified = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ManagedIntegration>): ManagedIntegration {
+    return ManagedIntegration.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ManagedIntegration>): ManagedIntegration {
+    const message = createBaseManagedIntegration();
+    message.id = object.id ?? "";
+    message.state = object.state ?? "";
+    message.installedVersion = object.installedVersion ?? "";
+    message.availableVersion = object.availableVersion ?? "";
+    message.rollbackVersion = object.rollbackVersion ?? "";
+    message.revision = (object.revision !== undefined && object.revision !== null) ? BigInt(object.revision) : 0n;
+    message.signatureVerified = object.signatureVerified ?? false;
     return message;
   },
 };
