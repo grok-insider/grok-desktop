@@ -1,9 +1,9 @@
 # Audited recovery and completion plan
 
 - Snapshot: 2026-07-12
-- Reviewed HEAD: `66787d5ef3fe4bd23aadb49951b8d347ab32e8b6`
+- Reviewed baseline: `66787d5ef3fe4bd23aadb49951b8d347ab32e8b6`
 - Review range: `226484610d5ea4ecbb1c614cc7a741a2d054fc65..HEAD`
-- Wire/schema observed in source: IPC epoch 19, SQLCipher schema 19
+- Wire/schema implemented at tip: IPC epoch 21, SQLCipher schema 20
 - Release status: not qualified for distribution
 
 This directory is the canonical handoff for continuing the current work. It
@@ -46,6 +46,31 @@ filesystem boundaries and must be split or removed before any commit.
 The checked-in implementation-status and protocol chronicle still report IPC
 epoch 16 even though source accepts epoch 19. Correcting that documentation is
 part of the first forward-fix milestone.
+
+## Implementation progress after the audit
+
+The unsafe epoch-18 scheduler and epoch-19 Wisp mutations are now unavailable
+in epoch 20, while their read projections remain fail-closed. Unsafe ACP
+credential import and recursive cleanup work was removed. Tray behavior,
+close-to-notification-area settings, and renderer capability honesty have
+focused regression coverage.
+
+Epoch 21 adds a daemon-owned SuperGrok API Chat rail using only fresh official
+xAI OAuth device authorization with `api:access`. Tokens remain in the daemon
+vault, refresh/disconnect are serialized against provider initiation, and
+cancellation cannot commit a late grant. The standard `api.x.ai` Responses
+adapter uses bearer authorization only. New turns persist either the
+`xai_api_key` or `supergrok_api` rail and retries/forks cannot switch it.
+Successful enrollment selects SuperGrok for new conversations at runtime;
+disconnect selects the user-owned API-key rail. Grok Build ACP authentication
+and usage remain a separate product rail.
+
+The Electron bridge and Setup view expose only bounded non-secret status,
+verification URI, and user code. Wisp headless verified the Setup landmarks,
+device-code presentation, and cancel transition in an isolated Chromium
+session. Focused evidence at this tip includes 516 renderer tests, 33 desktop
+script tests, tray asset validation, desktop TypeScript checks, 50 application
+tests, 30 xAI adapter tests, 27 protocol tests, and 49 daemon tests.
 
 ## Reading order
 

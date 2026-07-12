@@ -2,10 +2,10 @@
 
 - Snapshot date: 2026-07-12
 - Release status: not qualified for distribution
-- Wire/schema tip: **IPC protocol epoch 16**, **SQLCipher schema 19** (scheduler
-  journal kernel; execution still disabled). Older narrative below that still
-  says “current IPC v15 / schema 18” describes retained contracts under those
-  later epochs unless an epoch explicitly replaced them.
+- Wire/schema tip: **IPC protocol epoch 21**, **SQLCipher schema 20**. Scheduler
+  execution and managed-integration mutation remain disabled; schema 20 adds
+  immutable per-conversation credential-rail lineage. Older narrative below
+  describes retained contracts unless a later epoch explicitly replaced them.
 - Linux full product GA contract and milestones:
   [linux-ga.md](linux-ga.md). Platform isolation on Linux is **specified**
   (platform ADRs 0004–0007) and **not implemented**; Work remains Limited Mode
@@ -83,6 +83,14 @@ Architecture principles:
   entry buffers.
 - Official-only xAI adapters for model discovery, Responses streaming, hosted
   search tools, and image generation at the fixed `https://api.x.ai` origin.
+- IPC v21 daemon-owned SuperGrok API Chat enrollment through the fixed official
+  xAI device OAuth contract and `api:access`. The vault-owned rotating grant
+  never crosses IPC; refresh, disconnect, and provider initiation are
+  linearized. Setup projects only the verification URI, user code, bounded
+  state, expiry, generation, and reason code. Chat discovery and new turns use
+  one runtime-selected rail, while durable schema-20 lineage prevents retries
+  and forks from silently changing billing/credential rails. This is standard
+  `api.x.ai` API traffic and is not presented as Grok Chat usage or Grok Build.
 - Signed official Grok Build component catalog verification, isolated
   application-owned configuration, bounded ACP transport, permission mapping,
   and host-control health/auth negotiation.

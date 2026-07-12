@@ -5,10 +5,10 @@ durable contracts they carry. Stable process architecture lives in
 [overview.md](overview.md). Layering rules live in [principles.md](principles.md).
 Decision detail lives in the linked ADRs.
 
-**Current surface (maintain as you bump):** desktop IPC **v16** rejects epochs
-**0–15** before dispatch. SQLCipher production schema tracks the latest
-forward-only migration (schema **19**: automation scheduler journal kernel with
-execution still disabled). Earlier sections below that name v15/schema 18
+**Current surface (maintain as you bump):** desktop IPC **v21** rejects epochs
+**0–20** before dispatch. SQLCipher production schema tracks the latest
+forward-only migration (schema **20**: immutable conversation credential rails;
+automation execution remains disabled). Earlier sections below that name v15/schema 18
 describe contracts still retained under later epochs. Always confirm against
 `grok-protocol` / `grok-sqlcipher` when changing code.
 
@@ -18,8 +18,11 @@ API, or imported browser cookie is supported. Official surface research:
 
 ## Authentication paths
 
-- **Subscription:** OAuth and model sessions via the official Grok Build client
-  (Agent Client Protocol).
+- **Grok Build subscription:** OAuth and model sessions via the official Grok
+  Build client (Agent Client Protocol).
+- **SuperGrok API Chat:** fresh official xAI device OAuth with `api:access`,
+  daemon-vault ownership, and fixed `api.x.ai` traffic. It is not Build ACP or
+  Grok product-chat traffic.
 - **BYOK:** user-owned xAI API key for documented direct APIs. Not SuperGrok
   subscription credit; never enables another provider.
 
@@ -55,6 +58,7 @@ renderer, preload, Electron-main, argv, and environment state. See
 | Artifact import + open | IPC v14, schema 17 | [0022](../decisions/0022-daemon-owned-artifact-import-and-open.md), [0023](../decisions/0023-linux-private-artifact-content-and-fd-open.md) |
 | Artifact removal + retention | IPC v15, schema 18 | [0024](../decisions/0024-daemon-owned-artifact-removal-and-retention.md) |
 | Automation scheduler journal | — | [0025](../decisions/0025-daemon-owned-automation-scheduler-journal.md) |
+| SuperGrok API Chat rail | IPC v21, schema 20 lineage | [0026](../decisions/0026-daemon-owned-supergrok-api-chat-rail.md) |
 | Privileged guest / channel / journal | platform ADRs | [platform/adr](../platform/adr/) |
 
 ## Narrative detail
