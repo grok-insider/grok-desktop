@@ -346,6 +346,7 @@ export interface DaemonConversationTurn {
   state: DaemonConversationTurnState;
   revision: number;
   modelId: string;
+  searchEnabled: boolean;
   userMessage: DaemonMessage;
   assistantMessage?: DaemonMessage;
   run: DaemonRun;
@@ -481,7 +482,7 @@ export type BridgeRequest =
     }
   | { kind: "daemon.getConversation"; threadId: string }
   | { kind: "daemon.searchWorkspace"; projectId?: string; query: string; offset: number; limit: number }
-  | { kind: "daemon.startConversationTurn"; threadId: string; content: string; modelId?: string; idempotencyKey: string }
+  | { kind: "daemon.startConversationTurn"; threadId: string; content: string; modelId?: string; searchEnabled: boolean; idempotencyKey: string }
   | { kind: "daemon.cancelConversationTurn"; turnId: string; expectedRevision: number; idempotencyKey: string }
   | { kind: "daemon.retryConversationTurn"; sourceTurnId: string; expectedRevision: number; idempotencyKey: string }
   | { kind: "daemon.branchConversationThread"; sourceTurnId: string; expectedRevision: number; idempotencyKey: string }

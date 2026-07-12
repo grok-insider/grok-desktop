@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 23;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 24;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -146,6 +146,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             21 => transaction.execute_batch(MIGRATION_21)?,
             22 => transaction.execute_batch(MIGRATION_22)?,
             23 => migrate_conversation_model_binding_v23(&transaction)?,
+            24 => migrate_conversation_search_grant_v24(&transaction)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -163,6 +164,28 @@ const MIGRATION_20: &str = r"
 ALTER TABLE conversation_turn_lineage
 ADD COLUMN rail INTEGER NOT NULL DEFAULT 0 CHECK (rail BETWEEN 0 AND 1);
 ";
+
+const MIGRATION_24: &str = r"
+ALTER TABLE conversation_turns
+ADD COLUMN search_enabled INTEGER NOT NULL DEFAULT 0 CHECK (search_enabled IN (0, 1));
+";
+
+fn migrate_conversation_search_grant_v24(
+    transaction: &Transaction<'_>,
+) -> Result<(), SqlCipherStoreError> {
+    let search_enabled_exists: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('conversation_turns')
+             WHERE name='search_enabled'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !search_enabled_exists {
+        transaction.execute_batch(MIGRATION_24)?;
+    }
+    Ok(())
+}
 
 // Bind a canonical model to each conversation thread. Existing threads are
 // deterministically backfilled from their most recent durable turn; only an
@@ -3999,7 +4022,7 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_evaluation_commands;
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
-                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23);
+                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4057,7 +4080,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4081,7 +4104,7 @@ mod tests {
                  DROP TRIGGER artifact_versions_create_retention;
                  DROP TABLE artifact_removal_commands;
                  DROP TABLE artifact_version_retention;
-                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23);
+                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24);
                  PRAGMA user_version=17;
                  PRAGMA foreign_keys=ON;",
             )
@@ -5307,7 +5330,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;
 
@@ -5351,7 +5374,7 @@ mod tests {
                      VALUES (new.rowid,new.title,new.body);
                  END;
 
-                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23);
+                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24);
                  PRAGMA user_version=15;
                  CREATE TRIGGER block_artifact_search_rebuild
                  BEFORE INSERT ON search_documents WHEN new.kind='artifact' BEGIN

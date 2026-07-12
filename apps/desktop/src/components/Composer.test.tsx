@@ -82,6 +82,17 @@ describe("Composer Imagine tools", () => {
 });
 
 describe("Composer model selection", () => {
+  it("binds the official Search preset to the submitted turn", async () => {
+    const client = renderComposer() as CapturingClient;
+    fireEvent.click(await screen.findByRole("button", { name: "Enable Search" }));
+    expect(screen.getByRole("button", { name: "Disable Search" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByLabelText("Message Grok"), { target: { value: "What changed today?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(client.starts).toHaveLength(1));
+    expect(client.starts[0]).toMatchObject({ mode: "chat", searchEnabled: true });
+  });
+
   it("applies a temporary model to one new conversation and clears it after success", async () => {
     const client = renderComposer() as CapturingClient;
     await chooseModel("grok-4.3-fast");

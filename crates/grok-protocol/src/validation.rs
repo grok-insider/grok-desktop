@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 23);
+        assert_eq!(PROTOCOL_VERSION, 24);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -736,6 +736,7 @@ mod tests {
                 thread_id: "thread-1".into(),
                 content: "Hello".into(),
                 model_id: Some("grok-4".into()),
+                search_enabled: true,
             }),
             v1::request::Operation::CancelConversationTurn(v1::CancelConversationTurnRequest {
                 turn_id: "turn-1".into(),

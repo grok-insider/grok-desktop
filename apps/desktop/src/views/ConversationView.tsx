@@ -70,6 +70,7 @@ export function ConversationView() {
   const [unavailable, setUnavailable] = useState("");
   const [inspector, setInspector] = useState<Inspector>(null);
   const [prompt, setPrompt] = useState("");
+  const [searchEnabled, setSearchEnabled] = useState(false);
   const [sending, setSending] = useState(false);
   const [cancellingTurnId, setCancellingTurnId] = useState("");
   const [retryingTurnId, setRetryingTurnId] = useState("");
@@ -155,8 +156,11 @@ export function ConversationView() {
     setSending(true);
     setNotice(null);
     try {
-      const result = await client.sendConversationMessage(threadId, prompt.trim(), []);
-      if (result.status === "success") setPrompt("");
+      const result = await client.sendConversationMessage(threadId, prompt.trim(), [], searchEnabled);
+      if (result.status === "success") {
+        setPrompt("");
+        setSearchEnabled(false);
+      }
       else setNotice({ kind: "error", message: result.reason });
     } catch (error) {
       setNotice({
@@ -472,7 +476,17 @@ export function ConversationView() {
                 rows={2}
                 value={prompt}
               />
-              <div className="flex items-center justify-end border-t border-border pt-2">
+              <div className="flex items-center justify-between border-t border-border pt-2">
+                <IconButton
+                  aria-pressed={searchEnabled}
+                  className={cn(searchEnabled && "border-border bg-muted text-foreground")}
+                  disabled={sending || Boolean(activeTurn)}
+                  label={searchEnabled ? "Disable Search" : "Enable Search"}
+                  onClick={() => setSearchEnabled((value) => !value)}
+                  title="Allow this reply to use official xAI web and X search"
+                >
+                  <Globe2 size={17} />
+                </IconButton>
                 {activeTurn ? (
                   <Button
                     aria-busy={cancellingTurnId === activeTurn.id}

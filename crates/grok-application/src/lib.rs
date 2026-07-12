@@ -112,7 +112,8 @@ pub use models::{
     Citation, ContentPart, ConversationEvent, ConversationMessage, ConversationModel,
     ConversationModelFactory, ConversationRequest, ConversationRole, ConversationStream,
     GeneratedAsset, ImageRequest, MediaGenerator, ModelDescriptor, ModelError, ModelErrorKind,
-    ModelFailureCertainty, PRODUCT_CHAT_SYSTEM_PROMPT_V2, ServerTool, Usage,
+    ModelFailureCertainty, PRODUCT_CHAT_SEARCH_SYSTEM_PROMPT_V3, PRODUCT_CHAT_SYSTEM_PROMPT_V2,
+    ServerTool, Usage,
 };
 pub use ports::{
     ChatModelPreferenceStore, Clock, DatabaseKey, DesktopPreferencesStore,

@@ -1501,6 +1501,7 @@ impl Daemon {
             model_id: request
                 .model_id
                 .filter(|model_id| !model_id.trim().is_empty()),
+            search_enabled: request.search_enabled,
         };
         if let Some(replay) = conversation.replay_start(&input, key).await?
             && let Some(result) = self.conversation_replay_result(replay).await?
@@ -3656,6 +3657,7 @@ mod tests {
                     thread_id: thread.id.to_string(),
                     content: "Canonical source prompt".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "fork-handler-source",
                 Box::pin(std::future::pending()),
@@ -4217,6 +4219,7 @@ mod tests {
             turn_id: id.into(),
             state: v1::ConversationTurnState::Completed as i32,
             model_id: "m".repeat(512),
+            search_enabled: false,
             user_message: Some(message("user", 1, v1::MessageRole::User)),
             assistant_message: Some(message("assistant", 2, v1::MessageRole::Assistant)),
             run: Some(v1::Run {
@@ -6231,6 +6234,7 @@ mod tests {
                     thread_id: second_thread_id,
                     content: "Must not reserve".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "saturated-new-start",
             )
@@ -6275,6 +6279,7 @@ mod tests {
                     thread_id: first_thread.clone(),
                     content: "Reclaim this reservation".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "reclaim-orphan",
                 Box::pin(std::future::pending()),
@@ -6329,6 +6334,7 @@ mod tests {
                     thread_id: second_thread.clone(),
                     content: "Remain reserved while saturated".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "saturated-orphan",
                 Box::pin(std::future::pending()),
@@ -6369,6 +6375,7 @@ mod tests {
                     thread_id: second_thread.clone(),
                     content: "Remain reserved while saturated".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "saturated-orphan",
             )
@@ -6449,6 +6456,7 @@ mod tests {
                     thread_id: poison_thread,
                     content: "Poison external namespace only".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "poison-reservation",
                 Box::pin(std::future::pending()),
@@ -6970,6 +6978,7 @@ mod tests {
                     thread_id: source.turn.thread_id.to_string(),
                     content: "Still in progress".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "ineligible-branch-source",
                 Box::pin(std::future::pending()),
@@ -7916,6 +7925,7 @@ mod tests {
                 thread_id: thread_id.into(),
                 content: content.into(),
                 model_id: None,
+                search_enabled: false,
             },
         ));
         envelope.idempotency_key = key.into();
@@ -8563,6 +8573,7 @@ mod tests {
             user.id.clone(),
             run.id.clone(),
             "grok-4.3".into(),
+            false,
             now,
         )
         .expect("turn");

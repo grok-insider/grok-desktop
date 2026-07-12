@@ -37,7 +37,7 @@ use crate::{
 const TURN_COLUMNS: &str = "id,idempotency_key,request_fingerprint,provider_request_fingerprint,\
     project_id,thread_id,user_message_id,run_id,model_id,state,effect_id,assistant_message_id,\
     failure_kind,failure_message,failure_retryable,provider_response_id,citations_json,\
-    input_tokens,output_tokens,cost_in_usd_ticks,zero_data_retention,revision,created_at,updated_at";
+    input_tokens,output_tokens,cost_in_usd_ticks,zero_data_retention,revision,created_at,updated_at,search_enabled";
 const RUN_COLUMNS: &str = "id,project_id,thread_id,state,revision,created_at,updated_at";
 const EFFECT_COLUMNS: &str =
     "id,run_id,kind,target,idempotency,state,revision,created_at,updated_at";
@@ -1618,6 +1618,7 @@ fn validate_fork_turn_plan(
         user_message.id.clone(),
         turn_plan.run.id.clone(),
         source.turn.model_id.clone(),
+        source.turn.search_enabled,
         plan.child_thread.created_at,
     )
     .map_err(|_| StoreError::Conflict)?;
@@ -2857,6 +2858,7 @@ fn validate_reservation_links(
         turn.user_message_id.clone(),
         turn.run_id.clone(),
         turn.model_id.clone(),
+        turn.search_enabled,
         turn.created_at,
     )
     .ok();
@@ -3448,9 +3450,9 @@ fn insert_turn(connection: &Connection, turn: &ConversationTurn) -> Result<(), S
                 thread_id,user_message_id,run_id,model_id,state,effect_id,assistant_message_id,
                 failure_kind,failure_message,failure_retryable,provider_response_id,citations_json,
                 input_tokens,output_tokens,cost_in_usd_ticks,zero_data_retention,revision,
-                created_at,updated_at
+                created_at,updated_at,search_enabled
              ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,
-                       ?17,?18,?19,?20,?21,?22,?23,?24)",
+                       ?17,?18,?19,?20,?21,?22,?23,?24,?25)",
             params![
                 turn.id.as_str(),
                 turn.idempotency_key,
@@ -3478,6 +3480,7 @@ fn insert_turn(connection: &Connection, turn: &ConversationTurn) -> Result<(), S
                 number(turn.revision)?,
                 number(turn.created_at)?,
                 number(turn.updated_at)?,
+                i64::from(turn.search_enabled),
             ],
         )
         .map_err(map_sqlite)?;
@@ -4599,6 +4602,7 @@ fn turn_from_row(row: &Row<'_>) -> rusqlite::Result<ConversationTurn> {
             .map_err(|error| conversion(6, error))?,
         run_id: RunId::new(row.get::<_, String>(7)?).map_err(|error| conversion(7, error))?,
         model_id: row.get(8)?,
+        search_enabled: row.get::<_, i64>(24)? != 0,
         state: turn_state_from_i64(row.get(9)?).map_err(|error| conversion(9, error))?,
         effect_id: row
             .get::<_, Option<String>>(10)?

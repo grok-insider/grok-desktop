@@ -94,6 +94,7 @@ type NewChatMutation = {
   projectId: string;
   content: string;
   modelId?: string;
+  searchEnabled: boolean;
   title: string;
   createThreadIdempotencyKey: string;
   startTurnIdempotencyKey: string;
@@ -148,6 +149,7 @@ export class ElectronDesktopClient implements DesktopClient {
   private readonly conversationStartMutations = new Map<string, {
     content: string;
     modelId?: string;
+    searchEnabled: boolean;
     idempotencyKey: string;
   }>();
   private newChatMutation: NewChatMutation | undefined;
@@ -193,8 +195,8 @@ export class ElectronDesktopClient implements DesktopClient {
   async startRun(input: StartRunInput): Promise<{ runId: string; threadId: string }> {
     await this.ensureBootstrap();
     if (input.mode !== "chat") throw new Error(GROK_EXECUTION_UNAVAILABLE_REASON);
-    if (input.searchEnabled || input.researchEnabled) {
-      throw new Error("Search and Research are not connected to the durable Chat execution path.");
+    if (input.researchEnabled) {
+      throw new Error("Research is not connected to a durable Chat orchestration path.");
     }
     this.assertChatAvailable();
     const project = input.projectId
@@ -212,11 +214,13 @@ export class ElectronDesktopClient implements DesktopClient {
       && existingMutation.projectId === project.id
       && existingMutation.content === content
       && existingMutation.modelId === input.modelId
+      && existingMutation.searchEnabled === input.searchEnabled
       ? existingMutation
       : {
           projectId: project.id,
           content,
           modelId: input.modelId,
+          searchEnabled: input.searchEnabled,
           title,
           createThreadIdempotencyKey: crypto.randomUUID(),
           startTurnIdempotencyKey: crypto.randomUUID(),
@@ -245,7 +249,13 @@ export class ElectronDesktopClient implements DesktopClient {
     this.rebuildWorkspaceSnapshot();
     this.emit();
 
-    const turn = await this.startConversationTurn(thread, content, mutation.startTurnIdempotencyKey, mutation.modelId);
+    const turn = await this.startConversationTurn(
+      thread,
+      content,
+      mutation.startTurnIdempotencyKey,
+      mutation.modelId,
+      mutation.searchEnabled,
+    );
     if (this.newChatMutation === mutation) this.newChatMutation = undefined;
     if (isTerminalConversationState(turn.state) && turn.state !== "completed") {
       throw new Error(conversationTurnReason(turn));
@@ -842,6 +852,7 @@ export class ElectronDesktopClient implements DesktopClient {
     threadId: string,
     content: string,
     attachments: ConversationAttachment[],
+    searchEnabled = false,
   ): Promise<ClientResult<{ messageId: string; turnId: string }>> {
     await this.ensureBootstrap();
     if (attachments.length > 0) {
@@ -856,7 +867,13 @@ export class ElectronDesktopClient implements DesktopClient {
     }
     const thread = this.threads.get(threadId);
     if (!thread) return unavailable("The conversation is no longer available.");
-    const turn = await this.startConversationTurn(thread, validatedPrompt(content));
+    const turn = await this.startConversationTurn(
+      thread,
+      validatedPrompt(content),
+      undefined,
+      undefined,
+      searchEnabled,
+    );
     if (isTerminalConversationState(turn.state) && turn.state !== "completed") {
       return unavailable(
         conversationTurnReason(turn),
@@ -1330,15 +1347,16 @@ export class ElectronDesktopClient implements DesktopClient {
     content: string,
     retainedIdempotencyKey?: string,
     modelId?: string,
+    searchEnabled = false,
   ): Promise<DaemonConversationTurn> {
     const existingMutation = this.conversationStartMutations.get(thread.id);
     const mutation = retainedIdempotencyKey
-      ? existingMutation?.content === content && existingMutation.modelId === modelId && existingMutation.idempotencyKey === retainedIdempotencyKey
+      ? existingMutation?.content === content && existingMutation.modelId === modelId && existingMutation.searchEnabled === searchEnabled && existingMutation.idempotencyKey === retainedIdempotencyKey
         ? existingMutation
-        : { content, modelId, idempotencyKey: retainedIdempotencyKey }
-      : existingMutation?.content === content && existingMutation.modelId === modelId
+        : { content, modelId, searchEnabled, idempotencyKey: retainedIdempotencyKey }
+      : existingMutation?.content === content && existingMutation.modelId === modelId && existingMutation.searchEnabled === searchEnabled
       ? existingMutation
-      : { content, modelId, idempotencyKey: crypto.randomUUID() };
+      : { content, modelId, searchEnabled, idempotencyKey: crypto.randomUUID() };
     this.conversationStartMutations.set(thread.id, mutation);
     let response;
     try {
@@ -1347,6 +1365,7 @@ export class ElectronDesktopClient implements DesktopClient {
         threadId: thread.id,
         content,
         ...(modelId === undefined ? {} : { modelId }),
+        searchEnabled,
         idempotencyKey: mutation.idempotencyKey,
       });
     } catch (error) {

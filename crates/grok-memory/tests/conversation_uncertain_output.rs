@@ -370,6 +370,7 @@ async fn execute(
             thread_id,
             content: "Hello".into(),
             model_id: None,
+            search_enabled: false,
         },
         key,
         Box::pin(std::future::pending()),
@@ -428,6 +429,7 @@ async fn maximum_output_flush_is_bounded_and_checks_cancellation_between_batches
                 thread_id,
                 content: "Hello".into(),
                 model_id: None,
+                search_enabled: false,
             },
             "maximum-output-cancellation",
             Box::pin(CancelAfterFirstAppend {
@@ -475,6 +477,7 @@ async fn cancellation_after_final_text_flush_precedes_terminal_commit() {
             thread_id,
             content: "Hello".into(),
             model_id: None,
+            search_enabled: false,
         },
         "final-tail-cancellation",
         Box::pin(CancelAfterFirstAppend {
@@ -507,6 +510,7 @@ async fn start_returns_a_durable_reservation_before_provider_dispatch() {
                 thread_id,
                 content: "Hello".into(),
                 model_id: None,
+                search_enabled: false,
             },
             "async-start",
             Box::pin(std::future::pending()),
@@ -563,6 +567,7 @@ async fn reserved_cancel_is_exact_and_prevents_late_provider_dispatch() {
                 thread_id,
                 content: "Hello".into(),
                 model_id: None,
+                search_enabled: false,
             },
             "cancel-before-dispatch",
             Box::pin(std::future::pending()),
@@ -614,6 +619,7 @@ async fn provider_started_cancel_is_durable_before_the_dispatch_signal() {
                 thread_id,
                 content: "Hello".into(),
                 model_id: None,
+                search_enabled: false,
             },
             "cancel-provider-started",
             Box::pin(std::future::pending()),
@@ -949,6 +955,7 @@ async fn ambiguous_cancellation_reloads_the_already_committed_review_winner() {
         thread_id: thread_id.clone(),
         content: "Hello".into(),
         model_id: None,
+        search_enabled: false,
     };
 
     let snapshot = Box::pin(service.execute(
@@ -985,6 +992,7 @@ async fn normalized_text_is_durable_before_provider_completion() {
                 thread_id,
                 content: "Hello".into(),
                 model_id: None,
+                search_enabled: false,
             },
             "progressive-durable-text",
             Box::pin(async move {

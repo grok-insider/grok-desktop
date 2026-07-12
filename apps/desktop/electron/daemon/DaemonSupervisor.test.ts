@@ -1870,6 +1870,7 @@ function validConversationTurn(): ConversationTurnResult {
     state: ConversationTurnState.CONVERSATION_TURN_STATE_COMPLETED,
     revision: 2n,
     modelId: "grok-4.3",
+    searchEnabled: false,
     userMessage: {
       id: "message-user",
       threadId: "thread-1",
@@ -1946,6 +1947,7 @@ function retryReservedTurn(source: ConversationTurnResult): ConversationTurnResu
     state: ConversationTurnState.CONVERSATION_TURN_STATE_RESERVED,
     revision: 0n,
     modelId: source.modelId,
+    searchEnabled: source.searchEnabled,
     userMessage: {
       ...source.userMessage!,
       id: "message-retry",

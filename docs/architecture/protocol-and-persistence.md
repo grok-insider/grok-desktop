@@ -64,6 +64,7 @@ renderer, preload, Electron-main, argv, and environment state. See
 | Atomic scheduled dispatch | schema 21 | [0025](../decisions/0025-daemon-owned-automation-scheduler-journal.md) |
 | Durable signed managed integrations | schema 22 | [0027](../decisions/0027-durable-signed-managed-integration-lifecycle.md) |
 | Local completed-turn usage summary | IPC v23, schema 23 | [0029](../decisions/0029-local-usage-summary-ipc.md) |
+| Durable official xAI Search grant | IPC v24, schema 24 | [0031](../decisions/0031-durable-official-xai-search.md) |
 | Privileged guest / channel / journal | platform ADRs | [platform/adr](../platform/adr/) |
 
 ## Narrative detail

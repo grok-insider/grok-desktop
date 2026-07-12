@@ -307,6 +307,7 @@ pub fn conversation_turn_to_wire_with_retry_eligibility(
         revision: turn.revision,
         lineage: Some(lineage),
         retry_eligibility: conversation_retry_eligibility_to_wire(retry_eligibility) as i32,
+        search_enabled: turn.search_enabled,
     }
 }
 

@@ -721,6 +721,9 @@ pub struct ConversationTurn {
     pub run_id: RunId,
     /// Product-selected and provider-validated xAI model identifier.
     pub model_id: String,
+    /// Whether this turn may invoke the closed official xAI Search preset.
+    /// This grants provider-side web/X search only; it never grants host tools.
+    pub search_enabled: bool,
     /// Current lifecycle.
     pub state: ConversationTurnState,
     /// Non-idempotent provider effect after dispatch is reserved.
@@ -761,6 +764,7 @@ impl ConversationTurn {
         user_message_id: MessageId,
         run_id: RunId,
         model_id: String,
+        search_enabled: bool,
         now: UnixMillis,
     ) -> Result<Self, ConversationTurnError> {
         validate_text(
@@ -779,6 +783,7 @@ impl ConversationTurn {
             user_message_id,
             run_id,
             model_id,
+            search_enabled,
             state: ConversationTurnState::Reserved,
             effect_id: None,
             assistant_message_id: None,
@@ -1284,6 +1289,7 @@ mod tests {
             MessageId::new("message-1").expect("id"),
             RunId::new("run-1").expect("id"),
             "grok-test".into(),
+            false,
             1,
         )
         .expect("turn")

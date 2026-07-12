@@ -3,7 +3,7 @@
 - Snapshot: 2026-07-12
 - Reviewed baseline: `66787d5ef3fe4bd23aadb49951b8d347ab32e8b6`
 - Review range: `226484610d5ea4ecbb1c614cc7a741a2d054fc65..HEAD`
-- Wire/schema implemented in the current tree: IPC epoch 23, SQLCipher schema 23
+- Wire/schema implemented in the current tree: IPC epoch 24, SQLCipher schema 24
 - Release status: not qualified for distribution
 
 This directory is the canonical handoff for continuing the current work. It
@@ -97,13 +97,12 @@ workers. Home Chat has a daemon-owned product prompt that states its actual
 capabilities, and isolated headless Electron CDP QA covers every route at wide
 and narrow viewports without sharing the user's durable daemon database.
 
-The next locally implementable daemon capability is request-scoped official
-xAI Search. It requires an epoch and schema change because the selected closed
-server-tool set must be persisted on each turn and preserved by retry, edit,
-regenerate, and restart recovery. The existing provider-request fingerprint
-already binds continuation and ordered server tools as a prerequisite.
-Research is not Search: it remains unavailable until it has its own bounded,
-durable orchestration contract.
+Epoch 24 and schema 24 implement request-scoped official xAI Search as a closed
+per-turn grant. The selected preset is persisted before dispatch, bound by the
+command and provider-request fingerprints, and preserved by retry, edit,
+regenerate, and restart recovery. It maps only to the official xAI web and X
+server tools and grants no host authority. Research is not Search: it remains
+unavailable until it has its own bounded, durable orchestration contract.
 
 ## Reading order
 

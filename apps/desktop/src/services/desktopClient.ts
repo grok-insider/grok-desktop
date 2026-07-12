@@ -466,7 +466,7 @@ export interface DesktopClient {
   openExternalUrl(url: string): Promise<ClientResult<void>>;
   searchWorkspace(input: { projectId?: string; query: string; offset?: number; limit?: number }): Promise<WorkspaceSearchResults>;
   subscribeConversation(threadId: string, listener: (conversation: ConversationDetail) => void): () => void;
-  sendConversationMessage(threadId: string, content: string, attachments: ConversationAttachment[]): Promise<ClientResult<{ messageId: string; turnId: string }>>;
+  sendConversationMessage(threadId: string, content: string, attachments: ConversationAttachment[], searchEnabled?: boolean): Promise<ClientResult<{ messageId: string; turnId: string }>>;
   cancelConversationTurn(input: { turnId: string; expectedRevision: number }): Promise<ClientResult<ConversationTurnDetail>>;
   retryConversationTurn(input: { sourceTurnId: string; expectedRevision: number }): Promise<ClientResult<ConversationTurnDetail>>;
   editConversationMessage(threadId: string, messageId: string, content: string): Promise<ClientResult<ConversationDetail>>;

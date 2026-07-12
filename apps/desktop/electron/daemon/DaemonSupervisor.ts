@@ -546,6 +546,7 @@ export class DaemonSupervisor {
     content: string,
     idempotencyKey: string,
     modelId?: string,
+    searchEnabled = false,
   ): Promise<DaemonConversationTurn> {
     await this.start();
     const turn = await this.requireProtocol().startConversationTurn(
@@ -553,6 +554,7 @@ export class DaemonSupervisor {
       content,
       idempotencyKey,
       modelId,
+      searchEnabled,
     );
     this.setConnected();
     return mapConversationTurn(turn);
@@ -1416,6 +1418,7 @@ export function mapConversationTurn(
     state: conversationTurnStateFromWire(turn.state),
     revision: safeNumber(turn.revision, "conversation turn revision"),
     modelId: boundedString(turn.modelId, "conversation model id", 512),
+    searchEnabled: turn.searchEnabled,
     userMessage: mapMessage(turn.userMessage),
     assistantMessage: turn.assistantMessage ? mapMessage(turn.assistantMessage) : undefined,
     run: mapRun(turn.run),

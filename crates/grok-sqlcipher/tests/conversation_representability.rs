@@ -321,6 +321,7 @@ fn conversation_input(thread_id: &ThreadId) -> ExecuteConversationTurn {
         thread_id: thread_id.to_string(),
         content: "Bounded provider result".into(),
         model_id: None,
+        search_enabled: false,
     }
 }
 

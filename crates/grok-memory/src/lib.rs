@@ -8690,6 +8690,7 @@ mod tests {
             thread_id: thread.id.to_string(),
             content: "Hello".into(),
             model_id: Some("grok-4.3".into()),
+            search_enabled: false,
         };
         let first = conversation
             .execute(
@@ -8721,7 +8722,11 @@ mod tests {
             .expect("saved selection");
 
         let replay = conversation
-            .execute(input, "model-change-turn", Box::pin(std::future::pending()))
+            .execute(
+                input.clone(),
+                "model-change-turn",
+                Box::pin(std::future::pending()),
+            )
             .await
             .expect("bound model makes the exact replay stable");
         assert_eq!(replay, first);
@@ -8732,9 +8737,25 @@ mod tests {
             conversation
                 .execute(
                     ExecuteConversationTurn {
+                        search_enabled: true,
+                        ..input
+                    },
+                    "model-change-turn",
+                    Box::pin(std::future::pending()),
+                )
+                .await,
+            Err(ApplicationError::Conflict)
+        ));
+        assert_eq!(stream_calls.load(AtomicOrdering::SeqCst), 1);
+
+        assert!(matches!(
+            conversation
+                .execute(
+                    ExecuteConversationTurn {
                         thread_id: thread.id.to_string(),
                         content: "Conflicting override".into(),
                         model_id: Some("grok-other".into()),
+                        search_enabled: false,
                     },
                     "conflicting-model-override",
                     Box::pin(std::future::pending()),
@@ -8808,6 +8829,7 @@ mod tests {
                     thread_id: thread.id.to_string(),
                     content: "Retry this exact prompt".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "retry-source-command",
                 Box::pin(std::future::pending()),
@@ -8859,6 +8881,7 @@ mod tests {
                         thread_id: thread.id.to_string(),
                         content: "A new prompt must not switch credential generations".into(),
                         model_id: None,
+                        search_enabled: false,
                     },
                     "credential-mismatch-start",
                     Box::pin(std::future::pending()),
@@ -8910,6 +8933,7 @@ mod tests {
                         thread_id: thread.id.to_string(),
                         content: "Legacy history must remain read-only".into(),
                         model_id: None,
+                        search_enabled: false,
                     },
                     "legacy-unbound-start",
                     Box::pin(std::future::pending()),
@@ -9081,6 +9105,7 @@ mod tests {
                     thread_id: revoked_thread.id.to_string(),
                     content: "Do not dispatch after credential deletion".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "revoked-dispatch-turn",
                 Box::pin(std::future::pending()),
@@ -9179,6 +9204,7 @@ mod tests {
                     thread_id: thread.id.to_string(),
                     content: "Linearize this provider boundary".into(),
                     model_id: None,
+                    search_enabled: false,
                 },
                 "credential-gate-turn",
                 Box::pin(std::future::pending()),
@@ -9305,6 +9331,7 @@ mod tests {
                         thread_id: thread.id.to_string(),
                         content: "Keep this generation coherent".into(),
                         model_id: None,
+                        search_enabled: false,
                     },
                     "coherent-read-turn",
                     Box::pin(std::future::pending()),
@@ -9437,6 +9464,7 @@ mod tests {
                         thread_id: thread.id.to_string(),
                         content: "Hello".into(),
                         model_id: None,
+                        search_enabled: false,
                     },
                     "ambiguous-turn",
                     Box::pin(std::future::pending()),
@@ -11188,6 +11216,7 @@ mod tests {
                     user.id.clone(),
                     run.id.clone(),
                     source.turn.model_id.clone(),
+                    source.turn.search_enabled,
                     now,
                 )
                 .expect("fork turn");
@@ -12438,6 +12467,7 @@ mod tests {
             user.id.clone(),
             run.id.clone(),
             "grok-4.3".into(),
+            false,
             now,
         )
         .expect("turn");
@@ -13287,6 +13317,7 @@ mod tests {
             user.id.clone(),
             run.id.clone(),
             "grok-4.3".into(),
+            false,
             created_at,
         )
         .expect("turn");

@@ -1377,6 +1377,7 @@ async fn reserve_conversation_turn(
         user.id.clone(),
         run.id.clone(),
         "grok-4.3".into(),
+        index == 2,
         created_at,
     )
     .expect("turn");

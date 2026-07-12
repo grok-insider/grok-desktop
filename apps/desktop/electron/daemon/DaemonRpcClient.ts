@@ -36,7 +36,7 @@ import {
 } from "../generated/daemon/v1/daemon.js";
 
 // Epoch twenty-one adds daemon-owned SuperGrok enrollment while preserving epoch twenty fail-closed surfaces.
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;
@@ -556,6 +556,7 @@ export class DaemonProtocolClient {
     content: string,
     idempotencyKey: string,
     modelId?: string,
+    searchEnabled = false,
   ): Promise<ConversationTurnResult> {
     return expectResult(
       await this.rpc.request(
@@ -567,6 +568,7 @@ export class DaemonProtocolClient {
             // Omit rather than "" so protobuf does not encode an empty optional
             // override that conflicts with a thread's durable model binding.
             ...(modelId !== undefined && modelId !== "" ? { modelId } : {}),
+            searchEnabled,
           },
         },
         idempotencyKey,

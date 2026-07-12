@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  Globe2,
   Image as ImageIcon,
   Mic,
   Plus,
@@ -41,6 +42,7 @@ export function Composer() {
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
   const [modelOverride, setModelOverride] = useState<string | undefined>();
+  const [searchEnabled, setSearchEnabled] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [imagineKind, setImagineKind] = useState<ImagineToolKind | null>(null);
   const [mediaPrompt, setMediaPrompt] = useState("");
@@ -94,7 +96,7 @@ export function Composer() {
         prompt: value,
         mode,
         projectId: projectId || undefined,
-        searchEnabled: false,
+        searchEnabled,
         researchEnabled: false,
         ...(mode === "chat" && modelOverride ? { modelId: modelOverride } : {}),
       };
@@ -267,6 +269,16 @@ export function Composer() {
         )}
         <div className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
           <div className="relative flex items-center gap-1" ref={toolsRootRef}>
+            <IconButton
+              label={searchEnabled ? "Disable Search" : "Enable Search"}
+              disabled={mode !== "chat" || submitting || !modeAvailable}
+              title="Allow this message to use official xAI web and X search"
+              className={cn(searchEnabled && "border-border bg-muted text-foreground")}
+              aria-pressed={searchEnabled}
+              onClick={() => setSearchEnabled((value) => !value)}
+            >
+              <Globe2 size={18} />
+            </IconButton>
             <IconButton
               label="Tools"
               disabled={mode !== "chat" || submitting || !anyImagineTool}

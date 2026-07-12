@@ -3439,6 +3439,7 @@ function conversationForkFixture(kind: ConversationForkKind): ConversationForkFi
         state: "provider_started",
         revision: 1,
         modelId: parentTurn.modelId,
+        searchEnabled: parentTurn.searchEnabled,
         userMessage: childUser,
         run: {
           id: `run-${kind}`,
@@ -3712,6 +3713,7 @@ function completedTurn(thread: DaemonThread): DaemonConversationTurn {
     state: "completed",
     revision: 2,
     modelId: "grok-4.3",
+    searchEnabled: false,
     userMessage,
     assistantMessage,
     run: {

@@ -2354,7 +2354,7 @@ async fn schema_fourteen_forks_migrate_acknowledged_and_restart_after_a_fault() 
                  SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                  WHERE new.state=0;
              END;
-             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22,23);
+             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22,23,24);
              PRAGMA user_version=14;
              CREATE TABLE conversation_fork_delivery_ack_commands(blocker INTEGER) STRICT;",
         )
@@ -3372,6 +3372,7 @@ async fn fork_plan(
             user.id.clone(),
             run.id.clone(),
             source.turn.model_id.clone(),
+            source.turn.search_enabled,
             now,
         )
         .expect("fork turn");
@@ -3514,6 +3515,7 @@ fn original_candidate(
         user.id.clone(),
         run.id.clone(),
         "grok-4.3".into(),
+        false,
         now,
     )
     .expect("turn");
@@ -3563,6 +3565,7 @@ fn retry_candidate(
         user.id.clone(),
         run.id.clone(),
         source.turn.model_id.clone(),
+        source.turn.search_enabled,
         now,
     )
     .expect("retry turn");

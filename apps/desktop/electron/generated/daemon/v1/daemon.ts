@@ -647,6 +647,7 @@ export interface StartConversationTurnRequest {
   threadId: string;
   content: string;
   modelId?: string | undefined;
+  searchEnabled: boolean;
 }
 
 /** Exact optimistic cancellation intent for one observed durable turn. */
@@ -786,6 +787,7 @@ export interface ConversationTurnResult {
   revision: bigint;
   lineage: ConversationTurnLineage | undefined;
   retryEligibility: ConversationRetryEligibility;
+  searchEnabled: boolean;
 }
 
 /**
@@ -5608,7 +5610,7 @@ export const ChatModelCatalog: MessageFns<ChatModelCatalog> = {
 };
 
 function createBaseStartConversationTurnRequest(): StartConversationTurnRequest {
-  return { threadId: "", content: "", modelId: undefined };
+  return { threadId: "", content: "", modelId: undefined, searchEnabled: false };
 }
 
 export const StartConversationTurnRequest: MessageFns<StartConversationTurnRequest> = {
@@ -5621,6 +5623,9 @@ export const StartConversationTurnRequest: MessageFns<StartConversationTurnReque
     }
     if (message.modelId !== undefined) {
       writer.uint32(26).string(message.modelId);
+    }
+    if (message.searchEnabled !== false) {
+      writer.uint32(32).bool(message.searchEnabled);
     }
     return writer;
   },
@@ -5656,6 +5661,14 @@ export const StartConversationTurnRequest: MessageFns<StartConversationTurnReque
           message.modelId = reader.string();
           continue;
         }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.searchEnabled = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -5673,6 +5686,7 @@ export const StartConversationTurnRequest: MessageFns<StartConversationTurnReque
     message.threadId = object.threadId ?? "";
     message.content = object.content ?? "";
     message.modelId = object.modelId ?? undefined;
+    message.searchEnabled = object.searchEnabled ?? false;
     return message;
   },
 };
@@ -6684,6 +6698,7 @@ function createBaseConversationTurnResult(): ConversationTurnResult {
     revision: 0n,
     lineage: undefined,
     retryEligibility: 0,
+    searchEnabled: false,
   };
 }
 
@@ -6730,6 +6745,9 @@ export const ConversationTurnResult: MessageFns<ConversationTurnResult> = {
     }
     if (message.retryEligibility !== 0) {
       writer.uint32(104).int32(message.retryEligibility);
+    }
+    if (message.searchEnabled !== false) {
+      writer.uint32(112).bool(message.searchEnabled);
     }
     return writer;
   },
@@ -6845,6 +6863,14 @@ export const ConversationTurnResult: MessageFns<ConversationTurnResult> = {
           message.retryEligibility = reader.int32() as any;
           continue;
         }
+        case 14: {
+          if (tag !== 112) {
+            break;
+          }
+
+          message.searchEnabled = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -6882,6 +6908,7 @@ export const ConversationTurnResult: MessageFns<ConversationTurnResult> = {
       ? ConversationTurnLineage.fromPartial(object.lineage)
       : undefined;
     message.retryEligibility = object.retryEligibility ?? 0;
+    message.searchEnabled = object.searchEnabled ?? false;
     return message;
   },
 };

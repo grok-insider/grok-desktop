@@ -761,6 +761,7 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
         request.content,
         request.idempotencyKey,
         request.modelId,
+        request.searchEnabled,
       );
       if (conversationReplayTokens.get(event.sender.id) === requestReplayToken) {
         if (turn.state === "reserved" || turn.state === "provider_started") {
@@ -933,7 +934,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         architecture: process.arch,
         currentVersion: app.getVersion(),
         protocolVersion: PROTOCOL_VERSION,
-        schemaVersion: 23,
+        schemaVersion: 24,
         trustedKeys,
       });
     } catch {

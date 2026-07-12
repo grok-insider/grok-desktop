@@ -257,11 +257,13 @@ describe("parseBridgeRequest", () => {
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "Ask official Grok",
+      searchEnabled: true,
       idempotencyKey: "turn-command-1",
     })).toEqual({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "Ask official Grok",
+      searchEnabled: true,
       idempotencyKey: "turn-command-1",
     });
     expect(parseBridgeRequest({
@@ -269,12 +271,14 @@ describe("parseBridgeRequest", () => {
       threadId: "thread-1",
       content: "Ask official Grok",
       modelId: "grok-4.3",
+      searchEnabled: false,
       idempotencyKey: "turn-command-model-1",
     })).toEqual({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "Ask official Grok",
       modelId: "grok-4.3",
+      searchEnabled: false,
       idempotencyKey: "turn-command-model-1",
     });
     expect(parseBridgeRequest({
@@ -282,17 +286,20 @@ describe("parseBridgeRequest", () => {
       threadId: "thread-1",
       content: "Ask official Grok",
       modelId: undefined,
+      searchEnabled: false,
       idempotencyKey: "turn-command-model-2",
     })).toEqual({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "Ask official Grok",
+      searchEnabled: false,
       idempotencyKey: "turn-command-model-2",
     });
     expect(() => parseBridgeRequest({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "Ask official Grok",
+      searchEnabled: false,
       idempotencyKey: "turn-command-1",
       role: "assistant",
       model: "untrusted-model",
@@ -302,6 +309,7 @@ describe("parseBridgeRequest", () => {
       threadId: "thread-1",
       content: "Ask official Grok",
       modelId: "",
+      searchEnabled: false,
       idempotencyKey: "turn-command-bad-model-1",
     })).toThrow("chat model identifier is invalid");
     expect(() => parseBridgeRequest({
@@ -309,18 +317,21 @@ describe("parseBridgeRequest", () => {
       threadId: "thread-1",
       content: "Ask official Grok",
       modelId: "grok\nunsafe",
+      searchEnabled: false,
       idempotencyKey: "turn-command-bad-model-2",
     })).toThrow("chat model identifier is invalid");
     expect(() => parseBridgeRequest({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "",
+      searchEnabled: false,
       idempotencyKey: "turn-command-2",
     })).toThrow("message content is invalid");
     expect(() => parseBridgeRequest({
       kind: "daemon.startConversationTurn",
       threadId: "thread-1",
       content: "x".repeat(1024 * 1024 + 1),
+      searchEnabled: false,
       idempotencyKey: "turn-command-3",
     })).toThrow("message content is invalid");
   });

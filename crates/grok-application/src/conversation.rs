@@ -17,9 +17,9 @@ use crate::{
     ApplicationError, ChatModelPreferenceStore, Citation, Clock, ContentPart, ConversationEvent,
     ConversationMessage, ConversationModelFactory, ConversationRequest, ConversationRole,
     CredentialService, GetUsageSummary, IdGenerator, ModelError, ModelErrorKind,
-    ModelFailureCertainty, MutationCommand, NewRunEvent, PRODUCT_CHAT_SYSTEM_PROMPT_V2, Page,
-    ServerTool, StoreError, SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary,
-    UsageWindow, WorkspaceService, mutations::mutation_command,
+    ModelFailureCertainty, MutationCommand, NewRunEvent, PRODUCT_CHAT_SEARCH_SYSTEM_PROMPT_V3,
+    PRODUCT_CHAT_SYSTEM_PROMPT_V2, Page, ServerTool, StoreError, SuperGrokEnrollmentService, Usage,
+    UsageScope, UsageSummary, UsageWindow, WorkspaceService, mutations::mutation_command,
 };
 
 /// Maximum canonical messages copied into one immutable provider request.
@@ -79,6 +79,8 @@ pub struct StartConversationTurn {
     /// Optional composer override. The daemon resolves it against the live
     /// official catalog and binds the canonical ID to an empty thread.
     pub model_id: Option<String>,
+    /// Request the closed official xAI Search preset for this turn.
+    pub search_enabled: bool,
 }
 
 /// Input for one explicit daemon-owned retry of a known-safe terminal turn.
@@ -1272,6 +1274,7 @@ impl ConversationService {
         let model_id = source.turn.model_id.clone();
         // Build and validate the complete renderer-influenced plan before any
         // credential-bearing model discovery or provider I/O.
+        let search_enabled = source.turn.search_enabled;
         let plan = self.build_fork_plan(
             &request,
             command,
@@ -1340,7 +1343,7 @@ impl ConversationService {
         let context = reservation.context.ok_or_else(|| {
             ApplicationError::Integrity("a dispatching fork is missing frozen context".into())
         })?;
-        let provider_request = provider_request(&model_id, &context)?;
+        let provider_request = provider_request(&model_id, &context, search_enabled)?;
         Ok(StartedConversationFork {
             snapshot: reservation.snapshot,
             dispatch: Some(ConversationTurnDispatch {
@@ -1534,7 +1537,7 @@ impl ConversationService {
                 }
                 // Reject an edited context which would reserve a child that can
                 // never be dispatched under the canonical provider bounds.
-                provider_request(&source.turn.model_id, &messages)?;
+                provider_request(&source.turn.model_id, &messages, source.turn.search_enabled)?;
                 let run = Run::queued(
                     grok_domain::RunId::new(self.ids.generate("run"))?,
                     child_thread.project_id.clone(),
@@ -1550,6 +1553,7 @@ impl ConversationService {
                     user_message.id.clone(),
                     run.id.clone(),
                     source.turn.model_id.clone(),
+                    source.turn.search_enabled,
                     now,
                 )?;
                 let lineage = match kind {
@@ -1599,7 +1603,11 @@ impl ConversationService {
             input.thread_id.clone(),
             selected_model.to_owned(),
             input.content.clone(),
-            "tools:none".into(),
+            if input.search_enabled {
+                "tools:official_search".into()
+            } else {
+                "tools:none".into()
+            },
             "provider_store:false".into(),
         ];
         if self.default_rail.current() == grok_domain::ChatRail::SuperGrokApi {
@@ -1763,6 +1771,7 @@ impl ConversationService {
             user_message.id.clone(),
             run.id.clone(),
             selected_model.clone(),
+            input.search_enabled,
             now,
         )?;
         let reservation = self
@@ -1793,7 +1802,8 @@ impl ConversationService {
             ));
         }
 
-        let request = provider_request(&selected_model, &reservation.context)?;
+        let search_enabled = reservation.snapshot.turn.search_enabled;
+        let request = provider_request(&selected_model, &reservation.context, search_enabled)?;
         let snapshot = reservation.snapshot;
         let dispatch = ConversationTurnDispatch {
             snapshot: snapshot.clone(),
@@ -1915,6 +1925,7 @@ impl ConversationService {
             user_message.id.clone(),
             run.id.clone(),
             model_id.clone(),
+            source.turn.search_enabled,
             now,
         )?;
         let lineage = ConversationTurnLineage::retry_on(
@@ -1947,7 +1958,11 @@ impl ConversationService {
                 dispatch: None,
             });
         }
-        let request = provider_request(&model_id, &reservation.context)?;
+        let request = provider_request(
+            &model_id,
+            &reservation.context,
+            reservation.snapshot.turn.search_enabled,
+        )?;
         let snapshot = reservation.snapshot;
         let dispatch = ConversationTurnDispatch {
             snapshot: snapshot.clone(),
@@ -3020,7 +3035,11 @@ fn validate_frozen_source_context(
             "fork source context does not end at its canonical user message".into(),
         ));
     }
-    let request = provider_request(&source.turn.model_id, source_context)?;
+    let request = provider_request(
+        &source.turn.model_id,
+        source_context,
+        source.turn.search_enabled,
+    )?;
     let fingerprint = provider_request_fingerprint(&request);
     match source.turn.state {
         ConversationTurnState::Completed | ConversationTurnState::Failed
@@ -3100,7 +3119,11 @@ fn retry_command(
     source: &ConversationTurnSnapshot,
     source_context: &[Message],
 ) -> Result<MutationCommand, ApplicationError> {
-    let source_provider_request = provider_request(&source.turn.model_id, source_context)?;
+    let source_provider_request = provider_request(
+        &source.turn.model_id,
+        source_context,
+        source.turn.search_enabled,
+    )?;
     let source_provider_fingerprint = provider_request_fingerprint(&source_provider_request);
     if source.turn.state == ConversationTurnState::Failed
         && source.turn.provider_request_fingerprint != Some(source_provider_fingerprint)
@@ -3179,7 +3202,13 @@ fn ensure_retry_source_eligible(
 fn provider_request(
     model: &str,
     context: &[Message],
+    search_enabled: bool,
 ) -> Result<ConversationRequest, ApplicationError> {
+    let system_prompt = if search_enabled {
+        PRODUCT_CHAT_SEARCH_SYSTEM_PROMPT_V3
+    } else {
+        PRODUCT_CHAT_SYSTEM_PROMPT_V2
+    };
     if context.is_empty() || context.len() >= MAX_CONVERSATION_CONTEXT_MESSAGES {
         return Err(ApplicationError::InvalidInput(
             "conversation context exceeds the supported message limit".into(),
@@ -3187,7 +3216,7 @@ fn provider_request(
     }
     let bytes = context
         .iter()
-        .try_fold(PRODUCT_CHAT_SYSTEM_PROMPT_V2.len(), |total, message| {
+        .try_fold(system_prompt.len(), |total, message| {
             total.checked_add(message.content.len())
         })
         .ok_or_else(|| {
@@ -3201,7 +3230,7 @@ fn provider_request(
     let mut messages = Vec::with_capacity(context.len() + 1);
     messages.push(ConversationMessage {
         role: ConversationRole::System,
-        content: vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V2.into())],
+        content: vec![ContentPart::Text(system_prompt.into())],
     });
     messages.extend(
         context
@@ -3220,7 +3249,11 @@ fn provider_request(
         model: model.into(),
         messages,
         continuation: None,
-        tools: Vec::new(),
+        tools: if search_enabled {
+            vec![ServerTool::WebSearch, ServerTool::XSearch]
+        } else {
+            Vec::new()
+        },
         store: false,
     })
 }
@@ -3342,8 +3375,11 @@ fn provider_request_fingerprint(request: &ConversationRequest) -> [u8; 32] {
 
 #[cfg(test)]
 mod provider_request_fingerprint_tests {
-    use super::provider_request_fingerprint;
-    use crate::{ConversationRequest, ServerTool};
+    use super::{provider_request, provider_request_fingerprint};
+    use crate::{
+        ContentPart, ConversationRequest, PRODUCT_CHAT_SEARCH_SYSTEM_PROMPT_V3, ServerTool,
+    };
+    use grok_domain::{Message, MessageId, MessageRole, ThreadId};
 
     fn request() -> ConversationRequest {
         ConversationRequest {
@@ -3381,6 +3417,30 @@ mod provider_request_fingerprint_tests {
                 tools: vec![ServerTool::XSearch],
                 ..request()
             })
+        );
+    }
+
+    #[test]
+    fn official_search_preset_is_closed_and_uses_a_truthful_prompt() {
+        let context = [Message::new(
+            MessageId::new("message-1").expect("message id"),
+            ThreadId::new("thread-1").expect("thread id"),
+            MessageRole::User,
+            "What changed today?".into(),
+            1,
+        )
+        .expect("message")];
+        let request = provider_request("grok-test", &context, true).expect("provider request");
+
+        assert_eq!(
+            request.tools,
+            vec![ServerTool::WebSearch, ServerTool::XSearch]
+        );
+        assert_eq!(
+            request.messages[0].content,
+            vec![ContentPart::Text(
+                PRODUCT_CHAT_SEARCH_SYSTEM_PROMPT_V3.into()
+            )]
         );
     }
 }

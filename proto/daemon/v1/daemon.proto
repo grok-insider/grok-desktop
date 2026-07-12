@@ -330,6 +330,7 @@ message StartConversationTurnRequest {
   string thread_id = 1;
   string content = 2;
   optional string model_id = 3;
+  bool search_enabled = 4;
 }
 
 // Exact optimistic cancellation intent for one observed durable turn.
@@ -455,6 +456,7 @@ message ConversationTurnResult {
   uint64 revision = 11;
   ConversationTurnLineage lineage = 12;
   ConversationRetryEligibility retry_eligibility = 13;
+  bool search_enabled = 14;
 }
 
 // Non-secret immutable ancestry. Local credential-generation binding remains

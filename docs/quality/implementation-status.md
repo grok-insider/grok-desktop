@@ -2,10 +2,10 @@
 
 - Snapshot date: 2026-07-12
 - Release status: not qualified for distribution
-- Wire/schema tip: **IPC protocol epoch 23**, **SQLCipher schema 23**. Scheduler
-  execution and managed-integration mutation remain disabled; schema 23 adds
-  local completed-turn usage-summary indexes while retaining immutable
-  per-conversation credential-rail lineage. Older narrative below
+- Wire/schema tip: **IPC protocol epoch 24**, **SQLCipher schema 24**. Scheduler
+  execution and managed-integration mutation remain disabled; schema 24 adds
+  a durable per-turn official xAI Search grant while retaining local usage
+  summaries and immutable per-conversation credential-rail lineage. Older narrative below
   describes retained contracts unless a later epoch explicitly replaced them.
 - Linux full product GA contract and milestones:
   [linux-ga.md](linux-ga.md). Platform isolation on Linux is **specified**

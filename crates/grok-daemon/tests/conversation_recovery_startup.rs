@@ -108,6 +108,7 @@ async fn seed_incomplete_turns(path: &Path, count: usize) -> Vec<SeededTurn> {
             user.id.clone(),
             run.id.clone(),
             "grok-4.3".into(),
+            false,
             created_at,
         )
         .expect("reserve turn aggregate");

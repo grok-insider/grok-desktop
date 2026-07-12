@@ -1,4 +1,4 @@
-//! Real `ConversationTurnStore::summarize_usage` coverage on SQLCipher.
+//! Real `ConversationTurnStore::summarize_usage` coverage on `SQLCipher`.
 
 use std::{path::Path, sync::Arc};
 
@@ -226,6 +226,7 @@ async fn reserve_turn(
         user.id.clone(),
         run.id.clone(),
         "grok-4.3".into(),
+        false,
         now,
     )
     .expect("turn");

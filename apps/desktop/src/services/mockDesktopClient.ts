@@ -419,6 +419,7 @@ export class MockDesktopClient implements DesktopClient {
     threadId: string,
     content: string,
     attachments: ConversationAttachment[],
+    _searchEnabled = false,
   ): Promise<ClientResult<{ messageId: string; turnId: string }>> {
     const conversation = this.conversations.get(threadId);
     if (!conversation) return { status: "unavailable", reason: "Conversation not found." };

@@ -1062,13 +1062,14 @@ describe("DaemonRpcClient", () => {
       "Ask Grok",
       "turn-command-1",
       "grok-alternative",
+      true,
     );
     const request = decodeFrame(await stream.nextWrite());
     expect(Number(request.deadlineUnixMs) - startedAt).toBeGreaterThanOrEqual(19_000);
     expect(request.idempotencyKey).toBe("turn-command-1");
     expect(request.payload?.$case === "request" && request.payload.value.operation).toMatchObject({
       $case: "startConversationTurn",
-      value: { threadId: "thread-1", content: "Ask Grok", modelId: "grok-alternative" },
+      value: { threadId: "thread-1", content: "Ask Grok", modelId: "grok-alternative", searchEnabled: true },
     });
     const userMessage = wireMessage("message-user", MessageRole.MESSAGE_ROLE_USER, "Ask Grok", 1n);
     stream.receive(encodeFrame({
@@ -1087,6 +1088,7 @@ describe("DaemonRpcClient", () => {
               state: ConversationTurnState.CONVERSATION_TURN_STATE_RESERVED,
               revision: 0n,
               modelId: "grok-4.3",
+              searchEnabled: true,
               userMessage,
               assistantMessage: undefined,
               run: {
@@ -1130,7 +1132,7 @@ describe("DaemonRpcClient", () => {
     const request = decodeFrame(await stream.nextWrite());
     expect(request.payload?.$case === "request" && request.payload.value.operation).toEqual({
       $case: "startConversationTurn",
-      value: { threadId: "thread-1", content: "Follow up", modelId: undefined },
+      value: { threadId: "thread-1", content: "Follow up", modelId: undefined, searchEnabled: false },
     });
     const userMessage = wireMessage("message-user", MessageRole.MESSAGE_ROLE_USER, "Follow up", 3n);
     stream.receive(encodeFrame({
@@ -1149,6 +1151,7 @@ describe("DaemonRpcClient", () => {
               state: ConversationTurnState.CONVERSATION_TURN_STATE_RESERVED,
               revision: 0n,
               modelId: "grok-4.3",
+              searchEnabled: false,
               userMessage,
               assistantMessage: undefined,
               run: {
@@ -1210,6 +1213,7 @@ describe("DaemonRpcClient", () => {
               state: ConversationTurnState.CONVERSATION_TURN_STATE_RESERVED,
               revision: 0n,
               modelId: "grok-4.3",
+              searchEnabled: false,
               userMessage,
               assistantMessage: undefined,
               run: {

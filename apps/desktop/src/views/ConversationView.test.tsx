@@ -216,13 +216,14 @@ describe("ConversationView", () => {
     expect(screen.queryByText("Streaming")).not.toBeInTheDocument();
 
     const prompt = screen.getByLabelText("Reply to Grok");
+    fireEvent.click(screen.getByRole("button", { name: "Enable Search" }));
     fireEvent.change(prompt, { target: { value: "Submit this durable turn" } });
     fireEvent.keyDown(prompt, { key: "Enter", shiftKey: true });
     expect(send).not.toHaveBeenCalled();
 
     fireEvent.keyDown(prompt, { key: "Enter" });
     expect(send).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith("thread-1", "Submit this durable turn", []);
+    expect(send).toHaveBeenCalledWith("thread-1", "Submit this durable turn", [], true);
     expect(screen.getByRole("button", { name: "Send reply" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Submitting the durable Grok request");
 
@@ -233,6 +234,7 @@ describe("ConversationView", () => {
       });
     });
     expect(prompt).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Enable Search" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Send reply" })).toHaveAttribute("aria-busy", "false");
   });
 
