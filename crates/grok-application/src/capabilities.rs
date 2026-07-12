@@ -10,7 +10,9 @@ pub struct CapabilityFacts {
     pub subscription_authenticated: bool,
     /// A user-owned xAI API key is configured.
     pub xai_api_key_configured: bool,
-    /// The daemon validated its selected xAI model for the configured key.
+    /// A daemon-owned SuperGrok `api:access` grant is connected.
+    pub supergrok_api_connected: bool,
+    /// The daemon validated its selected xAI model for the active API rail.
     pub xai_capabilities_resolved: bool,
     /// Provider network calls may be attempted; each call still enforces live reachability.
     pub online: bool,
@@ -74,11 +76,13 @@ fn chat_capability(facts: CapabilityFacts) -> CapabilityStatus {
     status(
         Capability::Chat,
         CapabilitySurface::XaiApi,
-        AuthMethod::XaiApiKey,
-        facts.xai_api_key_configured && facts.xai_capabilities_resolved && facts.online,
+        AuthMethod::Either,
+        (facts.xai_api_key_configured || facts.supergrok_api_connected)
+            && facts.xai_capabilities_resolved
+            && facts.online,
         CapabilityAvailability::Limited,
         "xai_conversation_unavailable",
-        "Direct Chat requires a validated xAI API key, selected model, and network access.",
+        "Chat requires a connected SuperGrok API grant or validated xAI API key, selected model, and network access.",
     )
 }
 
@@ -278,6 +282,30 @@ mod tests {
                 .iter()
                 .find(|item| item.capability == Capability::Research)
                 .expect("research")
+                .availability,
+            CapabilityAvailability::Unavailable
+        );
+    }
+
+    #[test]
+    fn supergrok_api_grant_enables_only_the_implemented_chat_path() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts {
+            supergrok_api_connected: true,
+            xai_capabilities_resolved: true,
+            online: true,
+            ..CapabilityFacts::default()
+        });
+        let chat = statuses
+            .iter()
+            .find(|item| item.capability == Capability::Chat)
+            .expect("chat");
+        assert_eq!(chat.authentication, AuthMethod::Either);
+        assert_eq!(chat.availability, CapabilityAvailability::Available);
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::ImagineImage)
+                .expect("image")
                 .availability,
             CapabilityAvailability::Unavailable
         );

@@ -1054,7 +1054,13 @@ impl Daemon {
         let mut facts = self.runtime_capability_facts;
         let account = self.credentials.account_state()?;
         facts.xai_api_key_configured = account.xai_api_key_configured;
-        facts.xai_capabilities_resolved = if account.xai_api_key_configured {
+        facts.supergrok_api_connected = self
+            .supergrok_enrollment
+            .as_ref()
+            .is_some_and(|service| service.connection_status().is_ok_and(|status| status.is_some()));
+        facts.xai_capabilities_resolved = if account.xai_api_key_configured
+            || facts.supergrok_api_connected
+        {
             match &self.chat_models {
                 Some(chat_models) => chat_models
                     .catalog()

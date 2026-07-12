@@ -71,6 +71,8 @@ pub fn capability_facts_from_wire(value: Option<v1::CapabilityFacts>) -> Capabil
     CapabilityFacts {
         subscription_authenticated: value.subscription_authenticated,
         xai_api_key_configured: value.xai_api_key_configured,
+        // SuperGrok connection state is daemon-vault-owned and never caller supplied.
+        supergrok_api_connected: false,
         xai_capabilities_resolved: false,
         online: value.online,
         isolation_broker_qualified: false,
