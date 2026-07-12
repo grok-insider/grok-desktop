@@ -2863,10 +2863,10 @@ mod tests {
         CredentialMutationStore, CredentialService, DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization,
         ExecutionStore, IdGenerator, ModelDescriptor, ModelError, ModelErrorKind,
         ModelFailureCertainty, MutationCommand, NewRunEvent, OAuthFailure, OAuthTokenGrant,
-        PreparedArtifactContent, ProviderStartCommit, RequestApproval, SecretName, SecretValue,
-        SecretVault, SelectedSourcePath, StoreError, SuperGrokOAuth, TerminalTurnCommit,
-        WorkspaceService, WorkspaceStore, XaiApiKeyValidation, XaiApiKeyValidationError,
-        XaiApiKeyValidator,
+        PRODUCT_CHAT_SYSTEM_PROMPT_V1, PreparedArtifactContent, ProviderStartCommit,
+        RequestApproval, SecretName, SecretValue, SecretVault, SelectedSourcePath, StoreError,
+        SuperGrokOAuth, TerminalTurnCommit, WorkspaceService, WorkspaceStore, XaiApiKeyValidation,
+        XaiApiKeyValidationError, XaiApiKeyValidator,
     };
     use grok_artifact_storage::UnavailableArtifactContent;
     use grok_domain::{
@@ -3831,6 +3831,9 @@ mod tests {
         let mut hasher = Sha256::new();
         hash_part(&mut hasher, model_id.as_bytes());
         hash_part(&mut hasher, &[0]);
+        hash_part(&mut hasher, b"system");
+        hash_part(&mut hasher, b"text");
+        hash_part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V1.as_bytes());
         for message in context {
             hash_part(
                 &mut hasher,
@@ -8165,9 +8168,14 @@ mod tests {
         assert_eq!(request.continuation, None);
         assert!(request.tools.is_empty());
         assert!(!request.store);
-        let [message] = request.messages.as_slice() else {
-            panic!("single canonical fork prompt");
+        let [system, message] = request.messages.as_slice() else {
+            panic!("product system context and one canonical fork prompt");
         };
+        assert_eq!(system.role, ConversationRole::System);
+        assert_eq!(
+            system.content,
+            vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V1.into())]
+        );
         assert_eq!(message.role, ConversationRole::User);
         assert_eq!(
             message.content,
@@ -8374,6 +8382,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn usage_summary_returns_workspace_aggregate_over_completed_turns() {
         let store = Arc::new(InMemoryExecutionStore::new());
         let vault = Arc::new(InMemorySecretVault::new());
@@ -8522,6 +8531,7 @@ mod tests {
         assert_eq!(summary.output_tokens, 5);
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn seed_completed_usage_turn(
         store: &InMemoryExecutionStore,
         project_id: ProjectId,

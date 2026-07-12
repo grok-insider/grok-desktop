@@ -1107,10 +1107,10 @@ impl ConversationTurnStore for InMemoryExecutionStore {
             if turn.state != ConversationTurnState::Completed || turn.created_at > as_of {
                 continue;
             }
-            if let Some(since) = lower {
-                if turn.created_at < since {
-                    continue;
-                }
+            if let Some(since) = lower
+                && turn.created_at < since
+            {
+                continue;
             }
             let in_scope = match &scope {
                 UsageScope::Workspace => true,
@@ -7301,11 +7301,12 @@ mod tests {
         ConversationService, ConversationStream, CreateAutomation, CreateMessage, CreateProject,
         CreateRun, CreateThread, CredentialService, DesktopPreferencesService,
         EditAndBranchConversationTurn, ExecuteConversationTurn, ModelDescriptor, ModelError,
-        ModelErrorKind, ModelFailureCertainty, PrepareEffect, PreparePrivilegedOperation,
-        PrivilegedOperationService, PrivilegedOperationStore, RegenerateConversationTurn,
-        RequestApproval, RetryConversationTurn, RunService, SelectChatModel, SideEffectService,
-        UpdateAutomation, UpdateDesktopPreferences, UpdateMessage, WorkspaceService,
-        WorkspaceStore, XaiApiKeyValidation, XaiApiKeyValidationError, XaiApiKeyValidator,
+        ModelErrorKind, ModelFailureCertainty, PRODUCT_CHAT_SYSTEM_PROMPT_V1, PrepareEffect,
+        PreparePrivilegedOperation, PrivilegedOperationService, PrivilegedOperationStore,
+        RegenerateConversationTurn, RequestApproval, RetryConversationTurn, RunService,
+        SelectChatModel, SideEffectService, UpdateAutomation, UpdateDesktopPreferences,
+        UpdateMessage, WorkspaceService, WorkspaceStore, XaiApiKeyValidation,
+        XaiApiKeyValidationError, XaiApiKeyValidator,
     };
     use grok_domain::{
         ApprovalDecision, ApprovalRisk, ApprovalScope, AuthorityGrantId, AutomationState,
@@ -11031,6 +11032,9 @@ mod tests {
         let mut hasher = Sha256::new();
         part(&mut hasher, model_id.as_bytes());
         part(&mut hasher, &[0]);
+        part(&mut hasher, b"system");
+        part(&mut hasher, b"text");
+        part(&mut hasher, PRODUCT_CHAT_SYSTEM_PROMPT_V1.as_bytes());
         for message in context {
             part(
                 &mut hasher,
@@ -11743,16 +11747,18 @@ mod tests {
             assert_eq!(requests[0].continuation, None);
             assert_eq!(requests[1].continuation, None);
             assert!(!requests[0].store && !requests[1].store);
-            assert_eq!(requests[0].messages.len(), 1);
-            assert_eq!(requests[1].messages.len(), 1);
-            assert_eq!(requests[0].messages[0].role, ConversationRole::User);
-            assert_eq!(requests[1].messages[0].role, ConversationRole::User);
+            assert_eq!(requests[0].messages.len(), 2);
+            assert_eq!(requests[1].messages.len(), 2);
+            assert_eq!(requests[0].messages[0].role, ConversationRole::System);
+            assert_eq!(requests[1].messages[0].role, ConversationRole::System);
+            assert_eq!(requests[0].messages[1].role, ConversationRole::User);
+            assert_eq!(requests[1].messages[1].role, ConversationRole::User);
             assert_eq!(
-                requests[0].messages[0].content,
+                requests[0].messages[1].content,
                 vec![ContentPart::Text("Edited request".into())]
             );
             assert_eq!(
-                requests[1].messages[0].content,
+                requests[1].messages[1].content,
                 vec![ContentPart::Text(source.user_message.content.clone())]
             );
         }

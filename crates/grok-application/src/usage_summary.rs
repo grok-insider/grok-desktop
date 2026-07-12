@@ -42,7 +42,7 @@ pub struct UsageSummary {
     pub input_tokens: u64,
     /// Sum of output tokens across matching completed turns.
     pub output_tokens: u64,
-    /// Sum of xAI cost ticks (1 USD = 10_000_000_000 ticks).
+    /// Sum of xAI cost ticks (1 USD = `10_000_000_000` ticks).
     pub cost_in_usd_ticks: u64,
     /// Number of completed turns included.
     pub turn_count: u64,

@@ -4665,6 +4665,7 @@ fn failure_parts(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn summarize_usage_rows(
     connection: &Connection,
     scope: UsageScope,

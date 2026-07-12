@@ -17,9 +17,9 @@ use crate::{
     ApplicationError, ChatModelPreferenceStore, Citation, Clock, ContentPart, ConversationEvent,
     ConversationMessage, ConversationModelFactory, ConversationRequest, ConversationRole,
     CredentialService, GetUsageSummary, IdGenerator, ModelError, ModelErrorKind,
-    ModelFailureCertainty, MutationCommand, NewRunEvent, Page, StoreError,
-    SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary, UsageWindow, WorkspaceService,
-    mutations::mutation_command,
+    ModelFailureCertainty, MutationCommand, NewRunEvent, PRODUCT_CHAT_SYSTEM_PROMPT_V1, Page,
+    StoreError, SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary, UsageWindow,
+    WorkspaceService, mutations::mutation_command,
 };
 
 /// Maximum canonical messages copied into one immutable provider request.
@@ -3180,14 +3180,14 @@ fn provider_request(
     model: &str,
     context: &[Message],
 ) -> Result<ConversationRequest, ApplicationError> {
-    if context.is_empty() || context.len() > MAX_CONVERSATION_CONTEXT_MESSAGES {
+    if context.is_empty() || context.len() >= MAX_CONVERSATION_CONTEXT_MESSAGES {
         return Err(ApplicationError::InvalidInput(
             "conversation context exceeds the supported message limit".into(),
         ));
     }
     let bytes = context
         .iter()
-        .try_fold(0usize, |total, message| {
+        .try_fold(PRODUCT_CHAT_SYSTEM_PROMPT_V1.len(), |total, message| {
             total.checked_add(message.content.len())
         })
         .ok_or_else(|| {
@@ -3198,18 +3198,24 @@ fn provider_request(
             "conversation context exceeds the supported byte limit".into(),
         ));
     }
-    let messages = context
-        .iter()
-        .filter(|message| message.state == MessageState::Active)
-        .map(|message| ConversationMessage {
-            role: match message.role {
-                MessageRole::System => ConversationRole::System,
-                MessageRole::User => ConversationRole::User,
-                MessageRole::Assistant => ConversationRole::Assistant,
-            },
-            content: vec![ContentPart::Text(message.content.clone())],
-        })
-        .collect();
+    let mut messages = Vec::with_capacity(context.len() + 1);
+    messages.push(ConversationMessage {
+        role: ConversationRole::System,
+        content: vec![ContentPart::Text(PRODUCT_CHAT_SYSTEM_PROMPT_V1.into())],
+    });
+    messages.extend(
+        context
+            .iter()
+            .filter(|message| message.state == MessageState::Active)
+            .map(|message| ConversationMessage {
+                role: match message.role {
+                    MessageRole::System => ConversationRole::System,
+                    MessageRole::User => ConversationRole::User,
+                    MessageRole::Assistant => ConversationRole::Assistant,
+                },
+                content: vec![ContentPart::Text(message.content.clone())],
+            }),
+    );
     Ok(ConversationRequest {
         model: model.into(),
         messages,
