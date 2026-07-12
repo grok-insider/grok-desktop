@@ -21,6 +21,7 @@ mod preferences;
 mod privileged_gateway;
 mod privileged_operations;
 mod runs;
+mod supergrok_oauth;
 mod vault;
 mod workspace;
 
@@ -118,6 +119,11 @@ pub use privileged_operations::{
     PrivilegedRecoveryCandidate, PrivilegedRecoverySummary,
 };
 pub use runs::{CreateRun, RunService};
+pub use supergrok_oauth::{
+    DeviceAuthorization, OAuthCancellation, OAuthFailure, OAuthTokenGrant,
+    SUPERGROK_OAUTH_VAULT_NAME, SuperGrokCredential, SuperGrokEnrollmentService,
+    SuperGrokEnrollmentStatus, SuperGrokOAuth,
+};
 pub use vault::{SecretName, SecretValue, SecretVault, VaultError};
 pub use workspace::{
     CreateAutomation, CreateMessage, CreateProject, CreateThread, Page, UpdateAutomation,

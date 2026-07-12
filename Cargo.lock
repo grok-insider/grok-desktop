@@ -1070,6 +1070,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "grok-domain",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror",
