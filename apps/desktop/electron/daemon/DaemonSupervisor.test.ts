@@ -1471,6 +1471,14 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
     expect(windows).not.toHaveProperty("GROK_PINENTRY");
   });
 
+  it("forwards ephemeral storage only to an explicit development daemon", () => {
+    vi.stubEnv("GROK_DAEMON_EPHEMERAL", "1");
+    expect(daemonEnvironment("/tmp/development.sock", "linux", true).GROK_DAEMON_EPHEMERAL).toBe("1");
+    expect(daemonEnvironment("/tmp/packaged.sock", "linux", false)).not.toHaveProperty("GROK_DAEMON_EPHEMERAL");
+    vi.stubEnv("GROK_DAEMON_EPHEMERAL", "true");
+    expect(daemonEnvironment("/tmp/invalid.sock", "linux", true)).not.toHaveProperty("GROK_DAEMON_EPHEMERAL");
+  });
+
   it("forwards a complete official Grok Build ACP descriptor only for development launches", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "grok-acp-descriptor-"));
     const acpExecutable = path.join(directory, "grok");

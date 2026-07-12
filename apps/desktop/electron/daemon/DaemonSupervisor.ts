@@ -1062,6 +1062,9 @@ export function daemonEnvironment(
   // debug-acp-descriptor feature and signed catalog path remains required for
   // production components.
   if (allowDevelopmentOverrides) {
+    if (process.env.GROK_DAEMON_EPHEMERAL === "1") {
+      environment.GROK_DAEMON_EPHEMERAL = "1";
+    }
     const acp = resolveDevelopmentAcpDescriptor({
       platform,
       env: process.env,

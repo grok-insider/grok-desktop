@@ -4,7 +4,7 @@ export const CDP_QUALITY_ROUTES = Object.freeze([
   Object.freeze({ path: "/activity", pathPrefix: "/activity", heading: "Activity" }),
   Object.freeze({ path: "/library", pathPrefix: "/library", heading: "Library" }),
   Object.freeze({ path: "/automations", pathPrefix: "/automations", heading: "Automation definitions" }),
-  Object.freeze({ path: "/extensions", pathPrefix: "/extensions", heading: "Managed integrations (preview)" }),
+  Object.freeze({ path: "/extensions", pathPrefix: "/extensions", heading: "Integrations" }),
   Object.freeze({
     path: "/settings",
     pathPrefix: "/settings",

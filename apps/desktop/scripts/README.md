@@ -26,6 +26,11 @@ Electron PIDs inside that profile while the session is running. It never scans
 for or terminates unrelated Electron or daemon processes. Stop it with
 `Ctrl+C`; the Electron main process then performs its normal daemon shutdown.
 
+For isolated headless QA while another Grok Desktop daemon owns the durable
+database, set `GROK_DAEMON_EPHEMERAL=1`. Electron forwards exactly that value
+only to an unpackaged debug daemon; packaged launches strip it, and release
+daemons reject ephemeral persistence.
+
 An absolute `GROK_PINENTRY` override is forwarded only by an unpackaged
 development launch; packaged launches strip it, and the daemon revalidates the
 canonical executable before use. Without an override, Unix lookup accepts only
