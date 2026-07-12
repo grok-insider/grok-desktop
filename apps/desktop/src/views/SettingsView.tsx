@@ -23,6 +23,7 @@ import type {
   DesktopPreferences,
   SuperGrokEnrollmentStatus,
   UsageSummary,
+  UpdateState,
 } from "../services/desktopClient";
 
 // Only sections with at least one daemon-backed control are advertised.
@@ -262,6 +263,8 @@ function GeneralSettings() {
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const [preferenceError, setPreferenceError] = useState("");
   const [savingPreference, setSavingPreference] = useState(false);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -279,6 +282,26 @@ function GeneralSettings() {
       active = false;
     };
   }, [client]);
+
+  useEffect(() => {
+    let active = true;
+    void client.getUpdateState().then((value) => {
+      if (active) setUpdate(value);
+    }).catch(() => {
+      if (active) setUpdate(null);
+    });
+    return () => { active = false; };
+  }, [client]);
+
+  const checkForUpdates = async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      setUpdate(await client.checkForUpdates());
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const updateCloseBehavior = async (keepRunningInNotificationArea: boolean) => {
     if (!preferences || savingPreference) return;
@@ -328,8 +351,42 @@ function GeneralSettings() {
           </p>
         )}
       </SettingsGroup>
+      <SettingsGroup>
+        <SettingRow
+          title="Application updates"
+          description={updateDescription(update)}
+        >
+          {update?.phase === "downloaded" ? (
+            <Button onClick={() => void client.installUpdate()}>Restart to update</Button>
+          ) : (
+            <Button
+              disabled={!update || update.phase === "unsupported" || checkingUpdate || update.phase === "checking"}
+              onClick={() => void checkForUpdates()}
+              variant="secondary"
+            >
+              <RefreshCw className={cn((checkingUpdate || update?.phase === "checking") && "animate-spin")} size={14} />
+              Check now
+            </Button>
+          )}
+        </SettingRow>
+      </SettingsGroup>
     </>
   );
+}
+
+function updateDescription(update: UpdateState | null): string {
+  if (!update) return "Update status is temporarily unavailable.";
+  if (update.phase === "unsupported") {
+    return update.reasonCode === "development_install"
+      ? `Version ${update.currentVersion}. Automatic updates are available in signed public installations.`
+      : `Version ${update.currentVersion}. This installation is updated by its package manager.`;
+  }
+  if (update.phase === "checking") return `Version ${update.currentVersion}. Checking the stable channel.`;
+  if (update.phase === "available") return `Downloading version ${update.targetVersion || "the latest release"}.`;
+  if (update.phase === "downloaded") return `Version ${update.targetVersion || "the latest release"} is ready to install.`;
+  if (update.phase === "failed") return `Version ${update.currentVersion}. The update check failed; try again.`;
+  if (update.phase === "not_available") return `Version ${update.currentVersion} is current on the stable channel.`;
+  return `Version ${update.currentVersion}. Automatic stable-channel updates are enabled.`;
 }
 
 function ModelSettings() {

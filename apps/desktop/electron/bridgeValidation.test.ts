@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import { parseBridgeRequest } from "./bridgeValidation.js";
 
 describe("parseBridgeRequest", () => {
+  it("accepts only fieldless main-process update commands", () => {
+    for (const kind of ["desktop.getUpdateState", "desktop.checkForUpdates", "desktop.installUpdate"] as const) {
+      expect(parseBridgeRequest({ kind })).toEqual({ kind });
+      expect(() => parseBridgeRequest({ kind, url: "https://attacker.example/update" })).toThrow("unsupported fields");
+    }
+  });
+
   it("rejects producer-only execution mutations from the renderer", () => {
     for (const request of [
       { kind: "daemon.createRun", projectId: "project-1", threadId: "thread-1", idempotencyKey: "run-1" },

@@ -19,6 +19,7 @@ import type {
   MediaCreation,
   StartRunInput,
   SuperGrokEnrollmentStatus,
+  UpdateState,
   VoiceSession,
   VoiceSetup,
   WorkspaceSearchHit,
@@ -217,6 +218,21 @@ export class MockDesktopClient implements DesktopClient {
 
   async getDesktopPreferences(): Promise<DesktopPreferences> {
     return structuredClone(this.desktopPreferences);
+  }
+
+  async getUpdateState(): Promise<UpdateState> {
+    return {
+      phase: "unsupported", currentVersion: "0.1.0", targetVersion: "", channel: "stable",
+      checkedAtUnixMs: 0, reasonCode: "development_install",
+    };
+  }
+
+  async checkForUpdates(): Promise<UpdateState> {
+    return this.getUpdateState();
+  }
+
+  async installUpdate(): Promise<boolean> {
+    return false;
   }
 
   async updateDesktopPreferences(input: {

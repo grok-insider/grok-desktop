@@ -415,6 +415,15 @@ export interface GetUsageSummaryInput {
   window: UsageWindow;
 }
 
+export interface UpdateState {
+  phase: "unsupported" | "idle" | "checking" | "available" | "downloaded" | "not_available" | "failed";
+  currentVersion: string;
+  targetVersion: string;
+  channel: "stable";
+  checkedAtUnixMs: number;
+  reasonCode: "" | "development_install" | "platform_unsupported" | "check_failed";
+}
+
 export interface StartRunInput {
   prompt: string;
   mode: "chat" | "work";
@@ -441,6 +450,9 @@ export interface DesktopClient {
   updateDesktopPreferences(input: { expectedRevision: number; keepRunningInNotificationArea: boolean }): Promise<DesktopPreferences>;
   getChatModelCatalog(): Promise<ChatModelCatalog>;
   getUsageSummary(input: GetUsageSummaryInput): Promise<UsageSummary>;
+  getUpdateState(): Promise<UpdateState>;
+  checkForUpdates(): Promise<UpdateState>;
+  installUpdate(): Promise<boolean>;
   selectChatModel(input: { expectedRevision: number; modelId: string }): Promise<ChatModelPreference>;
   beginGrokBuildAuth(): Promise<ClientResult<GrokAuthChallenge>>;
   completeGrokBuildAuth(): Promise<ClientResult<AccountSetupState>>;

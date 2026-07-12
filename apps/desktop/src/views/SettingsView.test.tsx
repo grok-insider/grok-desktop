@@ -155,10 +155,12 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
-  it("only shows daemon-backed close behavior in General", async () => {
+  it("shows daemon-backed close behavior and honest development update state in General", async () => {
     renderSettings();
     fireEvent.click(screen.getByRole("button", { name: "General" }));
     expect(await screen.findByRole("switch", { name: "Keep running in notification area" })).toBeInTheDocument();
+    expect(await screen.findByText(/Automatic updates are available in signed public installations/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled();
     expect(screen.queryByRole("radiogroup", { name: "Appearance" })).not.toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Launch at sign in unavailable" })).not.toBeInTheDocument();
   });

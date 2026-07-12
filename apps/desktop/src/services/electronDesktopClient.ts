@@ -17,6 +17,7 @@ import type {
   DaemonWorkspaceSnapshot,
   DesktopBridge,
   DesktopConversationTurnEventNotification,
+  DesktopUpdateState,
 } from "../contracts/bridge";
 import type {
   AccountSetupState,
@@ -44,6 +45,7 @@ import type {
   StartRunInput,
   SuperGrokEnrollmentStatus,
   UsageSummary,
+  UpdateState,
   VoiceSession,
   VoiceSetup,
   WorkspaceSearchResults,
@@ -779,6 +781,26 @@ export class ElectronDesktopClient implements DesktopClient {
       throw new Error("invalid external-URL bridge response");
     }
     return { status: "success", value: undefined };
+  }
+
+  async getUpdateState(): Promise<UpdateState> {
+    const response = await this.bridge.request({ kind: "desktop.getUpdateState" });
+    if (response.kind !== "desktop.updateState") throw new Error("invalid update-state bridge response");
+    return mapUpdateState(response.state);
+  }
+
+  async checkForUpdates(): Promise<UpdateState> {
+    const response = await this.bridge.request({ kind: "desktop.checkForUpdates" });
+    if (response.kind !== "desktop.updateState") throw new Error("invalid update-state bridge response");
+    return mapUpdateState(response.state);
+  }
+
+  async installUpdate(): Promise<boolean> {
+    const response = await this.bridge.request({ kind: "desktop.installUpdate" });
+    if (response.kind !== "desktop.updateInstallAccepted" || typeof response.accepted !== "boolean") {
+      throw new Error("invalid update-install bridge response");
+    }
+    return response.accepted;
   }
 
   async searchWorkspace(input: {
@@ -1981,6 +2003,22 @@ function mapCapability(
     reasonCode: value.reasonCode,
     reason: value.reason,
   };
+}
+
+function mapUpdateState(value: DesktopUpdateState): UpdateState {
+  const phases = new Set<UpdateState["phase"]>([
+    "unsupported", "idle", "checking", "available", "downloaded", "not_available", "failed",
+  ]);
+  const reasons = new Set<UpdateState["reasonCode"]>([
+    "", "development_install", "platform_unsupported", "check_failed",
+  ]);
+  if (!phases.has(value.phase) || !reasons.has(value.reasonCode) || value.channel !== "stable"
+      || typeof value.currentVersion !== "string" || value.currentVersion.length > 64
+      || typeof value.targetVersion !== "string" || value.targetVersion.length > 64
+      || !Number.isSafeInteger(value.checkedAtUnixMs) || value.checkedAtUnixMs < 0) {
+    throw new Error("invalid update state");
+  }
+  return structuredClone(value);
 }
 
 function mapDesktopPreferences(value: DaemonDesktopPreferences): DesktopPreferences {
