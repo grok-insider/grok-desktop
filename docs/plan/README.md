@@ -89,6 +89,22 @@ session. Focused evidence at this tip includes 516 renderer tests, 33 desktop
 script tests, tray asset validation, desktop TypeScript checks, 50 application
 tests, 30 xAI adapter tests, 27 protocol tests, and 49 daemon tests.
 
+The public-release completion pass now also includes a signed, manifest-gated
+Windows updater and a digest-verified Linux AppImage updater with rollback,
+plus a protected tag release workflow. Distribution remains externally gated
+on production signing identities, update trust roots, and qualified Windows
+workers. Home Chat has a daemon-owned product prompt that states its actual
+capabilities, and isolated headless Electron CDP QA covers every route at wide
+and narrow viewports without sharing the user's durable daemon database.
+
+The next locally implementable daemon capability is request-scoped official
+xAI Search. It requires an epoch and schema change because the selected closed
+server-tool set must be persisted on each turn and preserved by retry, edit,
+regenerate, and restart recovery. The existing provider-request fingerprint
+already binds continuation and ordered server tools as a prerequisite.
+Research is not Search: it remains unavailable until it has its own bounded,
+durable orchestration contract.
+
 ## Reading order
 
 1. [Review findings](01-review-findings.md)
