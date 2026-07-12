@@ -75,6 +75,9 @@ pub struct StartConversationTurn {
     pub thread_id: String,
     /// New canonical user-authored text.
     pub content: String,
+    /// Optional composer override. The daemon resolves it against the live
+    /// official catalog and binds the canonical ID to an empty thread.
+    pub model_id: Option<String>,
 }
 
 /// Input for one explicit daemon-owned retry of a known-safe terminal turn.
@@ -519,6 +522,17 @@ pub enum ConversationThreadCredentialBinding {
     LegacyUnbound,
 }
 
+/// Durable model identity for one conversation thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationThreadModelBinding {
+    /// An empty thread has not reserved its first turn.
+    UnboundEmpty,
+    /// Every turn in the thread uses this canonical model ID.
+    Bound(String),
+    /// Historical state could not be bound safely and remains read-only.
+    LegacyUnbound,
+}
+
 /// Bounded reconnect page of durable turn-local events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationTurnEventPage {
@@ -790,6 +804,12 @@ pub trait ConversationTurnStore: Send + Sync {
         &self,
         thread_id: &ThreadId,
     ) -> Result<ConversationThreadCredentialBinding, StoreError>;
+
+    /// Loads the fail-closed canonical model binding for one thread.
+    async fn thread_model_binding(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<ConversationThreadModelBinding, StoreError>;
 }
 
 /// Coordinates official xAI calls without exposing credentials or provider DTOs.
@@ -907,8 +927,29 @@ impl ConversationService {
         input: &StartConversationTurn,
         idempotency_key: &str,
     ) -> Result<Option<ConversationTurnSnapshot>, ApplicationError> {
-        ThreadId::new(input.thread_id.clone())?;
-        let (command, _, _) = self.start_command(input, idempotency_key).await?;
+        let thread_id = ThreadId::new(input.thread_id.clone())?;
+        let selected_model = match self.store.thread_model_binding(&thread_id).await? {
+            ConversationThreadModelBinding::Bound(model) => {
+                if input
+                    .model_id
+                    .as_ref()
+                    .is_some_and(|requested| requested != &model)
+                {
+                    return Err(ApplicationError::Conflict);
+                }
+                model
+            }
+            // A successfully reserved first turn binds the model in the same
+            // transaction. Therefore an unbound empty thread cannot contain an
+            // exact replay and preference/provider access is unnecessary.
+            ConversationThreadModelBinding::UnboundEmpty => return Ok(None),
+            ConversationThreadModelBinding::LegacyUnbound => {
+                return Err(ApplicationError::InvalidState(
+                    "this legacy conversation thread has no trustworthy model binding".into(),
+                ));
+            }
+        };
+        let command = self.start_command(input, idempotency_key, &selected_model)?;
         Ok(self.store.load_turn_by_command(&command).await?)
     }
 
@@ -1218,7 +1259,7 @@ impl ConversationService {
         let cancellation = cancellation.ok_or_else(|| {
             ApplicationError::Integrity("a dispatching fork is missing its deadline".into())
         })?;
-        let (model, current_binding, _cancellation) = self
+        let (model, current_binding, canonical_model, _cancellation) = self
             .preflight_model(
                 source_rail,
                 &model_id,
@@ -1227,6 +1268,11 @@ impl ConversationService {
                 cancellation,
             )
             .await?;
+        if canonical_model != model_id {
+            return Err(ApplicationError::InvalidState(
+                "the fork source model is no longer canonical".into(),
+            ));
+        }
         if current_binding != source_binding {
             return Err(ApplicationError::Integrity(
                 "conversation fork credential generation changed during preflight".into(),
@@ -1504,16 +1550,15 @@ impl ConversationService {
         })
     }
 
-    async fn start_command(
+    fn start_command(
         &self,
         input: &StartConversationTurn,
         idempotency_key: &str,
-    ) -> Result<(MutationCommand, String, bool), ApplicationError> {
-        let model_preference = self.model_preferences.get_chat_model_preference().await?;
-        let selected_model = model_preference.selected_model_id;
+        selected_model: &str,
+    ) -> Result<MutationCommand, ApplicationError> {
         let mut command_parts = vec![
             input.thread_id.clone(),
-            selected_model.clone(),
+            selected_model.to_owned(),
             input.content.clone(),
             "tools:none".into(),
             "provider_store:false".into(),
@@ -1521,9 +1566,7 @@ impl ConversationService {
         if self.default_rail.current() == grok_domain::ChatRail::SuperGrokApi {
             command_parts.push("rail:supergrok_api".into());
         }
-        let command =
-            mutation_command(CONVERSATION_COMMAND_SCOPE, idempotency_key, &command_parts)?;
-        Ok((command, selected_model, model_preference.revision > 0))
+        mutation_command(CONVERSATION_COMMAND_SCOPE, idempotency_key, &command_parts)
     }
 
     async fn expected_start_credential_binding(
@@ -1558,15 +1601,93 @@ impl ConversationService {
         Ok(thread)
     }
 
+    async fn preflight_start_model(
+        &self,
+        input: &StartConversationTurn,
+        thread_id: &ThreadId,
+        cancellation: ConversationCancellationSignal,
+    ) -> Result<
+        (
+            Arc<dyn crate::ConversationModel>,
+            String,
+            String,
+            ConversationCancellationSignal,
+        ),
+        ApplicationError,
+    > {
+        let expected_credential_binding = self.expected_start_credential_binding(thread_id).await?;
+        let model_binding = self.store.thread_model_binding(thread_id).await?;
+        let (requested_model, require_canonical_model) = match &model_binding {
+            ConversationThreadModelBinding::Bound(bound) => {
+                if input
+                    .model_id
+                    .as_ref()
+                    .is_some_and(|requested| requested != bound)
+                {
+                    return Err(ApplicationError::Conflict);
+                }
+                (bound.clone(), true)
+            }
+            ConversationThreadModelBinding::UnboundEmpty => {
+                let preference = self.model_preferences.get_chat_model_preference().await?;
+                (
+                    input
+                        .model_id
+                        .clone()
+                        .unwrap_or(preference.selected_model_id),
+                    input.model_id.is_some() || preference.revision > 0,
+                )
+            }
+            ConversationThreadModelBinding::LegacyUnbound => {
+                return Err(ApplicationError::InvalidState(
+                    "this legacy conversation thread has no trustworthy model binding; start a new thread to continue"
+                        .into(),
+                ));
+            }
+        };
+        let prepared = self
+            .preflight_model(
+                self.default_rail.current(),
+                &requested_model,
+                require_canonical_model,
+                expected_credential_binding.as_deref(),
+                cancellation,
+            )
+            .await?;
+        if let ConversationThreadModelBinding::Bound(bound) = model_binding
+            && bound != prepared.2
+        {
+            return Err(ApplicationError::InvalidState(
+                "the requested model conflicts with this conversation thread's model binding"
+                    .into(),
+            ));
+        }
+        Ok(prepared)
+    }
+
     async fn prepare_start(
         &self,
         input: StartConversationTurn,
         idempotency_key: &str,
         cancellation: ConversationCancellationSignal,
     ) -> Result<(StartedConversationTurn, ConversationCancellationSignal), ApplicationError> {
+        if let Some(existing) = self.replay_start(&input, idempotency_key).await?
+            && existing.turn.state != ConversationTurnState::Reserved
+        {
+            return Ok((
+                StartedConversationTurn {
+                    snapshot: existing,
+                    dispatch: None,
+                },
+                cancellation,
+            ));
+        }
         let thread_id = ThreadId::new(input.thread_id.clone())?;
-        let (command, selected_model, require_canonical_model) =
-            self.start_command(&input, idempotency_key).await?;
+        let thread = self.writable_thread(&thread_id).await?;
+        let (model, credential_binding_id, selected_model, cancellation) = self
+            .preflight_start_model(&input, &thread_id, cancellation)
+            .await?;
+        let command = self.start_command(&input, idempotency_key, &selected_model)?;
 
         if let Some(existing) = self.store.load_turn_by_command(&command).await?
             && existing.turn.state != ConversationTurnState::Reserved
@@ -1579,20 +1700,6 @@ impl ConversationService {
                 cancellation,
             ));
         }
-
-        let thread = self.writable_thread(&thread_id).await?;
-        let expected_credential_binding =
-            self.expected_start_credential_binding(&thread_id).await?;
-
-        let (model, credential_binding_id, cancellation) = self
-            .preflight_model(
-                self.default_rail.current(),
-                &selected_model,
-                require_canonical_model,
-                expected_credential_binding.as_deref(),
-                cancellation,
-            )
-            .await?;
 
         let now = self.clock.now();
         let user_message = Message::new(
@@ -1730,7 +1837,7 @@ impl ConversationService {
             }
         }
         let model_id = source.turn.model_id.clone();
-        let (model, current_binding, _cancellation) = self
+        let (model, current_binding, canonical_model, _cancellation) = self
             .preflight_model(
                 source.lineage.rail,
                 &model_id,
@@ -1739,6 +1846,11 @@ impl ConversationService {
                 cancellation,
             )
             .await?;
+        if canonical_model != model_id {
+            return Err(ApplicationError::InvalidState(
+                "the retry source model is no longer canonical".into(),
+            ));
+        }
         let source_retry_depth = source.lineage.retry_depth;
 
         let now = self.clock.now().max(source.turn.updated_at);
@@ -1914,6 +2026,7 @@ impl ConversationService {
         (
             Arc<dyn crate::ConversationModel>,
             String,
+            String,
             ConversationCancellationSignal,
         ),
         ApplicationError,
@@ -1959,12 +2072,12 @@ impl ConversationService {
                 (model, binding, models, cancellation)
             }
         };
-        ensure_selected_model(
+        let canonical_model = ensure_selected_model(
             selected_model,
             models.map_err(map_preflight_error)?,
             require_canonical,
         )?;
-        Ok((model, credential_binding_id, cancellation))
+        Ok((model, credential_binding_id, canonical_model, cancellation))
     }
 
     async fn load_supergrok_credential(
@@ -3223,7 +3336,7 @@ fn ensure_selected_model(
     selected: &str,
     models: Vec<crate::ModelDescriptor>,
     require_canonical: bool,
-) -> Result<(), ApplicationError> {
+) -> Result<String, ApplicationError> {
     let catalog = crate::chat_models::validate_catalog(models)?;
     let canonical = crate::chat_models::canonical_text_model_id(selected, &catalog)?;
     if require_canonical && canonical != selected {
@@ -3231,7 +3344,7 @@ fn ensure_selected_model(
             "the persisted xAI model selection is not canonical".into(),
         ));
     }
-    Ok(())
+    Ok(canonical)
 }
 
 fn supergrok_binding(generation: u64) -> String {

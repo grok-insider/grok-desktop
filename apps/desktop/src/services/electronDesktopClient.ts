@@ -89,6 +89,7 @@ type TurnThreadWaiter = {
 type NewChatMutation = {
   projectId: string;
   content: string;
+  modelId?: string;
   title: string;
   createThreadIdempotencyKey: string;
   startTurnIdempotencyKey: string;
@@ -142,6 +143,7 @@ export class ElectronDesktopClient implements DesktopClient {
   }>();
   private readonly conversationStartMutations = new Map<string, {
     content: string;
+    modelId?: string;
     idempotencyKey: string;
   }>();
   private newChatMutation: NewChatMutation | undefined;
@@ -205,10 +207,12 @@ export class ElectronDesktopClient implements DesktopClient {
     const mutation = existingMutation
       && existingMutation.projectId === project.id
       && existingMutation.content === content
+      && existingMutation.modelId === input.modelId
       ? existingMutation
       : {
           projectId: project.id,
           content,
+          modelId: input.modelId,
           title,
           createThreadIdempotencyKey: crypto.randomUUID(),
           startTurnIdempotencyKey: crypto.randomUUID(),
@@ -237,7 +241,7 @@ export class ElectronDesktopClient implements DesktopClient {
     this.rebuildWorkspaceSnapshot();
     this.emit();
 
-    const turn = await this.startConversationTurn(thread, content, mutation.startTurnIdempotencyKey);
+    const turn = await this.startConversationTurn(thread, content, mutation.startTurnIdempotencyKey, mutation.modelId);
     if (this.newChatMutation === mutation) this.newChatMutation = undefined;
     if (isTerminalConversationState(turn.state) && turn.state !== "completed") {
       throw new Error(conversationTurnReason(turn));
@@ -1278,15 +1282,16 @@ export class ElectronDesktopClient implements DesktopClient {
     thread: DaemonThread,
     content: string,
     retainedIdempotencyKey?: string,
+    modelId?: string,
   ): Promise<DaemonConversationTurn> {
     const existingMutation = this.conversationStartMutations.get(thread.id);
     const mutation = retainedIdempotencyKey
-      ? existingMutation?.content === content && existingMutation.idempotencyKey === retainedIdempotencyKey
+      ? existingMutation?.content === content && existingMutation.modelId === modelId && existingMutation.idempotencyKey === retainedIdempotencyKey
         ? existingMutation
-        : { content, idempotencyKey: retainedIdempotencyKey }
-      : existingMutation?.content === content
+        : { content, modelId, idempotencyKey: retainedIdempotencyKey }
+      : existingMutation?.content === content && existingMutation.modelId === modelId
       ? existingMutation
-      : { content, idempotencyKey: crypto.randomUUID() };
+      : { content, modelId, idempotencyKey: crypto.randomUUID() };
     this.conversationStartMutations.set(thread.id, mutation);
     let response;
     try {
@@ -1294,6 +1299,7 @@ export class ElectronDesktopClient implements DesktopClient {
         kind: "daemon.startConversationTurn",
         threadId: thread.id,
         content,
+        modelId,
         idempotencyKey: mutation.idempotencyKey,
       });
     } catch (error) {

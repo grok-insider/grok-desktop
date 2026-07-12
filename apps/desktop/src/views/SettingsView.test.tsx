@@ -196,7 +196,7 @@ describe("SettingsView", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Model catalog unavailable");
-    expect(alert).toHaveTextContent("Check the API key and network");
+    expect(alert).toHaveTextContent("Check the account connection and network");
     expect(screen.getByRole("button", { name: "Retry discovery" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
   });
@@ -209,7 +209,7 @@ describe("SettingsView", () => {
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
   });
 
-  it("invalidates the catalog when a selection outcome needs reconciliation", async () => {
+  it("retains a bounded stale catalog when a selection outcome needs reconciliation", async () => {
     class SelectionFailureClient extends MockDesktopClient {
       override async selectChatModel(): Promise<never> {
         throw new Error("readiness reconciliation failed");
@@ -226,10 +226,11 @@ describe("SettingsView", () => {
     expect(alert).toHaveTextContent("could not be reconciled");
     expect(screen.getByRole("button", { name: "Retry discovery" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
-    expect(screen.getByLabelText("Model status")).not.toHaveTextContent("Ready");
+    expect(screen.getByLabelText("Model status")).toHaveTextContent("Stale");
+    expect(screen.getByRole("combobox", { name: "Default chat model" })).toHaveValue("grok-4.3");
   });
 
-  it("invalidates a previously ready catalog when explicit live refresh fails", async () => {
+  it("retains a bounded stale catalog when explicit live refresh fails", async () => {
     class RefreshFailureClient extends MockDesktopClient {
       private discoveryCalls = 0;
 
@@ -249,6 +250,7 @@ describe("SettingsView", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Model catalog unavailable");
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
-    expect(screen.getByLabelText("Model status")).not.toHaveTextContent("Ready");
+    expect(screen.getByLabelText("Model status")).toHaveTextContent("Stale");
+    expect(screen.getByRole("combobox", { name: "Default chat model" })).toHaveValue("grok-4.3");
   });
 });

@@ -1057,13 +1057,18 @@ describe("DaemonRpcClient", () => {
     const stream = new FakeDuplex();
     const protocol = client(stream);
     const startedAt = Date.now();
-    const started = protocol.startConversationTurn("thread-1", "Ask Grok", "turn-command-1");
+    const started = protocol.startConversationTurn(
+      "thread-1",
+      "Ask Grok",
+      "turn-command-1",
+      "grok-alternative",
+    );
     const request = decodeFrame(await stream.nextWrite());
     expect(Number(request.deadlineUnixMs) - startedAt).toBeGreaterThanOrEqual(19_000);
     expect(request.idempotencyKey).toBe("turn-command-1");
     expect(request.payload?.$case === "request" && request.payload.value.operation).toMatchObject({
       $case: "startConversationTurn",
-      value: { threadId: "thread-1", content: "Ask Grok" },
+      value: { threadId: "thread-1", content: "Ask Grok", modelId: "grok-alternative" },
     });
     const userMessage = wireMessage("message-user", MessageRole.MESSAGE_ROLE_USER, "Ask Grok", 1n);
     stream.receive(encodeFrame({

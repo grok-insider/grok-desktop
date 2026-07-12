@@ -1480,6 +1480,7 @@ impl Daemon {
         let input = StartConversationTurn {
             thread_id: request.thread_id,
             content: request.content,
+            model_id: request.model_id,
         };
         if let Some(replay) = conversation.replay_start(&input, key).await?
             && let Some(result) = self.conversation_replay_result(replay).await?
@@ -2802,16 +2803,16 @@ mod tests {
         ArtifactService, ArtifactStore, CancelConversationTurnCommit, ChatModelService,
         ContentPart, ConversationModel, ConversationModelFactory, ConversationRequest,
         ConversationRole, ConversationStream, ConversationThreadCredentialBinding,
-        ConversationTurnEventPage, ConversationTurnReservation, ConversationTurnReservationSource,
-        ConversationTurnSnapshot, ConversationTurnStore, CreateMessage, CreateRun,
-        CredentialEnrollment, CredentialEnrollmentError, CredentialEnrollmentRequest,
-        CredentialEnrollmentService, CredentialMutationStore, CredentialService,
-        DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization, ExecutionStore, IdGenerator,
-        ModelDescriptor, ModelError, ModelErrorKind, ModelFailureCertainty, MutationCommand,
-        NewRunEvent, OAuthFailure, OAuthTokenGrant, PreparedArtifactContent, ProviderStartCommit,
-        RequestApproval, SecretName, SecretValue, SecretVault, SelectedSourcePath, StoreError,
-        SuperGrokOAuth, TerminalTurnCommit, WorkspaceService, WorkspaceStore, XaiApiKeyValidation,
-        XaiApiKeyValidationError, XaiApiKeyValidator,
+        ConversationThreadModelBinding, ConversationTurnEventPage, ConversationTurnReservation,
+        ConversationTurnReservationSource, ConversationTurnSnapshot, ConversationTurnStore,
+        CreateMessage, CreateRun, CredentialEnrollment, CredentialEnrollmentError,
+        CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialMutationStore,
+        CredentialService, DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization, ExecutionStore,
+        IdGenerator, ModelDescriptor, ModelError, ModelErrorKind, ModelFailureCertainty,
+        MutationCommand, NewRunEvent, OAuthFailure, OAuthTokenGrant, PreparedArtifactContent,
+        ProviderStartCommit, RequestApproval, SecretName, SecretValue, SecretVault,
+        SelectedSourcePath, StoreError, SuperGrokOAuth, TerminalTurnCommit, WorkspaceService,
+        WorkspaceStore, XaiApiKeyValidation, XaiApiKeyValidationError, XaiApiKeyValidator,
     };
     use grok_artifact_storage::UnavailableArtifactContent;
     use grok_domain::{
@@ -3433,6 +3434,13 @@ mod tests {
         ) -> Result<ConversationThreadCredentialBinding, StoreError> {
             self.inner.thread_credential_binding(thread_id).await
         }
+
+        async fn thread_model_binding(
+            &self,
+            thread_id: &ThreadId,
+        ) -> Result<ConversationThreadModelBinding, StoreError> {
+            self.inner.thread_model_binding(thread_id).await
+        }
     }
 
     async fn daemon_with_pending_conversation() -> (Daemon, [String; 2], Arc<AtomicUsize>) {
@@ -3593,6 +3601,7 @@ mod tests {
                 StartConversationTurn {
                     thread_id: thread.id.to_string(),
                     content: "Canonical source prompt".into(),
+                    model_id: None,
                 },
                 "fork-handler-source",
                 Box::pin(std::future::pending()),
@@ -6163,6 +6172,7 @@ mod tests {
                 &StartConversationTurn {
                     thread_id: second_thread_id,
                     content: "Must not reserve".into(),
+                    model_id: None,
                 },
                 "saturated-new-start",
             )
@@ -6206,6 +6216,7 @@ mod tests {
                 StartConversationTurn {
                     thread_id: first_thread.clone(),
                     content: "Reclaim this reservation".into(),
+                    model_id: None,
                 },
                 "reclaim-orphan",
                 Box::pin(std::future::pending()),
@@ -6259,6 +6270,7 @@ mod tests {
                 StartConversationTurn {
                     thread_id: second_thread.clone(),
                     content: "Remain reserved while saturated".into(),
+                    model_id: None,
                 },
                 "saturated-orphan",
                 Box::pin(std::future::pending()),
@@ -6298,6 +6310,7 @@ mod tests {
                 &StartConversationTurn {
                     thread_id: second_thread.clone(),
                     content: "Remain reserved while saturated".into(),
+                    model_id: None,
                 },
                 "saturated-orphan",
             )
@@ -6377,6 +6390,7 @@ mod tests {
                 StartConversationTurn {
                     thread_id: poison_thread,
                     content: "Poison external namespace only".into(),
+                    model_id: None,
                 },
                 "poison-reservation",
                 Box::pin(std::future::pending()),
@@ -6897,6 +6911,7 @@ mod tests {
                 StartConversationTurn {
                     thread_id: source.turn.thread_id.to_string(),
                     content: "Still in progress".into(),
+                    model_id: None,
                 },
                 "ineligible-branch-source",
                 Box::pin(std::future::pending()),
@@ -7842,6 +7857,7 @@ mod tests {
             v1::StartConversationTurnRequest {
                 thread_id: thread_id.into(),
                 content: content.into(),
+                model_id: None,
             },
         ));
         envelope.idempotency_key = key.into();

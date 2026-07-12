@@ -399,6 +399,7 @@ export interface StartRunInput {
   prompt: string;
   mode: "chat" | "work";
   projectId?: string;
+  modelId?: string;
   searchEnabled: boolean;
   researchEnabled: boolean;
 }

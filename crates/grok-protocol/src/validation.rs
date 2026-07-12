@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 21);
+        assert_eq!(PROTOCOL_VERSION, 22);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -735,6 +735,7 @@ mod tests {
             v1::request::Operation::StartConversationTurn(v1::StartConversationTurnRequest {
                 thread_id: "thread-1".into(),
                 content: "Hello".into(),
+                model_id: Some("grok-4".into()),
             }),
             v1::request::Operation::CancelConversationTurn(v1::CancelConversationTurnRequest {
                 turn_id: "turn-1".into(),
@@ -805,6 +806,18 @@ mod tests {
                 .expect("decode maximum revision"),
             turn_response
         );
+    }
+
+    #[test]
+    fn epoch_twenty_one_start_payload_decodes_without_model_override() {
+        // field 1 = "t", field 2 = "hi"; epoch 21 had no field 3.
+        let decoded = v1::StartConversationTurnRequest::decode(
+            [0x0a, 0x01, b't', 0x12, 0x02, b'h', b'i'].as_slice(),
+        )
+        .expect("decode epoch 21 start request");
+        assert_eq!(decoded.thread_id, "t");
+        assert_eq!(decoded.content, "hi");
+        assert_eq!(decoded.model_id, None);
     }
 
     #[test]

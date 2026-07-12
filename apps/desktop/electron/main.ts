@@ -736,6 +736,7 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
         request.threadId,
         request.content,
         request.idempotencyKey,
+        request.modelId,
       );
       if (conversationReplayTokens.get(event.sender.id) === requestReplayToken) {
         if (turn.state === "reserved" || turn.state === "provider_started") {

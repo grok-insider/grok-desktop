@@ -149,7 +149,11 @@ describe("ElectronDesktopClient", () => {
         return { kind: "daemon.thread", thread };
       }
       if (request.kind === "daemon.startConversationTurn") {
-        expect(request).toMatchObject({ threadId: thread.id, content: "Summarize this release plan." });
+        expect(request).toMatchObject({
+          threadId: thread.id,
+          content: "Summarize this release plan.",
+          modelId: "grok-alternative",
+        });
         expect(request.idempotencyKey).toBeTruthy();
         return { kind: "daemon.conversationTurn", turn: started };
       }
@@ -170,6 +174,7 @@ describe("ElectronDesktopClient", () => {
       prompt: "Summarize this release plan.",
       mode: "chat",
       projectId: "inbox",
+      modelId: "grok-alternative",
       searchEnabled: false,
       researchEnabled: false,
     })).resolves.toEqual({ runId: "run-chat-1", threadId: thread.id });

@@ -16,13 +16,13 @@ use futures_util::{StreamExt, stream};
 use grok_application::{
     CancelConversationTurnCommit, Citation, ConversationEvent, ConversationModel,
     ConversationModelFactory, ConversationRequest, ConversationService, ConversationStream,
-    ConversationThreadCredentialBinding, ConversationTurnEventPage, ConversationTurnReservation,
-    ConversationTurnReservationSource, ConversationTurnSnapshot, ConversationTurnStore,
-    CreateProject, CreateThread, CredentialService, DEFAULT_XAI_CHAT_MODEL_ID,
-    ExecuteConversationTurn, ModelDescriptor, ModelError, ModelErrorKind, ModelFailureCertainty,
-    MutationCommand, NewRunEvent, ProviderStartCommit, SecretName, SecretValue, SecretVault,
-    StartConversationTurn, StoreError, TerminalTurnCommit, Usage, WorkspaceService,
-    XaiApiKeyValidation, XaiApiKeyValidationError, XaiApiKeyValidator,
+    ConversationThreadCredentialBinding, ConversationThreadModelBinding, ConversationTurnEventPage,
+    ConversationTurnReservation, ConversationTurnReservationSource, ConversationTurnSnapshot,
+    ConversationTurnStore, CreateProject, CreateThread, CredentialService,
+    DEFAULT_XAI_CHAT_MODEL_ID, ExecuteConversationTurn, ModelDescriptor, ModelError,
+    ModelErrorKind, ModelFailureCertainty, MutationCommand, NewRunEvent, ProviderStartCommit,
+    SecretName, SecretValue, SecretVault, StartConversationTurn, StoreError, TerminalTurnCommit,
+    Usage, WorkspaceService, XaiApiKeyValidation, XaiApiKeyValidationError, XaiApiKeyValidator,
 };
 use grok_domain::{
     ConversationTurn, ConversationTurnEvent, ConversationTurnEventKind, ConversationTurnId,
@@ -230,6 +230,13 @@ impl ConversationTurnStore for FaultingTerminalCommitStore {
     ) -> Result<ConversationThreadCredentialBinding, StoreError> {
         self.inner.thread_credential_binding(thread_id).await
     }
+
+    async fn thread_model_binding(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<ConversationThreadModelBinding, StoreError> {
+        self.inner.thread_model_binding(thread_id).await
+    }
 }
 
 #[derive(Debug)]
@@ -362,6 +369,7 @@ async fn execute(
         ExecuteConversationTurn {
             thread_id,
             content: "Hello".into(),
+            model_id: None,
         },
         key,
         Box::pin(std::future::pending()),
@@ -419,6 +427,7 @@ async fn maximum_output_flush_is_bounded_and_checks_cancellation_between_batches
             ExecuteConversationTurn {
                 thread_id,
                 content: "Hello".into(),
+                model_id: None,
             },
             "maximum-output-cancellation",
             Box::pin(CancelAfterFirstAppend {
@@ -465,6 +474,7 @@ async fn cancellation_after_final_text_flush_precedes_terminal_commit() {
         ExecuteConversationTurn {
             thread_id,
             content: "Hello".into(),
+            model_id: None,
         },
         "final-tail-cancellation",
         Box::pin(CancelAfterFirstAppend {
@@ -496,6 +506,7 @@ async fn start_returns_a_durable_reservation_before_provider_dispatch() {
             StartConversationTurn {
                 thread_id,
                 content: "Hello".into(),
+                model_id: None,
             },
             "async-start",
             Box::pin(std::future::pending()),
@@ -551,6 +562,7 @@ async fn reserved_cancel_is_exact_and_prevents_late_provider_dispatch() {
             StartConversationTurn {
                 thread_id,
                 content: "Hello".into(),
+                model_id: None,
             },
             "cancel-before-dispatch",
             Box::pin(std::future::pending()),
@@ -601,6 +613,7 @@ async fn provider_started_cancel_is_durable_before_the_dispatch_signal() {
             StartConversationTurn {
                 thread_id,
                 content: "Hello".into(),
+                model_id: None,
             },
             "cancel-provider-started",
             Box::pin(std::future::pending()),
@@ -935,6 +948,7 @@ async fn ambiguous_cancellation_reloads_the_already_committed_review_winner() {
     let input = ExecuteConversationTurn {
         thread_id: thread_id.clone(),
         content: "Hello".into(),
+        model_id: None,
     };
 
     let snapshot = Box::pin(service.execute(
@@ -970,6 +984,7 @@ async fn normalized_text_is_durable_before_provider_completion() {
             ExecuteConversationTurn {
                 thread_id,
                 content: "Hello".into(),
+                model_id: None,
             },
             "progressive-durable-text",
             Box::pin(async move {

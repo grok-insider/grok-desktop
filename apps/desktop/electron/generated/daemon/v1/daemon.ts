@@ -618,6 +618,7 @@ export interface ChatModelCatalog {
 export interface StartConversationTurnRequest {
   threadId: string;
   content: string;
+  modelId?: string | undefined;
 }
 
 /** Exact optimistic cancellation intent for one observed durable turn. */
@@ -5307,7 +5308,7 @@ export const ChatModelCatalog: MessageFns<ChatModelCatalog> = {
 };
 
 function createBaseStartConversationTurnRequest(): StartConversationTurnRequest {
-  return { threadId: "", content: "" };
+  return { threadId: "", content: "", modelId: undefined };
 }
 
 export const StartConversationTurnRequest: MessageFns<StartConversationTurnRequest> = {
@@ -5317,6 +5318,9 @@ export const StartConversationTurnRequest: MessageFns<StartConversationTurnReque
     }
     if (message.content !== "") {
       writer.uint32(18).string(message.content);
+    }
+    if (message.modelId !== undefined) {
+      writer.uint32(26).string(message.modelId);
     }
     return writer;
   },
@@ -5344,6 +5348,14 @@ export const StartConversationTurnRequest: MessageFns<StartConversationTurnReque
           message.content = reader.string();
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.modelId = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -5360,6 +5372,7 @@ export const StartConversationTurnRequest: MessageFns<StartConversationTurnReque
     const message = createBaseStartConversationTurnRequest();
     message.threadId = object.threadId ?? "";
     message.content = object.content ?? "";
+    message.modelId = object.modelId ?? undefined;
     return message;
   },
 };

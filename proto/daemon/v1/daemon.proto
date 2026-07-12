@@ -303,6 +303,7 @@ message ChatModelCatalog {
 message StartConversationTurnRequest {
   string thread_id = 1;
   string content = 2;
+  optional string model_id = 3;
 }
 
 // Exact optimistic cancellation intent for one observed durable turn.

@@ -13,10 +13,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Button, PageHeader, Toggle } from "../components/ui";
+import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
 import { useDesktopClient } from "../services/DesktopClientContext";
 import type {
   AccountSetupState,
-  ChatModelCatalog,
   DesktopPreferences,
   SuperGrokEnrollmentStatus,
 } from "../services/desktopClient";
@@ -327,71 +327,17 @@ function GeneralSettings() {
 }
 
 function ModelSettings() {
-  const client = useDesktopClient();
-  const [catalog, setCatalog] = useState<ChatModelCatalog | null>(null);
-  const [catalogError, setCatalogError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setCatalog(null);
-    void client
-      .getChatModelCatalog()
-      .then((value) => {
-        if (!active) return;
-        setCatalog(value);
-        setCatalogError("");
-      })
-      .catch(() => {
-        if (active) {
-          setCatalog(null);
-          setCatalogError("The official xAI model catalog is unavailable. Check the API key and network, then retry.");
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [client]);
-
-  const refreshCatalog = async () => {
-    if (loading || saving) return;
-    setLoading(true);
-    setCatalog(null);
-    setCatalogError("");
-    try {
-      setCatalog(await client.getChatModelCatalog());
-    } catch {
-      setCatalog(null);
-      setCatalogError("The official xAI model catalog is unavailable. Check the API key and network, then retry.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const selectModel = async (modelId: string) => {
-    if (!catalog || saving || !catalog.models.some((model) => model.id === modelId && model.textConversationReady)) return;
-    setSaving(true);
-    setCatalogError("");
-    try {
-      const preference = await client.selectChatModel({
-        expectedRevision: catalog.preference.revision,
-        modelId,
-      });
-      setCatalog({ ...catalog, preference, selectedModelReady: true });
-    } catch {
-      setCatalog(null);
-      setCatalogError("The model selection outcome could not be reconciled with live daemon readiness. Retry discovery before using Chat.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const selectableModels = catalog?.models.filter((model) => model.textConversationReady) ?? [];
+  const {
+    catalog,
+    status,
+    error: catalogError,
+    retry: refreshCatalog,
+    setDefaultModel: selectModel,
+    savingModelId,
+    selectableModels,
+  } = useChatModelCatalog();
+  const loading = status === "loading";
+  const saving = savingModelId !== null;
   const selectedInCatalog = selectableModels.some((model) => model.id === catalog?.preference.selectedModelId);
 
   return (
@@ -428,7 +374,7 @@ function ModelSettings() {
               className="h-[34px] min-w-52 max-w-[min(32rem,50vw)] truncate rounded-md border border-input bg-card px-2 font-mono text-body-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 max-[680px]:w-full max-[680px]:max-w-full"
               aria-label="Default chat model"
               value={catalog?.preference.selectedModelId ?? ""}
-              disabled={!catalog || loading || saving || selectableModels.length === 0}
+              disabled={!catalog || status !== "ready" || saving || selectableModels.length === 0}
               onChange={(event) => void selectModel(event.target.value)}
             >
               {!catalog && <option value="">Unavailable</option>}
@@ -459,14 +405,16 @@ function ModelSettings() {
               {catalog?.preference.selectedModelId ?? "No live model selection"}
             </h3>
             {catalog && (
-              <Badge variant={catalog.selectedModelReady ? "success" : "warning"}>
-                {catalog.selectedModelReady ? "Ready" : "Not ready"}
+              <Badge variant={status === "error" ? "warning" : catalog.selectedModelReady ? "success" : "warning"}>
+                {status === "error" ? "Stale" : catalog.selectedModelReady ? "Ready" : "Not ready"}
               </Badge>
             )}
           </div>
           <p className="m-0 mt-1 text-body-sm text-muted-foreground">
             {catalog
-              ? catalog.selectedModelReady
+              ? status === "error"
+                ? "The last verified catalog is retained for context but cannot change the default until discovery succeeds."
+                : catalog.selectedModelReady
                 ? `${selectableModels.length} text-capable model${selectableModels.length === 1 ? "" : "s"} discovered. New turns use this selection; existing turns never change.`
                 : "The persisted selection is absent from the current live catalog. Grok Desktop will not fall back silently."
               : "Add a user-owned xAI API key or retry live discovery to manage the default Chat model."}

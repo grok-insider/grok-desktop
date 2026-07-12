@@ -527,12 +527,14 @@ export class DaemonSupervisor {
     threadId: string,
     content: string,
     idempotencyKey: string,
+    modelId?: string,
   ): Promise<DaemonConversationTurn> {
     await this.start();
     const turn = await this.requireProtocol().startConversationTurn(
       threadId,
       content,
       idempotencyKey,
+      modelId,
     );
     this.setConnected();
     return mapConversationTurn(turn);

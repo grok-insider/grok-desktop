@@ -29,11 +29,11 @@ use grok_application::{
     ClaimAutomationOccurrence, Clock, ConversationForkCommandResolution, ConversationForkDelivery,
     ConversationForkDeliveryState, ConversationForkMetadata, ConversationForkPlan,
     ConversationForkReservation, ConversationForkSnapshot, ConversationInheritedAssistantOutcome,
-    ConversationThreadCredentialBinding, ConversationTurnEventPage, ConversationTurnReservation,
-    ConversationTurnReservationSource, ConversationTurnSnapshot, ConversationTurnStore,
-    CredentialMutationReservation, CredentialMutationStore, DatabaseKey, DesktopPreferencesStore,
-    ExecutionMutationOutcome, ExecutionStore, IdGenerator, KeyProviderError,
-    MAX_ARTIFACT_FILE_BYTES, MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES,
+    ConversationThreadCredentialBinding, ConversationThreadModelBinding, ConversationTurnEventPage,
+    ConversationTurnReservation, ConversationTurnReservationSource, ConversationTurnSnapshot,
+    ConversationTurnStore, CredentialMutationReservation, CredentialMutationStore, DatabaseKey,
+    DesktopPreferencesStore, ExecutionMutationOutcome, ExecutionStore, IdGenerator,
+    KeyProviderError, MAX_ARTIFACT_FILE_BYTES, MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES,
     MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS,
     MAX_CONVERSATION_CONTEXT_BYTES, MAX_CONVERSATION_CONTEXT_MESSAGES,
     MAX_CONVERSATION_EVENT_BATCH, MAX_CONVERSATION_FORK_DELIVERY_ALIASES,
@@ -118,6 +118,7 @@ struct State {
     conversation_turns: HashMap<ConversationTurnId, ConversationTurn>,
     conversation_lineages: HashMap<ConversationTurnId, ConversationTurnLineage>,
     conversation_thread_bindings: HashMap<ThreadId, String>,
+    conversation_thread_models: HashMap<ThreadId, String>,
     conversation_turn_keys: HashMap<String, ConversationTurnId>,
     conversation_contexts: HashMap<ConversationTurnId, Vec<Message>>,
     conversation_events: HashMap<ConversationTurnId, Vec<ConversationTurnEvent>>,
@@ -686,6 +687,19 @@ impl ConversationTurnStore for InMemoryExecutionStore {
             }
             None => true,
         };
+        let bind_model = match state.conversation_thread_models.get(&turn.thread_id) {
+            Some(existing) if existing == &turn.model_id => false,
+            Some(_) => return Err(StoreError::Conflict),
+            None if matches!(&source, ConversationTurnReservationSource::Retry { .. })
+                || state
+                    .conversation_turns
+                    .values()
+                    .any(|existing| existing.thread_id == turn.thread_id) =>
+            {
+                return Err(StoreError::Conflict);
+            }
+            None => true,
+        };
         let (user_message, context) = match source {
             ConversationTurnReservationSource::CurrentThread => {
                 capture_conversation_context(&state, &turn, user_message)?
@@ -729,6 +743,11 @@ impl ConversationTurnStore for InMemoryExecutionStore {
             state
                 .conversation_thread_bindings
                 .insert(turn.thread_id.clone(), credential_binding.to_owned());
+        }
+        if bind_model {
+            state
+                .conversation_thread_models
+                .insert(turn.thread_id.clone(), turn.model_id.clone());
         }
         state.messages.insert(user_message.id.clone(), user_message);
         state.runs.insert(run_id.clone(), run);
@@ -1160,6 +1179,9 @@ impl ConversationTurnStore for InMemoryExecutionStore {
             .conversation_thread_bindings
             .insert(child_thread_id.clone(), prepared.credential_binding_id);
         state
+            .conversation_thread_models
+            .insert(child_thread_id.clone(), prepared.model_id);
+        state
             .threads
             .insert(child_thread_id.clone(), plan.child_thread);
         for message in plan.messages {
@@ -1398,6 +1420,27 @@ impl ConversationTurnStore for InMemoryExecutionStore {
         }
         Ok(ConversationThreadCredentialBinding::UnboundEmpty)
     }
+
+    async fn thread_model_binding(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<ConversationThreadModelBinding, StoreError> {
+        let state = self.state.lock().await;
+        if !state.threads.contains_key(thread_id) {
+            return Err(StoreError::NotFound);
+        }
+        if let Some(model) = state.conversation_thread_models.get(thread_id) {
+            return Ok(ConversationThreadModelBinding::Bound(model.clone()));
+        }
+        if state
+            .conversation_turns
+            .values()
+            .any(|turn| &turn.thread_id == thread_id)
+        {
+            return Ok(ConversationThreadModelBinding::LegacyUnbound);
+        }
+        Ok(ConversationThreadModelBinding::UnboundEmpty)
+    }
 }
 
 const CONVERSATION_BRANCH_COMMAND_SCOPE: &str = "branch_conversation_thread";
@@ -1406,6 +1449,7 @@ const CONVERSATION_REGENERATE_COMMAND_SCOPE: &str = "regenerate_conversation_tur
 
 struct PreparedConversationFork {
     credential_binding_id: String,
+    model_id: String,
     inherited_outcomes: Vec<(MessageId, ConversationTurnId)>,
     context: Option<Vec<Message>>,
     created_turn_event: Option<ConversationTurnEvent>,
@@ -1459,6 +1503,7 @@ fn prepare_conversation_fork(
     if !conversation_fork_scope_matches(&plan.command.scope, kind)
         || state.threads.contains_key(&child.id)
         || state.conversation_thread_bindings.contains_key(&child.id)
+        || state.conversation_thread_models.contains_key(&child.id)
     {
         return Err(StoreError::Conflict);
     }
@@ -1537,7 +1582,6 @@ fn prepare_conversation_fork(
     {
         return Err(StoreError::Conflict);
     }
-
     let root = state
         .threads
         .get(&parent.lineage.root_thread_id)
@@ -1586,6 +1630,7 @@ fn prepare_conversation_fork(
 
     Ok(PreparedConversationFork {
         credential_binding_id,
+        model_id: source.turn.model_id.clone(),
         inherited_outcomes,
         context: provider_context,
         created_turn_event,
@@ -8516,7 +8561,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::large_futures)]
     #[allow(clippy::too_many_lines)]
-    async fn conversation_retry_after_model_change_conflicts_before_provider_dispatch() {
+    async fn conversation_replay_ignores_later_global_model_change_without_provider_dispatch() {
         let store = Arc::new(InMemoryExecutionStore::new());
         let vault = Arc::new(InMemorySecretVault::new());
         seed_test_xai_credential(&vault);
@@ -8584,6 +8629,7 @@ mod tests {
         let input = ExecuteConversationTurn {
             thread_id: thread.id.to_string(),
             content: "Hello".into(),
+            model_id: Some("grok-4.3".into()),
         };
         let first = conversation
             .execute(
@@ -8614,9 +8660,25 @@ mod tests {
             .await
             .expect("saved selection");
 
+        let replay = conversation
+            .execute(input, "model-change-turn", Box::pin(std::future::pending()))
+            .await
+            .expect("bound model makes the exact replay stable");
+        assert_eq!(replay, first);
+        assert_eq!(list_calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(stream_calls.load(AtomicOrdering::SeqCst), 1);
+
         assert!(matches!(
             conversation
-                .execute(input, "model-change-turn", Box::pin(std::future::pending()),)
+                .execute(
+                    ExecuteConversationTurn {
+                        thread_id: thread.id.to_string(),
+                        content: "Conflicting override".into(),
+                        model_id: Some("grok-other".into()),
+                    },
+                    "conflicting-model-override",
+                    Box::pin(std::future::pending()),
+                )
                 .await,
             Err(ApplicationError::Conflict)
         ));
@@ -8685,6 +8747,7 @@ mod tests {
                 ExecuteConversationTurn {
                     thread_id: thread.id.to_string(),
                     content: "Retry this exact prompt".into(),
+                    model_id: None,
                 },
                 "retry-source-command",
                 Box::pin(std::future::pending()),
@@ -8735,6 +8798,7 @@ mod tests {
                     ExecuteConversationTurn {
                         thread_id: thread.id.to_string(),
                         content: "A new prompt must not switch credential generations".into(),
+                        model_id: None,
                     },
                     "credential-mismatch-start",
                     Box::pin(std::future::pending()),
@@ -8785,6 +8849,7 @@ mod tests {
                     ExecuteConversationTurn {
                         thread_id: thread.id.to_string(),
                         content: "Legacy history must remain read-only".into(),
+                        model_id: None,
                     },
                     "legacy-unbound-start",
                     Box::pin(std::future::pending()),
@@ -8955,6 +9020,7 @@ mod tests {
                 ExecuteConversationTurn {
                     thread_id: revoked_thread.id.to_string(),
                     content: "Do not dispatch after credential deletion".into(),
+                    model_id: None,
                 },
                 "revoked-dispatch-turn",
                 Box::pin(std::future::pending()),
@@ -9052,6 +9118,7 @@ mod tests {
                 ExecuteConversationTurn {
                     thread_id: thread.id.to_string(),
                     content: "Linearize this provider boundary".into(),
+                    model_id: None,
                 },
                 "credential-gate-turn",
                 Box::pin(std::future::pending()),
@@ -9177,6 +9244,7 @@ mod tests {
                     ExecuteConversationTurn {
                         thread_id: thread.id.to_string(),
                         content: "Keep this generation coherent".into(),
+                        model_id: None,
                     },
                     "coherent-read-turn",
                     Box::pin(std::future::pending()),
@@ -9308,6 +9376,7 @@ mod tests {
                     ExecuteConversationTurn {
                         thread_id: thread.id.to_string(),
                         content: "Hello".into(),
+                        model_id: None,
                     },
                     "ambiguous-turn",
                     Box::pin(std::future::pending()),

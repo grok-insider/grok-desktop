@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 22;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 23;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -145,6 +145,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             20 => migrate_chat_rail_v20(&transaction)?,
             21 => transaction.execute_batch(MIGRATION_21)?,
             22 => transaction.execute_batch(MIGRATION_22)?,
+            23 => migrate_conversation_model_binding_v23(&transaction)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -162,6 +163,76 @@ const MIGRATION_20: &str = r"
 ALTER TABLE conversation_turn_lineage
 ADD COLUMN rail INTEGER NOT NULL DEFAULT 0 CHECK (rail BETWEEN 0 AND 1);
 ";
+
+// Bind a canonical model to each conversation thread. Existing threads are
+// deterministically backfilled from their most recent durable turn; only an
+// empty thread may claim a binding after the migration.
+const MIGRATION_23: &str = r"
+DROP TRIGGER conversation_thread_identity_validate_insert;
+DROP TRIGGER conversation_thread_identity_bind_once;
+
+UPDATE conversation_thread_identity AS identity
+SET model_id = (
+    SELECT turns.model_id FROM conversation_turns AS turns
+    WHERE turns.thread_id = identity.thread_id
+    ORDER BY turns.created_at DESC, turns.id DESC
+    LIMIT 1
+)
+WHERE EXISTS (
+    SELECT 1 FROM conversation_turns AS turns
+    WHERE turns.thread_id = identity.thread_id
+);
+
+CREATE TRIGGER conversation_thread_identity_validate_insert
+BEFORE INSERT ON conversation_thread_identity BEGIN
+    SELECT CASE WHEN new.source != 0
+        OR new.credential_binding_id IS NOT NULL
+        OR new.model_id IS NOT NULL
+    THEN RAISE(ABORT, 'conversation thread identity must start unbound') END;
+END;
+
+CREATE TRIGGER conversation_thread_identity_bind_once
+BEFORE UPDATE ON conversation_thread_identity
+WHEN NOT (
+    new.thread_id = old.thread_id AND
+    new.source = old.source AND
+    (new.credential_binding_id IS old.credential_binding_id OR
+        (old.credential_binding_id IS NULL AND new.credential_binding_id IS NOT NULL)) AND
+    (new.model_id IS old.model_id OR
+        (old.model_id IS NULL AND new.model_id IS NOT NULL)) AND
+    (new.credential_binding_id IS NOT old.credential_binding_id OR
+        new.model_id IS NOT old.model_id) AND
+    NOT EXISTS (
+        SELECT 1 FROM conversation_turns turns
+        WHERE turns.thread_id = old.thread_id
+    )
+) BEGIN
+    SELECT RAISE(ABORT, 'conversation thread identity is immutable');
+END;
+";
+
+fn migrate_conversation_model_binding_v23(
+    transaction: &Transaction<'_>,
+) -> Result<(), SqlCipherStoreError> {
+    let model_id_exists: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('conversation_thread_identity')
+             WHERE name='model_id'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !model_id_exists {
+        transaction.execute_batch(
+            "ALTER TABLE conversation_thread_identity
+             ADD COLUMN model_id TEXT CHECK (
+                 model_id IS NULL OR length(CAST(model_id AS BLOB)) BETWEEN 1 AND 512
+             );",
+        )?;
+    }
+    transaction.execute_batch(MIGRATION_23)?;
+    Ok(())
+}
 
 const MIGRATION_21: &str = r"
 CREATE TABLE automation_occurrence_dispatches (
@@ -3928,7 +3999,7 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_evaluation_commands;
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
-                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22);
+                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )
@@ -3986,7 +4057,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4010,7 +4081,7 @@ mod tests {
                  DROP TRIGGER artifact_versions_create_retention;
                  DROP TABLE artifact_removal_commands;
                  DROP TABLE artifact_version_retention;
-                 DELETE FROM schema_migrations WHERE version IN (18,19,20);
+                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23);
                  PRAGMA user_version=17;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4481,6 +4552,15 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("schema version");
         assert_eq!(version, LATEST_SCHEMA_VERSION);
+        let legacy_model: Option<String> = migrated
+            .query_row(
+                "SELECT model_id FROM conversation_thread_identity
+                 WHERE thread_id='legacy-thread'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("backfilled legacy model binding");
+        assert_eq!(legacy_model.as_deref(), Some("grok-test"));
         for table in [
             "projects",
             "threads",
@@ -5227,7 +5307,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;
 
@@ -5271,7 +5351,7 @@ mod tests {
                      VALUES (new.rowid,new.title,new.body);
                  END;
 
-                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20);
+                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23);
                  PRAGMA user_version=15;
                  CREATE TRIGGER block_artifact_search_rebuild
                  BEFORE INSERT ON search_documents WHEN new.kind='artifact' BEGIN
@@ -5909,7 +5989,7 @@ mod tests {
             connection
                 .execute(
                     "UPDATE conversation_thread_identity
-                     SET credential_binding_id='first-local-generation'
+                     SET credential_binding_id='first-local-generation',model_id='grok-4.3'
                      WHERE thread_id='empty-thread'",
                     [],
                 )
@@ -5920,7 +6000,7 @@ mod tests {
             connection
                 .execute(
                     "UPDATE conversation_thread_identity
-                     SET credential_binding_id='replacement-local-generation'
+                     SET credential_binding_id='replacement-local-generation',model_id='grok-other'
                      WHERE thread_id='empty-thread'",
                     [],
                 )
@@ -5938,15 +6018,22 @@ mod tests {
         drop(connection);
 
         let restarted = open_encrypted(&path, &key).expect("restart identity schema");
-        let identity: (i64, Option<String>) = restarted
+        let identity: (i64, Option<String>, Option<String>) = restarted
             .query_row(
-                "SELECT source,credential_binding_id
+                "SELECT source,credential_binding_id,model_id
                  FROM conversation_thread_identity WHERE thread_id='empty-thread'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .expect("restarted thread identity");
-        assert_eq!(identity, (0, Some("first-local-generation".into())));
+        assert_eq!(
+            identity,
+            (
+                0,
+                Some("first-local-generation".into()),
+                Some("grok-4.3".into())
+            )
+        );
     }
 
     #[test]

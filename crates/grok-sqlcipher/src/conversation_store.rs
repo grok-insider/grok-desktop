@@ -5,9 +5,9 @@ use grok_application::{
     CancelConversationTurnCommit, ConversationForkCommandResolution, ConversationForkDelivery,
     ConversationForkDeliveryState, ConversationForkMetadata, ConversationForkPlan,
     ConversationForkReservation, ConversationForkSnapshot, ConversationInheritedAssistantOutcome,
-    ConversationThreadCredentialBinding, ConversationTurnEventPage, ConversationTurnReservation,
-    ConversationTurnReservationSource, ConversationTurnSnapshot, ConversationTurnStore,
-    MAX_CONVERSATION_CONTEXT_BYTES, MAX_CONVERSATION_CONTEXT_MESSAGES,
+    ConversationThreadCredentialBinding, ConversationThreadModelBinding, ConversationTurnEventPage,
+    ConversationTurnReservation, ConversationTurnReservationSource, ConversationTurnSnapshot,
+    ConversationTurnStore, MAX_CONVERSATION_CONTEXT_BYTES, MAX_CONVERSATION_CONTEXT_MESSAGES,
     MAX_CONVERSATION_EVENT_BATCH, MAX_CONVERSATION_FORK_DELIVERY_ALIASES,
     MAX_CONVERSATION_FORK_DIRECT_CHILDREN, MAX_CONVERSATION_FORK_FAMILY_THREADS,
     MAX_CONVERSATION_FORK_INHERITED_OUTCOMES, MAX_CONVERSATION_FORK_METADATA_BYTES,
@@ -126,10 +126,11 @@ impl ConversationTurnStore for SqlCipherStore {
             )?;
             let (sequenced_user, context) = match source {
                 ConversationTurnReservationSource::CurrentThread => {
-                    bind_or_validate_thread_credential_generation(
+                    bind_or_validate_thread_identity(
                         &transaction,
                         &turn.thread_id,
                         &lineage,
+                        &turn.model_id,
                     )?;
                     user_message.sequence = next_message_sequence(&transaction, &turn.thread_id)?;
                     let mut context = query_active_messages(&transaction, &turn.thread_id)?;
@@ -542,6 +543,7 @@ impl ConversationTurnStore for SqlCipherStore {
                 &transaction,
                 &plan.child_thread,
                 &prepared.credential_binding_id,
+                &prepared.model_id,
             )?;
             insert_thread_fork(&transaction, &plan.child_thread)?;
             for message in &plan.messages {
@@ -772,6 +774,32 @@ impl ConversationTurnStore for SqlCipherStore {
         })
         .await
     }
+
+    async fn thread_model_binding(
+        &self,
+        thread_id: &ThreadId,
+    ) -> Result<ConversationThreadModelBinding, StoreError> {
+        let thread_id = thread_id.clone();
+        self.with_store(move |connection| {
+            let binding = query_thread_model_binding(connection, &thread_id)?;
+            if let Some(model) = binding {
+                return Ok(ConversationThreadModelBinding::Bound(model));
+            }
+            let has_historical_turn: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversation_turns WHERE thread_id=?1)",
+                    [thread_id.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(map_sqlite)?;
+            if has_historical_turn {
+                Ok(ConversationThreadModelBinding::LegacyUnbound)
+            } else {
+                Ok(ConversationThreadModelBinding::UnboundEmpty)
+            }
+        })
+        .await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -801,6 +829,7 @@ struct StoredForkDeliveryAckCommand {
 
 struct PreparedConversationFork {
     credential_binding_id: String,
+    model_id: String,
     inherited_outcomes: Vec<(MessageId, ConversationTurnId)>,
     context: Option<Vec<Message>>,
     created_turn_event: Option<ConversationTurnEvent>,
@@ -962,6 +991,7 @@ fn prepare_conversation_fork(
     validate_projected_fork_metadata_budget(connection, plan, &inherited_outcomes)?;
     Ok(PreparedConversationFork {
         credential_binding_id,
+        model_id: source.turn.model_id.clone(),
         inherited_outcomes,
         context: provider_context,
         created_turn_event,
@@ -1639,6 +1669,7 @@ fn insert_fork_thread(
     connection: &Connection,
     thread: &Thread,
     credential_binding_id: &str,
+    model_id: &str,
 ) -> Result<(), StoreError> {
     connection
         .execute(
@@ -1657,9 +1688,11 @@ fn insert_fork_thread(
         .map_err(map_sqlite)?;
     let changed = connection
         .execute(
-            "UPDATE conversation_thread_identity SET credential_binding_id=?1
-             WHERE thread_id=?2 AND source=0 AND credential_binding_id IS NULL",
-            params![credential_binding_id, thread.id.as_str()],
+            "UPDATE conversation_thread_identity
+             SET credential_binding_id=?1,model_id=?2
+             WHERE thread_id=?3 AND source=0
+               AND credential_binding_id IS NULL AND model_id IS NULL",
+            params![credential_binding_id, model_id, thread.id.as_str()],
         )
         .map_err(map_sqlite)?;
     if changed != 1 {
@@ -2913,19 +2946,42 @@ fn query_thread_credential_binding(
     Ok(credential_binding_id)
 }
 
-fn bind_or_validate_thread_credential_generation(
+fn query_thread_model_binding(
+    connection: &Connection,
+    thread_id: &ThreadId,
+) -> Result<Option<String>, StoreError> {
+    connection
+        .query_row(
+            "SELECT model_id FROM conversation_thread_identity
+             WHERE thread_id=?1 AND source=0",
+            [thread_id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sqlite)?
+        .ok_or_else(invalid_persisted_aggregate)
+}
+
+fn bind_or_validate_thread_identity(
     connection: &Connection,
     thread_id: &ThreadId,
     lineage: &ConversationTurnLineage,
+    model_id: &str,
 ) -> Result<(), StoreError> {
     let requested_binding = lineage
         .credential_binding_id
         .as_deref()
         .ok_or(StoreError::Conflict)?;
-    match query_thread_credential_binding(connection, thread_id)? {
-        Some(bound) if bound == requested_binding => Ok(()),
-        Some(_) => Err(StoreError::Conflict),
-        None => {
+    let credential_binding = query_thread_credential_binding(connection, thread_id)?;
+    let model_binding = query_thread_model_binding(connection, thread_id)?;
+    match (credential_binding, model_binding) {
+        (Some(bound_credential), Some(bound_model))
+            if bound_credential == requested_binding && bound_model == model_id =>
+        {
+            Ok(())
+        }
+        (Some(_), _) | (None, Some(_)) => Err(StoreError::Conflict),
+        (None, None) => {
             let has_historical_turn: bool = connection
                 .query_row(
                     "SELECT EXISTS(
@@ -2941,9 +2997,10 @@ fn bind_or_validate_thread_credential_generation(
             let changed = connection
                 .execute(
                     "UPDATE conversation_thread_identity
-                     SET credential_binding_id=?1
-                     WHERE thread_id=?2 AND credential_binding_id IS NULL",
-                    params![requested_binding, thread_id.as_str()],
+                     SET credential_binding_id=?1,model_id=?2
+                     WHERE thread_id=?3
+                       AND credential_binding_id IS NULL AND model_id IS NULL",
+                    params![requested_binding, model_id, thread_id.as_str()],
                 )
                 .map_err(map_sqlite)?;
             if changed == 1 {
