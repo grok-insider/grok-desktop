@@ -1,5 +1,6 @@
 //! Typed adapter for official xAI REST APIs.
 
+pub mod oauth;
 mod sse;
 
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};

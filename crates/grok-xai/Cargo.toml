@@ -10,12 +10,17 @@ description = "Official xAI API adapter for Grok Desktop"
 [dependencies]
 async-stream.workspace = true
 async-trait.workspace = true
+base64 = "0.22.1"
 futures-util.workspace = true
+getrandom.workspace = true
 grok-application = { path = "../grok-application", version = "0.1.0" }
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["form"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+thiserror.workspace = true
+url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
@@ -23,4 +28,3 @@ tokio.workspace = true
 
 [lints]
 workspace = true
-
