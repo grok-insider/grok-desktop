@@ -34,6 +34,7 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+base64 = "0.22.1"
 rustix.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

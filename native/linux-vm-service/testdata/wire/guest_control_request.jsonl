@@ -1,0 +1,1 @@
+{"version":"1.0.0","id":"guest-health-work-vm","operation":"guest_control","deadline":"9999999999999","peerExe":"/usr/bin/true","payload":{"vmId":"work-vm","method":"runner.health","proof":"proof-of-possession-token-isolation-runtime!!"}}
