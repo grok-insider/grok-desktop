@@ -60,41 +60,22 @@ describe("complete product workflows", () => {
     expect(await screen.findByText("# Atlas launch narrative", { exact: false })).toBeInTheDocument();
   });
 
-  it("creates a queued Grok Imagine image with provenance", async () => {
+  it("shows Library files without advertising Imagine media creation", async () => {
     renderRoute("/library");
-    fireEvent.click(screen.getByRole("tab", { name: "Images" }));
-    expect(await screen.findByRole("heading", { name: "Create with Grok Imagine" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "A clear launch review workspace" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create image" }));
-    expect(await screen.findByText("A clear launch review workspace")).toBeInTheDocument();
-    expect(screen.getAllByText("Created with Grok").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("tab", { name: "Files" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Images" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Create with Grok Imagine" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Media generation is not available/i)).toBeInTheDocument();
   });
 
-  it("opens a realtime Voice session with captions and device controls", async () => {
-    renderRoute("/");
-    fireEvent.click(screen.getByRole("button", { name: "Start voice input" }));
-    expect(await screen.findByRole("heading", { name: "Listening" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Microphone")).toBeInTheDocument();
-    expect(screen.getByText("Summarize the current launch risks.")).toBeInTheDocument();
-  });
-
-  it("creates an automation and opens the recommended Wisp update flow", async () => {
-    const client = new MockDesktopClient();
-    const { unmount } = render(<DesktopClientProvider client={client}><MemoryRouter initialEntries={["/automations"]}><App /></MemoryRouter></DesktopClientProvider>);
+  it("creates an automation definition without advertising live schedule execution", async () => {
+    renderRoute("/automations");
     fireEvent.click(await screen.findByRole("button", { name: "New definition" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Release readiness scan" } });
     fireEvent.change(screen.getByLabelText("Project"), { target: { value: "atlas" } });
     fireEvent.change(screen.getByLabelText("Task prompt"), { target: { value: "Review launch blockers" } });
     fireEvent.change(screen.getByLabelText("Local time"), { target: { value: "09:00" } });
     fireEvent.click(screen.getByRole("button", { name: "Save definition" }));
-    expect(await screen.findByText("Definition saved inactive.")).toBeInTheDocument();
-    unmount();
-
-    renderRoute("/extensions", client);
-    expect(await screen.findByText("Recommended")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(await screen.findByRole("heading", { name: "Wisp" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Update to/ }));
-    await waitFor(() => expect(screen.getByText("Wisp update completed.")).toBeInTheDocument());
+    expect(await screen.findByText(/Definition saved/i)).toBeInTheDocument();
   });
 });

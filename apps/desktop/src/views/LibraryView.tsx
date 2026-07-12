@@ -57,14 +57,13 @@ import type {
 type LibraryFilter = "all" | LibraryItem["type"];
 type LibraryTab = "files" | "images" | "videos";
 
+// Media/Imagine creation is not a shipped product surface until daemon media IPC lands.
 const LIBRARY_TABS: ReadonlyArray<{
   id: LibraryTab;
   label: string;
   icon: typeof FileText;
 }> = [
   { id: "files", label: "Files", icon: FileText },
-  { id: "images", label: "Images", icon: Image },
-  { id: "videos", label: "Videos", icon: Film },
 ];
 
 const FILE_FILTERS: ReadonlyArray<{
@@ -189,24 +188,6 @@ export function LibraryView() {
               filesReason={filesCapability?.reason}
             />
           )}
-        </div>
-        <div
-          id="library-images-panel"
-          role="tabpanel"
-          aria-labelledby="library-images-tab"
-          tabIndex={tab === "images" ? 0 : -1}
-          hidden={tab !== "images"}
-        >
-          {tab === "images" && <MediaLibrary kind="image" />}
-        </div>
-        <div
-          id="library-videos-panel"
-          role="tabpanel"
-          aria-labelledby="library-videos-tab"
-          tabIndex={tab === "videos" ? 0 : -1}
-          hidden={tab !== "videos"}
-        >
-          {tab === "videos" && <MediaLibrary kind="video" />}
         </div>
       </div>
     </div>

@@ -411,104 +411,17 @@ describe("LibraryView", () => {
     expect(remove).toHaveAttribute("title", "This item has no immutable content version to remove.");
   });
 
-  it("uses roving keyboard focus for the primary library tabs", async () => {
+  it("exposes only the Files library surface without Imagine media tabs", async () => {
     renderLibrary();
     const filesTab = screen.getByRole("tab", { name: "Files" });
-    const imagesTab = screen.getByRole("tab", { name: "Images" });
-    const videosTab = screen.getByRole("tab", { name: "Videos" });
     const filesPanel = document.getElementById("library-files-panel");
-    const imagesPanel = document.getElementById("library-images-panel");
-    const videosPanel = document.getElementById("library-videos-panel");
 
     expect(filesTab).toHaveAttribute("aria-controls", "library-files-panel");
-    expect(imagesTab).toHaveAttribute("aria-controls", "library-images-panel");
-    expect(videosTab).toHaveAttribute("aria-controls", "library-videos-panel");
+    expect(filesTab).toHaveAttribute("aria-selected", "true");
     expect(filesPanel).not.toHaveAttribute("hidden");
-    expect(imagesPanel).toHaveAttribute("hidden");
-    expect(videosPanel).toHaveAttribute("hidden");
-
-    filesTab.focus();
-    fireEvent.keyDown(filesTab, { key: "ArrowRight" });
-
-    expect(imagesTab).toHaveFocus();
-    expect(imagesTab).toHaveAttribute("aria-selected", "true");
-    expect(imagesTab).toHaveAttribute("tabindex", "0");
-    expect(filesPanel).toHaveAttribute("hidden");
-    expect(imagesPanel).not.toHaveAttribute("hidden");
-    expect(await screen.findByRole("heading", { name: "Create with Grok Imagine" })).toBeInTheDocument();
-
-    fireEvent.keyDown(imagesTab, { key: "End" });
-    expect(videosTab).toHaveFocus();
-    expect(videosTab).toHaveAttribute("aria-selected", "true");
-  });
-
-  it("explains when image creation is configuration-gated instead of exposing fake controls", async () => {
-    const client = new MockDesktopClient();
-    vi.spyOn(client, "listMediaCreations").mockResolvedValue({
-      status: "configuration_required",
-      reason: "A user-owned xAI API key is required.",
-    });
-
-    renderLibrary(client);
-    fireEvent.click(screen.getByRole("tab", { name: "Images" }));
-
-    expect(await screen.findByRole("heading", { name: "Image creation unavailable" })).toBeInTheDocument();
-    expect(screen.getByText("A user-owned xAI API key is required.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open setup" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Prompt")).not.toBeInTheDocument();
-  });
-
-  it("does not let media events bypass a denied Imagine capability", async () => {
-    const client = new MockDesktopClient();
-    let emit: ((creations: MediaCreation[]) => void) | undefined;
-    vi.spyOn(client, "listMediaCreations").mockResolvedValue({
-      status: "configuration_required",
-      reason: "A user-owned xAI API key is required.",
-    });
-    vi.spyOn(client, "subscribeMediaCreations").mockImplementation((_kind, listener) => {
-      emit = listener;
-      return () => undefined;
-    });
-
-    renderLibrary(client);
-    fireEvent.click(screen.getByRole("tab", { name: "Images" }));
-    expect(await screen.findByRole("heading", { name: "Image creation unavailable" })).toBeInTheDocument();
-
-    act(() => {
-      emit?.([{
-        id: "media-after-denial",
-        kind: "image",
-        prompt: "This event must not grant creation access",
-        status: "completed",
-        progress: 100,
-        createdAt: "Now",
-        aspectRatio: "16:9",
-        provenance: { generator: "Grok Imagine", watermark: true, createdWithGrok: true },
-        palette: "ignored",
-      }]);
-    });
-
-    expect(screen.getByRole("heading", { name: "Image creation unavailable" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Prompt")).not.toBeInTheDocument();
-    expect(screen.queryByText("This event must not grant creation access")).not.toBeInTheDocument();
-  });
-
-  it("traps provenance in a dialog, keeps export unavailable, and returns focus to the creation", async () => {
-    renderLibrary();
-    fireEvent.click(screen.getByRole("tab", { name: "Images" }));
-    const creation = await screen.findByRole("button", { name: /Editorial product launch visual/ });
-
-    fireEvent.click(creation);
-
-    const dialog = screen.getByRole("dialog", { name: "Image details" });
-    expect(within(dialog).getByText("Grok Imagine")).toBeInTheDocument();
-    expect(within(dialog).getByText("Preserved")).toBeInTheDocument();
-    const exportButton = within(dialog).getByRole("button", { name: "Export unavailable" });
-    expect(exportButton).toBeDisabled();
-    expect(exportButton).toHaveAttribute("title", "Media export requires daemon protocol support");
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Image details" })).not.toBeInTheDocument());
-    await waitFor(() => expect(creation).toHaveFocus());
+    expect(screen.queryByRole("tab", { name: "Images" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Videos" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Create with Grok Imagine" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Media generation is not available/i)).toBeInTheDocument();
   });
 });
