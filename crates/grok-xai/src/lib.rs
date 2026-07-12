@@ -80,9 +80,16 @@ pub struct OfficialXaiApiKeyValidator {
     validation_timeout: Duration,
 }
 
-/// Factory restricted to the fixed official xAI origin.
+/// Factory restricted to the fixed official xAI origin using a user-owned key.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OfficialXaiConversationModelFactory;
+
+/// Factory restricted to the fixed official xAI origin using a fresh OAuth grant.
+///
+/// This deliberately shares the Responses transport with BYOK. It does not
+/// impersonate Grok Build or add CLI proxy headers.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OfficialXaiOAuthConversationModelFactory;
 
 impl Default for OfficialXaiApiKeyValidator {
     fn default() -> Self {
@@ -171,6 +178,14 @@ impl ConversationModelFactory for OfficialXaiConversationModelFactory {
     }
 }
 
+impl ConversationModelFactory for OfficialXaiOAuthConversationModelFactory {
+    fn create(&self, access_token: SecretValue) -> Result<Arc<dyn ConversationModel>, ModelError> {
+        let value = String::from_utf8(access_token.expose_secret().to_vec())
+            .map_err(|_| invalid("xAI OAuth access token has an invalid format"))?;
+        Ok(Arc::new(XaiClient::new_oauth(value)?))
+    }
+}
+
 impl fmt::Debug for XaiClient {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -192,12 +207,38 @@ impl XaiClient {
         Self::with_base_url(api_key, OFFICIAL_BASE_URL)
     }
 
+    /// Creates a Responses client using a fresh xAI OAuth access token.
+    ///
+    /// The token is sent only as a bearer credential to the fixed official
+    /// `api.x.ai` origin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-request error when the token format is unsafe, or a
+    /// protocol error when the hardened HTTP client cannot be constructed.
+    pub fn new_oauth(access_token: String) -> Result<Self, ModelError> {
+        Self::with_base_url_and_credential_name(
+            access_token,
+            OFFICIAL_BASE_URL,
+            "xAI OAuth access token",
+        )
+    }
+
     fn with_base_url(api_key: String, base_url: &str) -> Result<Self, ModelError> {
-        let api_key = ApiKey::new(api_key)?;
+        Self::with_base_url_and_credential_name(api_key, base_url, "xAI API key")
+    }
+
+    fn with_base_url_and_credential_name(
+        credential: String,
+        base_url: &str,
+        credential_name: &str,
+    ) -> Result<Self, ModelError> {
+        let api_key = ApiKey::new(credential)
+            .map_err(|_| invalid(&format!("{credential_name} has an invalid format")))?;
         let authorization = {
             let value = Zeroizing::new(format!("Bearer {}", api_key.expose()));
             let mut header = header::HeaderValue::from_str(value.as_str())
-                .map_err(|_| invalid("xAI API key has an invalid format"))?;
+                .map_err(|_| invalid(&format!("{credential_name} has an invalid format")))?;
             header.set_sensitive(true);
             header
         };
@@ -219,6 +260,16 @@ impl XaiClient {
     #[cfg(test)]
     fn for_test(api_key: &str, base_url: &str) -> Self {
         Self::with_base_url(api_key.into(), base_url).expect("test client")
+    }
+
+    #[cfg(test)]
+    fn oauth_for_test(access_token: &str, base_url: &str) -> Self {
+        Self::with_base_url_and_credential_name(
+            access_token.into(),
+            base_url,
+            "xAI OAuth access token",
+        )
+        .expect("test OAuth client")
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
@@ -1152,6 +1203,7 @@ mod tests {
 
     use futures_util::StreamExt;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::oneshot;
 
     use super::*;
 
@@ -1184,6 +1236,25 @@ mod tests {
             drop(stream);
         });
         format!("http://{address}")
+    }
+
+    async fn capturing_server(response: &'static str) -> (String, oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let (sender, receiver) = oneshot::channel();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = vec![0; 16 * 1024];
+            let count = stream.read(&mut request).await.expect("read");
+            sender
+                .send(String::from_utf8(request[..count].to_vec()).expect("HTTP request"))
+                .expect("capture request");
+            stream.write_all(response.as_bytes()).await.expect("write");
+            stream.shutdown().await.expect("shutdown");
+        });
+        (format!("http://{address}"), receiver)
     }
 
     fn http(body: &str, content_type: &str) -> String {
@@ -1273,6 +1344,45 @@ mod tests {
             XaiClient::with_base_url("secret-value".into(), "https://api.x.ai").expect("client");
         assert!(client.authorization.is_sensitive());
         assert!(!format!("{client:?}").contains("secret-value"));
+
+        let oauth = XaiClient::new_oauth("oauth-secret-value".into()).expect("OAuth client");
+        assert!(oauth.authorization.is_sensitive());
+        assert!(!format!("{oauth:?}").contains("oauth-secret-value"));
+    }
+
+    #[tokio::test]
+    async fn oauth_responses_use_only_standard_bearer_authorization() {
+        let response = Box::leak(
+            http(
+                r#"{"data":[{"id":"grok-test","input_modalities":["text"],"output_modalities":["text"]}]}"#,
+                "application/json",
+            )
+            .into_boxed_str(),
+        );
+        let (base, captured) = capturing_server(response).await;
+        let client = XaiClient::oauth_for_test("oauth-access-token", &base);
+
+        let models = client.list_models().await.expect("models");
+        assert_eq!(models[0].id, "grok-test");
+
+        let request = captured.await.expect("captured request");
+        let lower = request.to_ascii_lowercase();
+        assert!(request.starts_with("GET /v1/models HTTP/1.1\r\n"));
+        assert!(lower.contains("authorization: bearer oauth-access-token\r\n"));
+        assert!(!lower.contains("x-xai-token-auth:"));
+        assert!(!lower.contains("x-grok-client-version:"));
+        assert!(!lower.contains("cli-chat-proxy"));
+    }
+
+    #[test]
+    fn oauth_factory_rejects_invalid_tokens_without_disclosure() {
+        let token = SecretValue::new(b" token-with-space".to_vec()).expect("secret");
+        let Err(error) = OfficialXaiOAuthConversationModelFactory.create(token) else {
+            panic!("invalid token was accepted");
+        };
+        assert_eq!(error.kind, ModelErrorKind::InvalidRequest);
+        assert!(!format!("{error:?}").contains("token-with-space"));
+        assert!(error.message.contains("OAuth access token"));
     }
 
     #[test]

@@ -6,7 +6,10 @@
 use std::{fmt, sync::Arc, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use grok_application::SecretValue;
+use grok_application::{
+    DeviceAuthorization as ApplicationDeviceAuthorization, OAuthFailure, OAuthTokenGrant,
+    SecretValue, SuperGrokOAuth,
+};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -315,6 +318,89 @@ impl XaiOAuthClient {
             .await
             .map_err(|_| OAuthError::Unavailable)?;
         token_response(response).await
+    }
+}
+
+#[async_trait::async_trait]
+impl SuperGrokOAuth for XaiOAuthClient {
+    async fn begin_device_authorization(
+        &self,
+        now_ms: i64,
+    ) -> Result<ApplicationDeviceAuthorization, OAuthFailure> {
+        let authorization = self.request_device_code().await.map_err(map_oauth_error)?;
+        let device_code = secret_text(authorization.device_code())
+            .map_err(map_oauth_error)?
+            .to_owned();
+        ApplicationDeviceAuthorization::new(
+            authorization.verification_uri.to_string(),
+            authorization.user_code,
+            device_code,
+            expiry_millis(now_ms, authorization.expires_in)?,
+            authorization.interval.as_secs(),
+        )
+    }
+
+    async fn poll_device_token(
+        &self,
+        device_code: &str,
+        now_ms: i64,
+    ) -> Result<OAuthTokenGrant, OAuthFailure> {
+        let code = secret(device_code.to_owned()).map_err(map_oauth_error)?;
+        let tokens = XaiOAuthClient::poll_device_token(self, &code)
+            .await
+            .map_err(map_oauth_error)?;
+        token_grant(tokens, now_ms)
+    }
+
+    async fn refresh_token(
+        &self,
+        refresh_token: &str,
+        now_ms: i64,
+    ) -> Result<OAuthTokenGrant, OAuthFailure> {
+        let refresh = secret(refresh_token.to_owned()).map_err(map_oauth_error)?;
+        let tokens = self.refresh(&refresh).await.map_err(map_oauth_error)?;
+        token_grant(tokens, now_ms)
+    }
+}
+
+fn token_grant(tokens: OAuthTokenSet, now_ms: i64) -> Result<OAuthTokenGrant, OAuthFailure> {
+    let access_token = Zeroizing::new(
+        secret_text(&tokens.access)
+            .map_err(map_oauth_error)?
+            .to_owned(),
+    );
+    let refresh_token = Zeroizing::new(
+        secret_text(&tokens.refresh)
+            .map_err(map_oauth_error)?
+            .to_owned(),
+    );
+    Ok(OAuthTokenGrant {
+        access_token,
+        refresh_token,
+        expires_at_ms: expiry_millis(now_ms, tokens.expires_in)?,
+        scopes: tokens
+            .scopes
+            .map(|scopes| scopes.split_ascii_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default(),
+    })
+}
+
+fn expiry_millis(now_ms: i64, lifetime: Duration) -> Result<i64, OAuthFailure> {
+    let lifetime_ms =
+        i64::try_from(lifetime.as_millis()).map_err(|_| OAuthFailure::InvalidResponse)?;
+    now_ms
+        .checked_add(lifetime_ms)
+        .ok_or(OAuthFailure::InvalidResponse)
+}
+
+fn map_oauth_error(error: OAuthError) -> OAuthFailure {
+    match error {
+        OAuthError::Pending => OAuthFailure::Pending,
+        OAuthError::SlowDown => OAuthFailure::SlowDown,
+        OAuthError::Expired => OAuthFailure::Expired,
+        OAuthError::Rejected => OAuthFailure::Denied,
+        OAuthError::InvalidCallback | OAuthError::Protocol => OAuthFailure::InvalidResponse,
+        OAuthError::Unavailable => OAuthFailure::Unavailable,
     }
 }
 
