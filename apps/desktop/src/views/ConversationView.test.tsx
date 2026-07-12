@@ -557,8 +557,20 @@ describe("ConversationView", () => {
     const firstChunk = await screen.findByText("First durable chunk");
     const assistantRow = firstChunk.closest("article");
     expect(assistantRow).not.toBeNull();
-    expect(firstChunk.closest("[aria-live='polite']")).toHaveClass("min-h-[22px]");
+    expect(firstChunk.closest("[aria-live='polite']")).toBeNull();
+    expect(screen.getByText("Grok is responding.")).toHaveClass("sr-only");
     expect(screen.getByText("Streaming")).toBeInTheDocument();
+
+    const viewport = screen.getByTestId("conversation-transcript-viewport");
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+      clientHeight: { configurable: true, value: 400 },
+    });
+    fireEvent.scroll(viewport);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).not.toBeInTheDocument();
 
     client.publish(conversation({
       ...first,

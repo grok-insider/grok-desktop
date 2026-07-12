@@ -81,6 +81,9 @@ export function ConversationView() {
   const forkDialogReturnFocus = useRef<HTMLElement | null>(null);
   const inspectorCloseButton = useRef<HTMLButtonElement | null>(null);
   const promptInput = useRef<HTMLTextAreaElement | null>(null);
+  const transcriptViewport = useRef<HTMLDivElement | null>(null);
+  const transcriptEnd = useRef<HTMLDivElement | null>(null);
+  const [followingLatest, setFollowingLatest] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -90,6 +93,7 @@ export function ConversationView() {
     setForkDialog(null);
     setForkingMessageId("");
     setForkError("");
+    setFollowingLatest(true);
 
     void client.getConversation(threadId)
       .then((result) => {
@@ -127,6 +131,24 @@ export function ConversationView() {
 
   const activeTurn = newestActiveTurn(conversation?.turns ?? []);
   const newestBranchSource = conversation ? newestCompletedAssistant(conversation) : undefined;
+  const newestMessage = conversation?.messages.at(-1);
+
+  useEffect(() => {
+    if (!newestMessage || !followingLatest) return;
+    transcriptEnd.current?.scrollIntoView?.({ block: "end" });
+  }, [followingLatest, newestMessage]);
+
+  const updateTranscriptPosition = () => {
+    const viewport = transcriptViewport.current;
+    if (!viewport) return;
+    const distanceFromEnd = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    setFollowingLatest(distanceFromEnd <= 80);
+  };
+
+  const jumpToLatest = () => {
+    setFollowingLatest(true);
+    transcriptEnd.current?.scrollIntoView?.({ block: "end", behavior: "smooth" });
+  };
 
   const send = async () => {
     if (!prompt.trim() || sending || retryingTurnId || activeTurn) return;
@@ -367,8 +389,14 @@ export function ConversationView() {
             inspecting && "max-[680px]:hidden",
           )}
         >
-          <div className="min-h-0 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[760px] px-6 pb-3 pt-6 max-[900px]:px-[18px] max-[680px]:px-3 max-[680px]:py-4">
+          <div className="relative min-h-0">
+            <div
+              className="h-full overflow-y-auto"
+              data-testid="conversation-transcript-viewport"
+              onScroll={updateTranscriptPosition}
+              ref={transcriptViewport}
+            >
+              <div className="mx-auto w-full max-w-[760px] px-6 pb-3 pt-6 max-[900px]:px-[18px] max-[680px]:px-3 max-[680px]:py-4">
               {conversation.messages.length === 0 ? (
                 <EmptyConversation onCompose={() => promptInput.current?.focus()} />
               ) : (
@@ -402,7 +430,20 @@ export function ConversationView() {
                   );
                 })
               )}
+                <div aria-hidden="true" ref={transcriptEnd} />
+              </div>
             </div>
+            {!followingLatest ? (
+              <Button
+                className="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-raised"
+                onClick={jumpToLatest}
+                size="sm"
+                variant="outline"
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+                Jump to latest
+              </Button>
+            ) : null}
           </div>
 
           <div className="mx-auto w-full max-w-[760px] px-4 pb-4 pt-2 max-[680px]:px-2">
@@ -642,7 +683,6 @@ function MessageBlock({
       ) : null}
 
       <div
-        aria-live={message.state === "streaming" ? "polite" : undefined}
         className={cn(
           "min-h-[22px]",
           isUser && "whitespace-pre-wrap rounded-lg bg-muted px-3 py-2 text-body-lg leading-[22px] text-foreground",
@@ -654,6 +694,7 @@ function MessageBlock({
           </MarkdownMessage>
         )}
       </div>
+      {message.state === "streaming" ? <span className="sr-only" role="status">Grok is responding.</span> : null}
 
       {!isUser && turn?.state === "completed" && (turn.usage.inputTokens > 0 || turn.usage.outputTokens > 0) ? (
         <p className="m-0 mt-1.5 font-mono text-label text-subtle-foreground" aria-label="Response usage">
