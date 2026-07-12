@@ -18,6 +18,7 @@ import {
   DesktopConversationEventDeliveryTracker,
 } from "./conversationEventDelivery.js";
 import { DaemonSupervisor } from "./daemon/DaemonSupervisor.js";
+import { PROTOCOL_VERSION } from "./daemon/DaemonRpcClient.js";
 import { DesktopDeepLinkDelivery } from "./deepLinkDelivery.js";
 import { ExternalUrlLaunchLimiter } from "./externalUrlLaunchLimiter.js";
 import {
@@ -36,6 +37,7 @@ import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy
 import { withStartupDeadline } from "./startupDeadline.js";
 import { UpdateCoordinator } from "./updateCoordinator.js";
 import { resolveLinuxUpdateRunner } from "./linuxAppImageUpdater.js";
+import { loadUpdateTrust, SignedUpdateManifestAuthorizer } from "./updateManifestVerifier.js";
 import {
   applyGraphicsPolicy,
   DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE,
@@ -921,6 +923,23 @@ if (primaryInstance) app.whenReady().then(async () => {
   const developmentServer = resolveDevelopmentServerUrl(app.isPackaged, process.env.VITE_DEV_SERVER_URL);
   const distributionRoot = path.join(directory, "../../dist");
   const applicationDocument = developmentServer ?? productionDocument;
+  let updateAuthorizer;
+  if (app.isPackaged && (process.platform === "linux" || process.platform === "win32")
+      && (process.arch === "x64" || process.arch === "arm64")) {
+    try {
+      const trustedKeys = await loadUpdateTrust(path.join(process.resourcesPath, "update-trusted-keys.json"));
+      updateAuthorizer = new SignedUpdateManifestAuthorizer({
+        platform: process.platform,
+        architecture: process.arch,
+        currentVersion: app.getVersion(),
+        protocolVersion: PROTOCOL_VERSION,
+        schemaVersion: 23,
+        trustedKeys,
+      });
+    } catch {
+      updateAuthorizer = undefined;
+    }
+  }
   updateCoordinator = new UpdateCoordinator(autoUpdater, {
     packaged: app.isPackaged,
     platform: process.platform,
@@ -936,6 +955,7 @@ if (primaryInstance) app.whenReady().then(async () => {
       app.relaunch();
       app.quit();
     },
+    authorizer: updateAuthorizer,
   });
   updateCoordinator.start();
   if (!developmentServer) {

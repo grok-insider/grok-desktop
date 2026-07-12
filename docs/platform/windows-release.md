@@ -246,6 +246,7 @@ GROK_WINDOWS_CARGO_CACHE
 GROK_WINDOWS_TOOLCHAIN_ENV_JSON
 GROK_WINDOWS_GO_PATH
 GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON
+GROK_UPDATE_TRUSTED_KEYS_JSON
 GROK_ACP_CATALOG_TRUSTED_KEYS
 GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID
 GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID
@@ -269,6 +270,13 @@ anchors only. The same exact set is compiled into the VM service by the trusted
 service build above and verifies both release-input and guest-catalog
 signatures. Promotion policy supplies a channel-appropriate set and enforces
 monotonic release sequence independently of this stateless packaging command.
+
+`GROK_UPDATE_TRUSTED_KEYS_JSON` separately maps the stable-channel update key
+IDs to canonical base64 Ed25519 SubjectPublicKeyInfo documents. The packager
+embeds this public-only trust set as `resources/update-trusted-keys.json`; the
+Electron main process requires it before any platform updater can run. Keep
+release-input and update signing key scopes separate even though their encoded
+formats are identical.
 
 The two xAI component evidence IDs are bounded, non-secret references to the
 release system records that prove the executable came from an approved xAI

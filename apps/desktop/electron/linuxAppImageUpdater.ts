@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { open, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { copyFile, lstat, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 const MAX_APPIMAGE_BYTES = 8 * 1024 * 1024 * 1024;
@@ -14,29 +15,45 @@ export class LinuxAppImageUpdateRunner {
     private readonly spawnProcess: SpawnProcess = spawn,
   ) {}
 
-  async download(): Promise<boolean> {
+  async download(expected?: { size: number; sha256: string }): Promise<boolean> {
+    const backupPath = `${this.appImagePath}.grok-update-backup`;
+    await restoreInterruptedBackup(backupPath, this.appImagePath);
     await assertExecutable(this.helperPath, "AppImage update helper");
     await assertExecutable(this.appImagePath, "running AppImage");
     const before = await fingerprint(this.appImagePath);
-    await new Promise<void>((resolve, reject) => {
-      const child = this.spawnProcess(
-        this.helperPath,
-        ["--appimage-extract-and-run", "--overwrite", this.appImagePath],
-        {
-          cwd: path.dirname(this.appImagePath),
-          env: updaterEnvironment(process.env),
-          shell: false,
-          stdio: "ignore",
-        },
-      );
-      child.once("error", reject);
-      child.once("exit", (code, signal) => {
-        if (code === 0 && signal === null) resolve();
-        else reject(new Error("AppImage update helper failed"));
+    await copyFile(this.appImagePath, backupPath, fsConstants.COPYFILE_EXCL);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = this.spawnProcess(
+          this.helperPath,
+          ["--appimage-extract-and-run", "--overwrite", this.appImagePath],
+          {
+            cwd: path.dirname(this.appImagePath),
+            env: updaterEnvironment(process.env),
+            shell: false,
+            stdio: "ignore",
+          },
+        );
+        child.once("error", reject);
+        child.once("exit", (code, signal) => {
+          if (code === 0 && signal === null) resolve();
+          else reject(new Error("AppImage update helper failed"));
+        });
       });
-    });
-    await assertExecutable(this.appImagePath, "updated AppImage");
-    return before !== await fingerprint(this.appImagePath);
+      await assertExecutable(this.appImagePath, "updated AppImage");
+      const after = await fingerprint(this.appImagePath);
+      if (expected) {
+        const metadata = await stat(this.appImagePath);
+        if (metadata.size !== expected.size || after !== expected.sha256) {
+          throw new Error("updated AppImage does not match the signed manifest");
+        }
+      }
+      await rm(backupPath);
+      return before !== after;
+    } catch (error) {
+      await rename(backupPath, this.appImagePath);
+      throw error;
+    }
   }
 }
 
@@ -67,6 +84,17 @@ async function assertExecutable(filePath: string, label: string): Promise<void> 
   const metadata = await stat(filePath);
   if (!metadata.isFile() || metadata.size < 1 || metadata.size > MAX_APPIMAGE_BYTES
       || (metadata.mode & 0o111) === 0) throw new Error(`${label} is unavailable`);
+}
+
+async function restoreInterruptedBackup(backupPath: string, appImagePath: string): Promise<void> {
+  const metadata = await lstat(backupPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!metadata) return;
+  if (!metadata.isFile() || metadata.size < 1 || metadata.size > MAX_APPIMAGE_BYTES
+      || (metadata.mode & 0o111) === 0) throw new Error("AppImage update backup is invalid");
+  await rename(backupPath, appImagePath);
 }
 
 async function fingerprint(filePath: string): Promise<string> {

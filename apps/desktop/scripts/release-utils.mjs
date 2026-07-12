@@ -107,6 +107,10 @@ export function readReleaseEnvironment(environment) {
   const releaseMetadataKeys = parseReleaseMetadataKeys(
     boundedEnvironment(environment, "GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON", 65_536),
   );
+  const updateTrustedKeysJSON = boundedEnvironment(
+    environment, "GROK_UPDATE_TRUSTED_KEYS_JSON", 65_536,
+  );
+  parseReleaseMetadataKeys(updateTrustedKeysJSON);
   const acpCatalogTrust = parseAcpCatalogTrustedKeys(
     boundedEnvironment(environment, "GROK_ACP_CATALOG_TRUSTED_KEYS", 4096),
   );
@@ -143,6 +147,7 @@ export function readReleaseEnvironment(environment) {
     signerThumbprint,
     signingArguments,
     releaseMetadataKeys,
+    updateTrustedKeysJSON,
     acpCatalogTrust,
     acpProvenanceEvidenceID,
     acpRedistributionEvidenceID,

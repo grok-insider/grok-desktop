@@ -10,7 +10,7 @@ import { constants as fsConstants, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { spawn } from "node:child_process";
 import { packager } from "@electron/packager";
 import {
@@ -46,6 +46,7 @@ export function parseLinuxPackageArguments(argv) {
     }
     if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component", "--appimagetool", "--appimagetool-sha256",
       "--appimageupdatetool", "--appimageupdatetool-sha256",
+      "--update-trust-file",
       "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
       throw new Error(`unsupported linux package option ${option}`);
     }
@@ -73,6 +74,9 @@ export function parseLinuxPackageArguments(argv) {
   if (appimageupdatetool && !/^[a-f0-9]{64}$/.test(appimageupdatetoolSha256 ?? "")) {
     throw new Error("--appimageupdatetool-sha256 is required and must be lowercase SHA-256");
   }
+  const updateTrustFile = values["--update-trust-file"]
+    ? path.resolve(values["--update-trust-file"])
+    : undefined;
   if (!vmService && values["--daemon-uid"] !== undefined) {
     throw new Error("--daemon-uid is valid only with --vm-service");
   }
@@ -98,6 +102,7 @@ export function parseLinuxPackageArguments(argv) {
     appimagetoolSha256,
     appimageupdatetool,
     appimageupdatetoolSha256,
+    updateTrustFile,
     daemonUid: vmService ? Number(values["--daemon-uid"]) : undefined,
     serviceGroup,
   };
@@ -178,6 +183,30 @@ async function stageAppImageUpdateTool(resourcesBin, options) {
   const destination = path.join(resourcesBin, "appimageupdatetool.AppImage");
   await cp(options.appimageupdatetool, destination, { errorOnExist: true });
   await chmod(destination, 0o755);
+  return destination;
+}
+
+async function stageUpdateTrust(stageResources, options) {
+  if (!options.updateTrustFile) throw new Error("--update-trust-file is required to produce the public AppImage");
+  const raw = await readFile(options.updateTrustFile);
+  if (raw.byteLength < 1 || raw.byteLength > 65_536) throw new Error("update trust file is invalid");
+  let value;
+  try { value = JSON.parse(raw.toString("utf8")); } catch { throw new Error("update trust file is invalid"); }
+  const entries = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value) : [];
+  if (entries.length < 1 || entries.length > 8) throw new Error("update trust file is invalid");
+  for (const [keyId, encoded] of entries) {
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(keyId) || typeof encoded !== "string") {
+      throw new Error("update trust file is invalid");
+    }
+    const der = Buffer.from(encoded, "base64");
+    const key = createPublicKey({ key: der, format: "der", type: "spki" });
+    if (key.asymmetricKeyType !== "ed25519"
+        || !Buffer.from(key.export({ format: "der", type: "spki" })).equals(der)) {
+      throw new Error("update trust file is invalid");
+    }
+  }
+  const destination = path.join(stageResources, "update-trusted-keys.json");
+  await cp(options.updateTrustFile, destination, { errorOnExist: true });
   return destination;
 }
 
@@ -365,6 +394,10 @@ export async function verifyLinuxPackagedLayout(appDirectory, daemonRelativePath
     path.join(appDirectory, "resources", "bin", "appimageupdatetool.AppImage"),
     "packaged AppImage update helper",
   );
+  const updateTrust = await stat(path.join(appDirectory, "resources", "update-trusted-keys.json"));
+  if (!updateTrust.isFile() || updateTrust.size < 1 || updateTrust.size > 65_536) {
+    throw new Error("packaged update trust is unavailable");
+  }
   const desktopEntry = path.join(appDirectory, "grok-desktop.desktop");
   const entry = await readFile(desktopEntry, "utf8");
   if (!entry.includes("x-scheme-handler/grok-desktop")) {
@@ -541,6 +574,7 @@ async function main() {
   await cp(daemonSource, stagedDaemon);
   await chmod(stagedDaemon, 0o755);
   const stagedUpdateTool = await stageAppImageUpdateTool(resourcesBin, options);
+  const stagedUpdateTrust = await stageUpdateTrust(path.dirname(resourcesBin), options);
   const stagedAcp = await stageVerifiedLinuxAcp(
     resourcesBin, options, daemonSource, Math.floor(Date.now() / 1000),
   );
@@ -570,7 +604,7 @@ async function main() {
       asar: true,
       prune: true,
       electronVersion,
-      extraResource: [resourcesBin, path.join(desktopRoot, "assets", "tray")],
+      extraResource: [resourcesBin, stagedUpdateTrust, path.join(desktopRoot, "assets", "tray")],
     });
     if (packagedDirectories.length !== 1) {
       throw new Error("Electron Packager returned an unexpected target set");

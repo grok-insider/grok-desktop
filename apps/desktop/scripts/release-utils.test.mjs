@@ -495,6 +495,7 @@ function releaseEnvironment() {
     GROK_WINDOWS_SIGNER_SHA1: signerThumbprint,
     GROK_WINDOWS_SIGN_ARGS_JSON: `["/sha1","${signerThumbprint}"]`,
     GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON: JSON.stringify({ [releaseKeyID]: releasePublicKey }),
+    GROK_UPDATE_TRUSTED_KEYS_JSON: JSON.stringify({ [releaseKeyID]: releasePublicKey }),
     GROK_ACP_CATALOG_TRUSTED_KEYS: acpTrustRaw,
     GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: "xai-download-attestation-42",
     GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: "xai-redistribution-approval-7",

@@ -45,7 +45,7 @@ async function main() {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "grok-desktop-release-"));
   try {
     const sourceRoot = path.join(temporaryRoot, "source");
-    await preparePackagingSource(sourceRoot, packageMetadata);
+    await preparePackagingSource(sourceRoot, packageMetadata, environment.updateTrustedKeysJSON);
     await rm(outputRoot, { recursive: true, force: true });
     await mkdir(outputRoot, { recursive: true });
 
@@ -65,6 +65,7 @@ async function main() {
       derefSymlinks: false,
       icon: path.join(desktopRoot, "release", "windows", "assets", "icon.ico"),
       extraResource: [
+        path.join(sourceRoot, "update-trusted-keys.json"),
         path.join(desktopRoot, "assets", "tray"),
         path.dirname(inputs.files.get("bin/grok-daemon.exe")),
         path.dirname(inputs.files.get("service/grok-vm-service.exe")),
@@ -161,10 +162,13 @@ async function main() {
   }
 }
 
-async function preparePackagingSource(sourceRoot, packageMetadata) {
+async function preparePackagingSource(sourceRoot, packageMetadata, updateTrustedKeysJSON) {
   await mkdir(path.join(sourceRoot, "node_modules", "@bufbuild"), { recursive: true });
   await cp(path.join(desktopRoot, "dist"), path.join(sourceRoot, "dist"), { recursive: true, dereference: false, errorOnExist: true });
   await cp(path.join(desktopRoot, "dist-electron"), path.join(sourceRoot, "dist-electron"), { recursive: true, dereference: false, errorOnExist: true });
+  await writeFile(path.join(sourceRoot, "update-trusted-keys.json"), `${updateTrustedKeysJSON}\n`, {
+    encoding: "utf8", mode: 0o600, flag: "wx",
+  });
   await cp(
     path.join(desktopRoot, "node_modules", "@bufbuild", "protobuf"),
     path.join(sourceRoot, "node_modules", "@bufbuild", "protobuf"),

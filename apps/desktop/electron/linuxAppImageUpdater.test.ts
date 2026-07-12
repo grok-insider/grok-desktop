@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from "node:events";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -45,5 +45,25 @@ describe("LinuxAppImageUpdateRunner", () => {
     expect(resolveLinuxUpdateRunner({
       packaged: true, platform: "linux", resourcesPath: root,
     })).toBeUndefined();
+  });
+
+  it("restores the trusted AppImage when signed byte verification fails", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "grok-appimage-update-"));
+    roots.push(root);
+    const helper = path.join(root, "helper.AppImage");
+    const appImage = path.join(root, "GrokDesktop.AppImage");
+    await writeFile(helper, "helper", { mode: 0o755 });
+    await writeFile(appImage, "trusted", { mode: 0o755 });
+    const spawnProcess = vi.fn(() => {
+      const child = new EventEmitter();
+      queueMicrotask(async () => {
+        await writeFile(appImage, "untrusted", { mode: 0o755 });
+        child.emit("exit", 0, null);
+      });
+      return child;
+    });
+    const runner = new LinuxAppImageUpdateRunner(helper, appImage, spawnProcess as never);
+    await expect(runner.download({ size: 9, sha256: "0".repeat(64) })).rejects.toThrow("signed manifest");
+    expect(await readFile(appImage, "utf8")).toBe("trusted");
   });
 });

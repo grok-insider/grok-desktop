@@ -1,3 +1,5 @@
+import type { AuthorizedUpdate, UpdateAuthorizer } from "./updateManifestVerifier.js";
+
 export type DesktopUpdatePhase =
   | "unsupported"
   | "idle"
@@ -24,7 +26,7 @@ export interface NativeAutoUpdater {
 }
 
 export interface LinuxAppImageUpdater {
-  download(): Promise<boolean>;
+  download(expected?: AuthorizedUpdate["artifact"]): Promise<boolean>;
 }
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
@@ -36,6 +38,8 @@ export class UpdateCoordinator {
   private initialCheckTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly linuxUpdater: LinuxAppImageUpdater | undefined;
   private readonly restart: (() => void) | undefined;
+  private readonly authorizer: UpdateAuthorizer | undefined;
+  private authorizedVersion = "";
 
   constructor(
     private readonly updater: NativeAutoUpdater | undefined,
@@ -46,13 +50,16 @@ export class UpdateCoordinator {
       version: string;
       linuxUpdater?: LinuxAppImageUpdater;
       restart?: () => void;
+      authorizer?: UpdateAuthorizer;
     },
   ) {
     this.linuxUpdater = options.linuxUpdater;
     this.restart = options.restart;
+    this.authorizer = options.authorizer;
     const supported = options.packaged && (
-      (options.platform === "win32" && (options.architecture === "x64" || options.architecture === "arm64") && updater)
-      || (options.platform === "linux" && options.linuxUpdater && options.restart)
+      (options.platform === "win32" && (options.architecture === "x64" || options.architecture === "arm64")
+        && updater && options.authorizer)
+      || (options.platform === "linux" && options.linuxUpdater && options.restart && options.authorizer)
     );
     this.state = {
       phase: supported ? "idle" : "unsupported",
@@ -97,26 +104,42 @@ export class UpdateCoordinator {
   }
 
   check(): DesktopUpdateState {
-    if ((!this.updater && !this.linuxUpdater) || this.state.phase === "unsupported") return this.getState();
+    if ((!this.updater && !this.linuxUpdater) || !this.authorizer || this.state.phase === "unsupported") {
+      return this.getState();
+    }
     if (this.state.phase === "checking" || this.state.phase === "available") return this.getState();
     this.state = { ...this.state, phase: "checking", reasonCode: "" };
-    if (this.linuxUpdater) {
-      void this.linuxUpdater.download().then((changed) => {
+    void this.authorizer.authorize().then((authorized) => {
+      if (!authorized.available) {
         this.state = {
           ...this.state,
-          phase: changed ? "downloaded" : "not_available",
+          phase: "not_available",
           checkedAtUnixMs: Date.now(),
-          targetVersion: changed ? "latest" : "",
+          targetVersion: "",
           reasonCode: "",
         };
-      }, () => this.fail());
-    } else {
+        return;
+      }
+      this.authorizedVersion = authorized.version;
+      this.state = { ...this.state, phase: "available", targetVersion: authorized.version, reasonCode: "" };
+      if (this.linuxUpdater) {
+        void this.linuxUpdater.download(authorized.artifact).then((changed) => {
+          this.state = {
+            ...this.state,
+            phase: changed ? "downloaded" : "not_available",
+            checkedAtUnixMs: Date.now(),
+            targetVersion: changed ? authorized.version : "",
+            reasonCode: "",
+          };
+        }, () => this.fail());
+        return;
+      }
       try {
         this.updater?.checkForUpdates();
       } catch {
         this.fail();
       }
-    }
+    }, () => this.fail());
     return this.getState();
   }
 
@@ -133,13 +156,17 @@ export class UpdateCoordinator {
       this.state = { ...this.state, phase: "checking", reasonCode: "" };
     });
     updater.on("update-available", (...arguments_) => {
-      this.state = { ...this.state, phase: "available", targetVersion: eventVersion(arguments_[0]), reasonCode: "" };
+      const version = eventVersion(arguments_[0]);
+      if (!version || version !== this.authorizedVersion) return this.fail();
+      this.state = { ...this.state, phase: "available", targetVersion: version, reasonCode: "" };
     });
     updater.on("update-not-available", () => {
       this.state = { ...this.state, phase: "not_available", checkedAtUnixMs: Date.now(), targetVersion: "", reasonCode: "" };
     });
     updater.on("update-downloaded", (...arguments_) => {
-      this.state = { ...this.state, phase: "downloaded", checkedAtUnixMs: Date.now(), targetVersion: eventVersion(arguments_[1]) || this.state.targetVersion, reasonCode: "" };
+      const version = eventVersion(arguments_[1]) || this.state.targetVersion;
+      if (!version || version !== this.authorizedVersion) return this.fail();
+      this.state = { ...this.state, phase: "downloaded", checkedAtUnixMs: Date.now(), targetVersion: version, reasonCode: "" };
     });
     updater.on("error", () => this.fail());
   }

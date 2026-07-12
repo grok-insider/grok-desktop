@@ -16,7 +16,8 @@ pnpm package:linux -- --arch x64 \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 <lowercase-sha256> \
   --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
-  --appimageupdatetool-sha256 <lowercase-sha256>
+  --appimageupdatetool-sha256 <lowercase-sha256> \
+  --update-trust-file /path/to/stable-update-public-keys.json
 ```
 
 Optional:
@@ -26,7 +27,8 @@ pnpm package:linux -- --arch x64 --daemon /path/to/grok-daemon --out /path/to/ou
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 <lowercase-sha256> \
   --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
-  --appimageupdatetool-sha256 <lowercase-sha256>
+  --appimageupdatetool-sha256 <lowercase-sha256> \
+  --update-trust-file /path/to/stable-update-public-keys.json
 ```
 
 For the product inputs, build the daemon with both public trust bindings, then
@@ -45,10 +47,12 @@ pnpm package:linux -- \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 <lowercase-sha256> \
   --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
-  --appimageupdatetool-sha256 <lowercase-sha256>
+  --appimageupdatetool-sha256 <lowercase-sha256> \
+  --update-trust-file /path/to/stable-update-public-keys.json
 ```
 
-The package command verifies both explicitly supplied AppImage tool digests,
+The package command verifies both explicitly supplied AppImage tool digests
+and the bounded Ed25519 stable-channel public trust set,
 preserves the already-verified Electron layout, and emits a stable AppImage plus
 its `.zsync` differential-update metadata. Release workers pin the tool bytes;
 the packaging command never downloads or discovers a tool at runtime.

@@ -31,6 +31,7 @@ test("parseLinuxPackageArguments defaults arch from host and rejects bad options
   assert.equal(parseLinuxPackageArguments([
     "--appimagetool", "/tmp/tool", "--appimagetool-sha256", "a".repeat(64),
     "--appimageupdatetool", "/tmp/update-tool", "--appimageupdatetool-sha256", "b".repeat(64),
+    "--update-trust-file", "/tmp/update-trust.json",
   ]).appimageupdatetoolSha256, "b".repeat(64));
 });
 
@@ -194,6 +195,7 @@ test("resolveLinuxDaemonBinary and verifyLinuxPackagedLayout use real files", as
       "#!/bin/sh\n",
       { mode: 0o755 },
     );
+    await writeFile(path.join(appDir, "resources", "update-trusted-keys.json"), "{}\n");
     await writeFile(
       path.join(appDir, "grok-desktop.desktop"),
       renderLinuxDesktopEntry({
