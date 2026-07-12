@@ -2273,6 +2273,17 @@ async fn schema_fourteen_forks_migrate_acknowledged_and_restart_after_a_fault() 
              DROP TABLE conversation_fork_delivery_ack_commands;
              DROP TABLE conversation_fork_delivery_aliases;
              DROP TABLE conversation_fork_deliveries;
+             DROP TRIGGER managed_integration_journal_no_delete;
+             DROP TRIGGER managed_integration_journal_immutable;
+             DROP TRIGGER managed_integration_lifecycle_no_delete;
+             DROP TABLE managed_integration_lifecycle_journal;
+             DROP TABLE managed_integration_lifecycles;
+             DROP TRIGGER automation_occurrence_prompt_immutable_delete;
+             DROP TRIGGER automation_occurrence_prompt_immutable_update;
+             DROP TRIGGER automation_occurrence_dispatches_immutable_delete;
+             DROP TRIGGER automation_occurrence_dispatches_immutable_update;
+             DROP TRIGGER automation_occurrence_dispatches_validate_insert;
+             DROP TABLE automation_occurrence_dispatches;
              DROP TRIGGER automations_require_scheduler_rebase;
              DROP TRIGGER automation_occurrence_claim_attempts_immutable_delete;
              DROP TRIGGER automation_occurrence_claim_attempts_validate_update;
@@ -2343,7 +2354,7 @@ async fn schema_fourteen_forks_migrate_acknowledged_and_restart_after_a_fault() 
                  SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                  WHERE new.state=0;
              END;
-             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20);
+             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22);
              PRAGMA user_version=14;
              CREATE TABLE conversation_fork_delivery_ack_commands(blocker INTEGER) STRICT;",
         )

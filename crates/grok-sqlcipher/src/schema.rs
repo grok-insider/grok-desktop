@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 20;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 22;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -143,6 +143,8 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             18 => migrate_artifact_retention_v18(&transaction)?,
             19 => migrate_automation_scheduler_v19(&transaction)?,
             20 => migrate_chat_rail_v20(&transaction)?,
+            21 => transaction.execute_batch(MIGRATION_21)?,
+            22 => transaction.execute_batch(MIGRATION_22)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -159,6 +161,182 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
 const MIGRATION_20: &str = r"
 ALTER TABLE conversation_turn_lineage
 ADD COLUMN rail INTEGER NOT NULL DEFAULT 0 CHECK (rail BETWEEN 0 AND 1);
+";
+
+const MIGRATION_21: &str = r"
+CREATE TABLE automation_occurrence_dispatches (
+    occurrence_id TEXT PRIMARY KEY REFERENCES automation_occurrences(id),
+    claim_sequence INTEGER NOT NULL CHECK (claim_sequence BETWEEN 1 AND 16),
+    thread_id TEXT NOT NULL UNIQUE REFERENCES threads(id),
+    prompt_message_id TEXT NOT NULL UNIQUE REFERENCES messages(id),
+    run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+    request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    FOREIGN KEY(occurrence_id, claim_sequence)
+        REFERENCES automation_occurrence_claim_attempts(occurrence_id, sequence)
+) STRICT;
+
+CREATE TRIGGER automation_occurrence_dispatches_validate_insert
+BEFORE INSERT ON automation_occurrence_dispatches BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1
+        FROM automation_occurrences occurrence
+        JOIN automation_occurrence_claim_attempts attempt
+          ON attempt.occurrence_id = occurrence.id
+         AND attempt.sequence = new.claim_sequence
+        JOIN threads thread ON thread.id = new.thread_id
+        JOIN messages prompt ON prompt.id = new.prompt_message_id
+        JOIN runs run ON run.id = new.run_id
+        WHERE occurrence.id = new.occurrence_id
+          AND occurrence.state = 3
+          AND occurrence.run_id = new.run_id
+          AND occurrence.claim_attempt_count = new.claim_sequence
+          AND attempt.completed_at IS NOT NULL
+          AND attempt.outcome = 1
+          AND attempt.request_fingerprint = new.request_fingerprint
+          AND thread.project_id = occurrence.snapshot_project_id
+          AND thread.state = 0 AND thread.revision = 0
+          AND prompt.thread_id = thread.id
+          AND prompt.sequence = 1 AND prompt.role = 1 AND prompt.state = 0
+          AND prompt.revision = 0 AND prompt.content = occurrence.snapshot_prompt
+          AND run.project_id = occurrence.snapshot_project_id
+          AND run.thread_id = thread.id AND run.state = 0 AND run.revision = 0
+          AND thread.created_at = new.created_at
+          AND prompt.created_at = new.created_at
+          AND run.created_at = new.created_at
+    ) THEN RAISE(ABORT, 'invalid automation occurrence dispatch binding') END;
+END;
+
+CREATE TRIGGER automation_occurrence_dispatches_immutable_update
+BEFORE UPDATE ON automation_occurrence_dispatches BEGIN
+    SELECT RAISE(ABORT, 'automation occurrence dispatch bindings are immutable');
+END;
+CREATE TRIGGER automation_occurrence_dispatches_immutable_delete
+BEFORE DELETE ON automation_occurrence_dispatches BEGIN
+    SELECT RAISE(ABORT, 'automation occurrence dispatch bindings are immutable');
+END;
+CREATE TRIGGER automation_occurrence_prompt_immutable_update
+BEFORE UPDATE ON messages WHEN EXISTS (
+    SELECT 1 FROM automation_occurrence_dispatches
+    WHERE prompt_message_id = old.id
+) BEGIN
+    SELECT RAISE(ABORT, 'automation occurrence prompts are immutable');
+END;
+CREATE TRIGGER automation_occurrence_prompt_immutable_delete
+BEFORE DELETE ON messages WHEN EXISTS (
+    SELECT 1 FROM automation_occurrence_dispatches
+    WHERE prompt_message_id = old.id
+) BEGIN
+    SELECT RAISE(ABORT, 'automation occurrence prompts are immutable');
+END;
+";
+
+const MIGRATION_22: &str = r"
+CREATE TABLE managed_integration_lifecycles (
+    integration_id TEXT PRIMARY KEY CHECK (
+        length(CAST(integration_id AS BLOB)) BETWEEN 1 AND 128 AND
+        integration_id NOT GLOB '*[^-a-z0-9.]*'
+    ),
+    phase INTEGER NOT NULL CHECK (phase BETWEEN 0 AND 3),
+    installed_version TEXT CHECK (
+        installed_version IS NULL OR length(CAST(installed_version AS BLOB)) BETWEEN 1 AND 64
+    ),
+    installed_manifest_digest BLOB CHECK (
+        installed_manifest_digest IS NULL OR length(installed_manifest_digest) = 32
+    ),
+    available_version TEXT NOT NULL CHECK (
+        length(CAST(available_version AS BLOB)) BETWEEN 1 AND 64
+    ),
+    available_manifest_digest BLOB NOT NULL CHECK (length(available_manifest_digest) = 32),
+    rollback_version TEXT CHECK (
+        rollback_version IS NULL OR length(CAST(rollback_version AS BLOB)) BETWEEN 1 AND 64
+    ),
+    rollback_manifest_digest BLOB CHECK (
+        rollback_manifest_digest IS NULL OR length(rollback_manifest_digest) = 32
+    ),
+    revision INTEGER NOT NULL CHECK (revision BETWEEN 1 AND 9223372036854775807),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+    CHECK ((installed_version IS NULL) = (installed_manifest_digest IS NULL)),
+    CHECK ((rollback_version IS NULL) = (rollback_manifest_digest IS NULL)),
+    CHECK ((phase = 0 AND installed_version IS NULL AND rollback_version IS NULL) OR
+           (phase = 1 AND installed_version IS NOT NULL AND rollback_version IS NULL) OR
+           (phase = 2 AND installed_version IS NOT NULL AND rollback_version IS NULL) OR
+           (phase = 3 AND installed_version IS NOT NULL AND rollback_version IS NOT NULL))
+) STRICT;
+
+CREATE TABLE managed_integration_lifecycle_journal (
+    idempotency_key TEXT PRIMARY KEY CHECK (
+        length(CAST(idempotency_key AS BLOB)) BETWEEN 1 AND 128
+    ),
+    request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
+    integration_id TEXT NOT NULL REFERENCES managed_integration_lifecycles(integration_id),
+    mutation INTEGER NOT NULL CHECK (mutation BETWEEN 0 AND 2),
+    committed_revision INTEGER NOT NULL CHECK (
+        committed_revision BETWEEN 1 AND 9223372036854775807
+    ),
+    candidate_version TEXT NOT NULL CHECK (
+        length(CAST(candidate_version AS BLOB)) BETWEEN 1 AND 64
+    ),
+    candidate_manifest_digest BLOB NOT NULL CHECK (length(candidate_manifest_digest) = 32),
+    outcome_phase INTEGER NOT NULL CHECK (outcome_phase BETWEEN 0 AND 3),
+    outcome_installed_version TEXT CHECK (
+        outcome_installed_version IS NULL OR
+        length(CAST(outcome_installed_version AS BLOB)) BETWEEN 1 AND 64
+    ),
+    outcome_installed_digest BLOB CHECK (
+        outcome_installed_digest IS NULL OR length(outcome_installed_digest) = 32
+    ),
+    outcome_rollback_version TEXT CHECK (
+        outcome_rollback_version IS NULL OR
+        length(CAST(outcome_rollback_version AS BLOB)) BETWEEN 1 AND 64
+    ),
+    outcome_rollback_digest BLOB CHECK (
+        outcome_rollback_digest IS NULL OR length(outcome_rollback_digest) = 32
+    ),
+    observed_at INTEGER NOT NULL CHECK (observed_at >= 0),
+    published_at INTEGER CHECK (published_at IS NULL OR published_at >= observed_at),
+    UNIQUE(integration_id, committed_revision),
+    CHECK ((outcome_installed_version IS NULL) = (outcome_installed_digest IS NULL)),
+    CHECK ((outcome_rollback_version IS NULL) = (outcome_rollback_digest IS NULL))
+) STRICT;
+
+CREATE INDEX managed_integration_publication_recovery
+ON managed_integration_lifecycle_journal(published_at, idempotency_key)
+WHERE published_at IS NULL;
+
+CREATE UNIQUE INDEX managed_integration_one_pending_publication
+ON managed_integration_lifecycle_journal(integration_id)
+WHERE published_at IS NULL;
+
+CREATE TRIGGER managed_integration_lifecycle_no_delete
+BEFORE DELETE ON managed_integration_lifecycles BEGIN
+    SELECT RAISE(ABORT, 'managed integration lifecycle rows are durable');
+END;
+
+CREATE TRIGGER managed_integration_journal_immutable
+BEFORE UPDATE ON managed_integration_lifecycle_journal
+WHEN new.idempotency_key IS NOT old.idempotency_key OR
+     new.request_fingerprint IS NOT old.request_fingerprint OR
+     new.integration_id IS NOT old.integration_id OR
+     new.mutation IS NOT old.mutation OR
+     new.committed_revision IS NOT old.committed_revision OR
+     new.candidate_version IS NOT old.candidate_version OR
+     new.candidate_manifest_digest IS NOT old.candidate_manifest_digest OR
+     new.outcome_phase IS NOT old.outcome_phase OR
+     new.outcome_installed_version IS NOT old.outcome_installed_version OR
+     new.outcome_installed_digest IS NOT old.outcome_installed_digest OR
+     new.outcome_rollback_version IS NOT old.outcome_rollback_version OR
+     new.outcome_rollback_digest IS NOT old.outcome_rollback_digest OR
+     new.observed_at IS NOT old.observed_at OR
+     old.published_at IS NOT NULL OR new.published_at IS NULL
+BEGIN
+    SELECT RAISE(ABORT, 'managed integration journal evidence is immutable');
+END;
+
+CREATE TRIGGER managed_integration_journal_no_delete
+BEFORE DELETE ON managed_integration_lifecycle_journal BEGIN
+    SELECT RAISE(ABORT, 'managed integration journal rows are durable');
+END;
 ";
 
 fn migrate_chat_rail_v20(transaction: &Transaction<'_>) -> Result<(), SqlCipherStoreError> {
@@ -3715,6 +3893,17 @@ mod tests {
         connection
             .execute_batch(
                 "PRAGMA foreign_keys=OFF;
+                 DROP TRIGGER IF EXISTS managed_integration_journal_no_delete;
+                 DROP TRIGGER IF EXISTS managed_integration_journal_immutable;
+                 DROP TRIGGER IF EXISTS managed_integration_lifecycle_no_delete;
+                 DROP TABLE IF EXISTS managed_integration_lifecycle_journal;
+                 DROP TABLE IF EXISTS managed_integration_lifecycles;
+                 DROP TRIGGER IF EXISTS automation_occurrence_prompt_immutable_delete;
+                 DROP TRIGGER IF EXISTS automation_occurrence_prompt_immutable_update;
+                 DROP TRIGGER IF EXISTS automation_occurrence_dispatches_immutable_delete;
+                 DROP TRIGGER IF EXISTS automation_occurrence_dispatches_immutable_update;
+                 DROP TRIGGER IF EXISTS automation_occurrence_dispatches_validate_insert;
+                 DROP TABLE IF EXISTS automation_occurrence_dispatches;
                  DROP TRIGGER IF EXISTS automations_require_scheduler_rebase;
                  DROP TRIGGER IF EXISTS automation_occurrence_claim_attempts_immutable_delete;
                  DROP TRIGGER IF EXISTS automation_occurrence_claim_attempts_validate_update;
@@ -3739,7 +3928,7 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_evaluation_commands;
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
-                 DELETE FROM schema_migrations WHERE version IN (19,20);
+                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )

@@ -406,7 +406,7 @@ impl CredentialService {
         Ok(AccountState {
             xai_api_key_configured: true,
             xai_capabilities_resolved: capabilities_resolved,
-                grok_build_authenticated: false,
+            grok_build_authenticated: false,
         })
     }
 

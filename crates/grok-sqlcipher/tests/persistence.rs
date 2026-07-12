@@ -1143,7 +1143,7 @@ async fn credential_mutation_reservations_survive_restart_and_reject_conflicts()
     let outcome = AccountState {
         xai_api_key_configured: true,
         xai_capabilities_resolved: true,
-                grok_build_authenticated: false,
+        grok_build_authenticated: false,
     };
     reopened
         .complete_credential_mutation(&command, outcome)

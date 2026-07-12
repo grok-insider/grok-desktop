@@ -64,7 +64,7 @@ pub struct IsolationBrokerCapabilities {
     /// Enforced host-workspace exposure.
     pub workspace_mode: IsolationWorkspaceMode,
     /// Sorted closed operation set. Guest control is intentionally absent from
-    /// the static probe document; grants are a separate PoP gate.
+    /// the static probe document; grants are a separate `PoP` gate.
     pub operations: Vec<IsolationBrokerOperation>,
 }
 

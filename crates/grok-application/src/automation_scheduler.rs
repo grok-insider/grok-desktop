@@ -6,13 +6,14 @@ use grok_domain::{
     AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState,
     AutomationScheduleCursor, AutomationScheduleDecision, AutomationSchedulerLease,
     AutomationSchedulerLeaseToken, AutomationSchedulerOwnerId, AutomationState,
-    MAX_AUTOMATION_SCHEDULE_DECISIONS, MissedRunPolicy, UnixMillis,
+    MAX_AUTOMATION_SCHEDULE_DECISIONS, Message, MissedRunPolicy, Run, Thread, UnixMillis,
 };
 
 use crate::{
     ApplicationError, Clock, IdGenerator, MutationCommand, StoreError,
     mutations::mutation_command_bytes,
 };
+use tokio_util::sync::CancellationToken;
 
 /// Maximum definition records inspected by one journal tick.
 pub const MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS: usize = 100;
@@ -24,6 +25,7 @@ pub const AUTOMATION_SCHEDULER_LEASE_TTL_MS: u64 = 30_000;
 pub const MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES: usize = 3;
 
 const AUTOMATION_SCHEDULER_EVALUATION_WINDOW_MS: u64 = 180 * 86_400_000;
+const AUTOMATION_GUEST_DISPATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Result of atomically acquiring or renewing the singleton scheduler lease.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +144,130 @@ pub struct ClaimAutomationOccurrence {
     pub command: MutationCommand,
 }
 
+/// Complete durable work produced for one claimed occurrence.
+///
+/// The store commits every member together with the claim and occurrence link;
+/// no caller may persist these entities through independent store operations.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AutomationOccurrenceDispatch {
+    /// Exact fenced occurrence claim and idempotency evidence.
+    pub claim: ClaimAutomationOccurrence,
+    /// Dedicated original thread for this occurrence.
+    pub thread: Thread,
+    /// Immutable user prompt copied from the occurrence execution snapshot.
+    pub prompt: Message,
+    /// Queued run bound to the dedicated thread.
+    pub run: Run,
+}
+
+impl std::fmt::Debug for AutomationOccurrenceDispatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AutomationOccurrenceDispatch")
+            .field("occurrence_id", &self.claim.occurrence_id)
+            .field("thread_id", &self.thread.id)
+            .field("prompt", &"[REDACTED]")
+            .field("run_id", &self.run.id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Canonical result of an atomic occurrence dispatch or exact replay.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AutomationOccurrenceDispatchResult {
+    /// Run-linked occurrence snapshot.
+    pub occurrence: AutomationOccurrence,
+    /// Dedicated thread.
+    pub thread: Thread,
+    /// Immutable prompt message.
+    pub prompt: Message,
+    /// Queued run.
+    pub run: Run,
+}
+
+impl std::fmt::Debug for AutomationOccurrenceDispatchResult {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AutomationOccurrenceDispatchResult")
+            .field("occurrence_id", &self.occurrence.id)
+            .field("occurrence_state", &self.occurrence.state)
+            .field("thread_id", &self.thread.id)
+            .field("prompt", &"[REDACTED]")
+            .field("run_id", &self.run.id)
+            .field("run_state", &self.run.state)
+            .finish()
+    }
+}
+
+/// Closed payload delivered to a scheduled isolated guest.
+///
+/// It deliberately contains no Chat credential, workspace root, tool list,
+/// MCP metadata, host path, or general guest-control authority.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ScheduledGuestRequest {
+    /// Durable occurrence identity and guest idempotency key.
+    pub occurrence_id: AutomationOccurrenceId,
+    /// Exact already-running durable run.
+    pub run_id: grok_domain::RunId,
+    /// Immutable prompt frozen when the occurrence was materialized.
+    pub prompt: String,
+}
+
+impl std::fmt::Debug for ScheduledGuestRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ScheduledGuestRequest")
+            .field("occurrence_id", &self.occurrence_id)
+            .field("run_id", &self.run_id)
+            .field("prompt", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Known result returned by the isolated scheduled-work endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduledGuestOutcome {
+    /// Guest completed the prompt successfully.
+    Succeeded,
+    /// Guest completed with a known failure and no uncertain side effect.
+    Failed,
+}
+
+/// Bounded failure classes for the isolated scheduled-work endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ScheduledGuestDispatchError {
+    /// No qualified scheduled-work transport was available before dispatch.
+    #[error("scheduled guest dispatcher unavailable")]
+    Unavailable,
+    /// Dispatch may have crossed the guest boundary and requires review.
+    #[error("scheduled guest dispatch outcome is uncertain")]
+    Interrupted,
+}
+
+/// Capability-scoped port for one isolated scheduled prompt.
+#[async_trait]
+pub trait ScheduledGuestDispatcher: Send + Sync {
+    /// Dispatches only the closed scheduled-work payload.
+    async fn dispatch(
+        &self,
+        request: ScheduledGuestRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ScheduledGuestOutcome, ScheduledGuestDispatchError>;
+}
+
+/// Terminal classification applied after an isolated guest attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutomationOccurrenceRunCompletion {
+    /// Run and occurrence completed successfully.
+    Succeeded,
+    /// Run and occurrence failed with a known outcome.
+    Failed,
+    /// A side effect may have started and requires explicit review.
+    InterruptedNeedsReview,
+    /// Shutdown won before guest dispatch began.
+    Cancelled,
+}
+
 /// Bounded expired-claim recovery result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AutomationSchedulerRecoverySummary {
@@ -151,6 +277,8 @@ pub struct AutomationSchedulerRecoverySummary {
     pub interrupted_linked: usize,
     /// Attempt-exhausted occurrences moved to explicit review.
     pub attempts_exhausted: usize,
+    /// Atomically bound queued runs retained for safe isolated resumption.
+    pub resumable_bound_queued: usize,
     /// More expired rows remain after this bounded pass.
     pub truncated: bool,
 }
@@ -264,6 +392,42 @@ pub trait AutomationSchedulerStore: Send + Sync {
         claim: ClaimAutomationOccurrence,
     ) -> Result<AutomationOccurrence, StoreError>;
 
+    /// Atomically claims an occurrence, creates its dedicated thread, immutable
+    /// prompt and queued run, and binds the exact result to claim idempotency.
+    async fn claim_and_bind_automation_occurrence(
+        &self,
+        dispatch: AutomationOccurrenceDispatch,
+    ) -> Result<AutomationOccurrenceDispatchResult, StoreError>;
+
+    /// Lists only atomically bound occurrences whose exact run remains queued.
+    async fn list_resumable_automation_dispatches(
+        &self,
+        after: Option<&AutomationOccurrenceId>,
+        limit: usize,
+    ) -> Result<Vec<AutomationOccurrenceDispatchResult>, StoreError>;
+
+    /// Atomically persists guest-dispatch intent by moving the exact bound run
+    /// from queued through planning to running with both audit events.
+    async fn begin_automation_occurrence_run(
+        &self,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_occurrence_revision: u64,
+        run_id: &grok_domain::RunId,
+        expected_run_revision: u64,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrenceDispatchResult, StoreError>;
+
+    /// Terminalizes an occurrence after its exact linked run reached the
+    /// corresponding terminal state.
+    async fn complete_automation_occurrence_run(
+        &self,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_revision: u64,
+        run_id: &grok_domain::RunId,
+        completion: AutomationOccurrenceRunCompletion,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrence, StoreError>;
+
     /// Recovers expired claims without dispatching any work.
     async fn recover_automation_occurrence_claims(
         &self,
@@ -327,7 +491,101 @@ impl AutomationSchedulerService {
         self.store.automation_scheduler_journal_status().await
     }
 
-    /// Materializes due occurrences, claims pending ones, and links durable runs.
+    /// Resumes only exact schema-bound queued runs through the capability-scoped
+    /// isolated guest port. A run leaves `Queued` durably before any guest I/O,
+    /// so restart never redispatches an uncertain attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns application errors for corrupt bindings or durable run/journal
+    /// failures. Guest failures become explicit terminal run states.
+    pub async fn dispatch_resumable(
+        &self,
+        dispatcher: &dyn ScheduledGuestDispatcher,
+        cancellation: &CancellationToken,
+        limit: usize,
+    ) -> Result<usize, ApplicationError> {
+        if !(1..=MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS).contains(&limit) {
+            return Err(ApplicationError::InvalidInput(
+                "automation dispatch limit is outside the supported bounds".into(),
+            ));
+        }
+        let resumable = self
+            .store
+            .list_resumable_automation_dispatches(None, limit)
+            .await?;
+        let mut completed_count = 0usize;
+        for bound in resumable {
+            if cancellation.is_cancelled() {
+                break;
+            }
+            let running = match self
+                .store
+                .begin_automation_occurrence_run(
+                    &bound.occurrence.id,
+                    bound.occurrence.revision,
+                    &bound.run.id,
+                    bound.run.revision,
+                    self.clock.now(),
+                )
+                .await
+            {
+                Ok(dispatch) => dispatch,
+                Err(StoreError::Conflict | StoreError::NotFound) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            let request = ScheduledGuestRequest {
+                occurrence_id: running.occurrence.id.clone(),
+                run_id: running.run.id.clone(),
+                prompt: running.prompt.content.clone(),
+            };
+            let completion = if cancellation.is_cancelled() {
+                AutomationOccurrenceRunCompletion::Cancelled
+            } else {
+                let child_cancellation = cancellation.child_token();
+                let dispatch = dispatcher.dispatch(request, child_cancellation.clone());
+                let result = tokio::select! {
+                    () = cancellation.cancelled() => {
+                        child_cancellation.cancel();
+                        Err(ScheduledGuestDispatchError::Interrupted)
+                    }
+                    result = tokio::time::timeout(AUTOMATION_GUEST_DISPATCH_TIMEOUT, dispatch) => {
+                        if let Ok(result) = result {
+                            result
+                        } else {
+                            child_cancellation.cancel();
+                            Err(ScheduledGuestDispatchError::Interrupted)
+                        }
+                    }
+                };
+                match result {
+                    Ok(ScheduledGuestOutcome::Succeeded) => {
+                        AutomationOccurrenceRunCompletion::Succeeded
+                    }
+                    Ok(ScheduledGuestOutcome::Failed)
+                    | Err(ScheduledGuestDispatchError::Unavailable) => {
+                        AutomationOccurrenceRunCompletion::Failed
+                    }
+                    Err(ScheduledGuestDispatchError::Interrupted) => {
+                        AutomationOccurrenceRunCompletion::InterruptedNeedsReview
+                    }
+                }
+            };
+            self.store
+                .complete_automation_occurrence_run(
+                    &running.occurrence.id,
+                    running.occurrence.revision,
+                    &running.run.id,
+                    completion,
+                    self.clock.now(),
+                )
+                .await?;
+            completed_count = completed_count.saturating_add(1);
+        }
+        Ok(completed_count)
+    }
+
+    /// Materializes due occurrences and atomically produces bound durable work.
     ///
     /// Each successful dispatch creates a project thread, queues a durable run,
     /// and links that run under the exact fenced claim. Interrupted linked runs
@@ -339,8 +597,6 @@ impl AutomationSchedulerService {
     pub async fn execute_due(
         &self,
         owner_id: &AutomationSchedulerOwnerId,
-        runs: &crate::RunService,
-        workspace: &crate::WorkspaceService,
         limit: usize,
     ) -> Result<usize, ApplicationError> {
         // A brand-new definition spends its first completed tick initializing a
@@ -383,73 +639,58 @@ impl AutomationSchedulerService {
                 if occurrence.state != AutomationOccurrenceState::Pending {
                     continue;
                 }
+                let thread = grok_domain::Thread::new(
+                    grok_domain::ThreadId::new(self.ids.generate("automation-thread"))?,
+                    occurrence.snapshot.project_id.clone(),
+                    format!("Automation · {}", occurrence.snapshot.title),
+                    observed_at,
+                )?;
+                let prompt = grok_domain::Message::new(
+                    grok_domain::MessageId::new(self.ids.generate("automation-prompt"))?,
+                    thread.id.clone(),
+                    grok_domain::MessageRole::User,
+                    occurrence.snapshot.prompt.clone(),
+                    observed_at,
+                )?;
+                let run = grok_domain::Run::queued(
+                    grok_domain::RunId::new(self.ids.generate("automation-run"))?,
+                    occurrence.snapshot.project_id.clone(),
+                    thread.id.clone(),
+                    observed_at,
+                );
                 let claim_command = crate::mutations::mutation_command(
                     "automation_scheduler_claim_v1",
                     &self.ids.generate("automation-claim"),
                     &[
                         occurrence.id.as_str().to_owned(),
+                        occurrence.revision.to_string(),
+                        lease_token.owner_id.as_str().to_owned(),
                         lease_token.fence.to_string(),
+                        thread.id.as_str().to_owned(),
+                        prompt.id.as_str().to_owned(),
+                        run.id.as_str().to_owned(),
                     ],
                 )?;
-                let claimed = match self
-                    .store
-                    .claim_automation_occurrence(ClaimAutomationOccurrence {
+                let dispatch = AutomationOccurrenceDispatch {
+                    claim: ClaimAutomationOccurrence {
                         lease: lease_token.clone(),
                         occurrence_id: occurrence.id.clone(),
                         expected_revision: occurrence.revision,
                         claimed_at: observed_at,
                         expires_at: observed_at.saturating_add(AUTOMATION_SCHEDULER_LEASE_TTL_MS),
                         command: claim_command,
-                    })
-                    .await
-                {
-                    Ok(claimed) => claimed,
-                    Err(StoreError::Conflict | StoreError::NotFound) => continue,
-                    Err(error) => return Err(error.into()),
-                };
-                let thread = match workspace
-                    .create_thread(
-                        crate::CreateThread {
-                            project_id: claimed.snapshot.project_id.as_str().to_owned(),
-                            title: format!("Automation · {}", claimed.snapshot.title),
-                        },
-                        &self.ids.generate("automation-thread-cmd"),
-                    )
-                    .await
-                {
-                    Ok(thread) => thread,
-                    Err(ApplicationError::Conflict | ApplicationError::NotFound) => continue,
-                    Err(error) => return Err(error),
-                };
-                let run = match runs
-                    .create(
-                        crate::CreateRun {
-                            project_id: claimed.snapshot.project_id.as_str().to_owned(),
-                            thread_id: thread.id.as_str().to_owned(),
-                        },
-                        &self.ids.generate("automation-run"),
-                    )
-                    .await
-                {
-                    Ok(run) => run,
-                    Err(ApplicationError::Conflict | ApplicationError::NotFound) => continue,
-                    Err(error) => return Err(error),
+                    },
+                    thread,
+                    prompt,
+                    run,
                 };
                 match self
                     .store
-                    .link_automation_occurrence_run(
-                        &lease_token,
-                        &claimed.id,
-                        claimed.revision,
-                        run.id.clone(),
-                        self.clock.now(),
-                    )
+                    .claim_and_bind_automation_occurrence(dispatch)
                     .await
                 {
-                    Ok(_) => {
-                        dispatched = dispatched.saturating_add(1);
-                    }
-                    Err(StoreError::Conflict | StoreError::NotFound) => continue,
+                    Ok(_) => dispatched = dispatched.saturating_add(1),
+                    Err(StoreError::Conflict | StoreError::NotFound) => {}
                     Err(error) => return Err(error.into()),
                 }
             }
@@ -937,4 +1178,22 @@ pub const fn automation_occurrence_is_active(state: AutomationOccurrenceState) -
             | AutomationOccurrenceState::Claimed
             | AutomationOccurrenceState::RunLinked
     )
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_guest_request_debug_redacts_prompt() {
+        const SENTINEL: &str = "scheduler-prompt-must-never-enter-diagnostics";
+        let request = ScheduledGuestRequest {
+            occurrence_id: AutomationOccurrenceId::new("debug-occurrence").expect("occurrence"),
+            run_id: grok_domain::RunId::new("debug-run").expect("run"),
+            prompt: SENTINEL.into(),
+        };
+        let diagnostic = format!("{request:?}");
+        assert!(!diagnostic.contains(SENTINEL));
+        assert!(diagnostic.contains("[REDACTED]"));
+    }
 }

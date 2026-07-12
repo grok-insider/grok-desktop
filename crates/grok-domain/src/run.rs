@@ -39,9 +39,15 @@ impl RunState {
         };
         matches!(
             (self, next),
-            (Queued, Planning | Cancelled)
-                | (Planning, AwaitingApproval | Running | Failed | Cancelled)
-                | (AwaitingApproval, Running | Paused | Failed | Cancelled)
+            (Queued, Planning | Cancelled | InterruptedNeedsReview)
+                | (
+                    Planning,
+                    AwaitingApproval | Running | Failed | Cancelled | InterruptedNeedsReview
+                )
+                | (
+                    AwaitingApproval,
+                    Running | Paused | Failed | Cancelled | InterruptedNeedsReview
+                )
                 | (
                     Running,
                     AwaitingApproval
@@ -52,9 +58,10 @@ impl RunState {
                         | InterruptedNeedsReview
                 )
                 | (
-                    Paused | InterruptedNeedsReview,
-                    Running | Failed | Cancelled
+                    Paused,
+                    Running | Failed | Cancelled | InterruptedNeedsReview
                 )
+                | (InterruptedNeedsReview, Running | Failed | Cancelled)
         )
     }
 }

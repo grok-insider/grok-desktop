@@ -616,7 +616,7 @@ impl Daemon {
         }
     }
 
-    /// Attaches daemon-owned SuperGrok OAuth enrollment and vault persistence.
+    /// Attaches daemon-owned `SuperGrok` OAuth enrollment and vault persistence.
     #[must_use]
     pub fn with_supergrok_enrollment(
         mut self,
@@ -1029,12 +1029,10 @@ impl Daemon {
             return v1::AutomationSchedulerHealth::DegradedExecutionDisabled;
         }
         match self.automation_scheduler_lifecycle {
-            AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled => {
-                v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled
-            }
             // Epoch 20 preserves the historical lifecycle variant for internal
             // compatibility, but never advertises execution readiness.
-            AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled => {
+            AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled
+            | AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled => {
                 v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled
             }
             AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled => {
@@ -1046,6 +1044,7 @@ impl Daemon {
         }
     }
 
+    #[allow(clippy::unused_self)]
     const fn automation_execution_armed(&self) -> bool {
         false
     }
@@ -1054,23 +1053,23 @@ impl Daemon {
         let mut facts = self.runtime_capability_facts;
         let account = self.credentials.account_state()?;
         facts.xai_api_key_configured = account.xai_api_key_configured;
-        facts.supergrok_api_connected = self
-            .supergrok_enrollment
-            .as_ref()
-            .is_some_and(|service| service.connection_status().is_ok_and(|status| status.is_some()));
-        facts.xai_capabilities_resolved = if account.xai_api_key_configured
-            || facts.supergrok_api_connected
-        {
-            match &self.chat_models {
-                Some(chat_models) => chat_models
-                    .catalog()
-                    .await
-                    .is_ok_and(|catalog| catalog.selected_model_ready),
-                None => account.xai_capabilities_resolved,
-            }
-        } else {
-            false
-        };
+        facts.supergrok_api_connected = self.supergrok_enrollment.as_ref().is_some_and(|service| {
+            service
+                .connection_status()
+                .is_ok_and(|status| status.is_some())
+        });
+        facts.xai_capabilities_resolved =
+            if account.xai_api_key_configured || facts.supergrok_api_connected {
+                match &self.chat_models {
+                    Some(chat_models) => chat_models
+                        .catalog()
+                        .await
+                        .is_ok_and(|catalog| catalog.selected_model_ready),
+                    None => account.xai_capabilities_resolved,
+                }
+            } else {
+                false
+            };
         if let Some(auth) = &self.grok_build_auth {
             facts.subscription_authenticated = auth.is_authenticated().await;
         }
@@ -1152,7 +1151,10 @@ impl Daemon {
             return Err(ApplicationError::NotFound);
         }
         let id = "desktop.grok.wisp";
-        let record = service.get(id);
+        let record = service
+            .get_durable(id)
+            .await
+            .map_err(ApplicationError::from)?;
         Ok(v1::response::Result::ManagedIntegration(
             // Epoch 20 preserves the record projection but does not attest the
             // legacy bundle verifier's result as trusted lifecycle readiness.
@@ -1182,7 +1184,10 @@ impl Daemon {
             runtime.projection = SuperGrokEnrollmentProjection::Starting { generation };
             generation
         };
-        let authorization = match service.begin_device(self.clock.now() as i64).await {
+        let observed_at = i64::try_from(self.clock.now()).map_err(|_| {
+            ApplicationError::InvalidState("OAuth enrollment clock is out of range".into())
+        })?;
+        let authorization = match service.begin_device(observed_at).await {
             Ok(authorization) => authorization,
             Err(error) => {
                 let mut runtime = self.supergrok_enrollment_runtime.lock().await;
@@ -1359,6 +1364,7 @@ impl Daemon {
         ))
     }
 
+    #[allow(clippy::unused_async)]
     async fn change_managed_integration(
         &self,
         request: v1::ChangeManagedIntegrationRequest,

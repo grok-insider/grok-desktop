@@ -1,5 +1,9 @@
 //! In-memory adapters for deterministic tests and development startup.
 
+mod managed_integrations;
+
+pub use managed_integrations::InMemoryManagedIntegrationLifecycleStore;
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -16,28 +20,30 @@ use grok_application::{
     ArtifactOpenReservation, ArtifactOpenState, ArtifactQuotaUsage, ArtifactRemovalPlan,
     ArtifactRemovalReservation, ArtifactRemovalState, ArtifactRetentionRecord,
     ArtifactRetentionState, ArtifactStore, AutomationOccurrenceClaimAttempt,
-    AutomationOccurrenceClaimCompletion, AutomationScheduleCandidate,
-    AutomationScheduleEvaluationCommit, AutomationScheduleEvaluationResult,
-    AutomationSchedulerJournalStatus, AutomationSchedulerLeaseAcquisition,
-    AutomationSchedulerRecoverySummary, AutomationSchedulerStore, CancelConversationTurnCommit,
-    ChatModelPreferenceStore, ClaimAutomationOccurrence, Clock, ConversationForkCommandResolution,
-    ConversationForkDelivery, ConversationForkDeliveryState, ConversationForkMetadata,
-    ConversationForkPlan, ConversationForkReservation, ConversationForkSnapshot,
-    ConversationInheritedAssistantOutcome, ConversationThreadCredentialBinding,
-    ConversationTurnEventPage, ConversationTurnReservation, ConversationTurnReservationSource,
-    ConversationTurnSnapshot, ConversationTurnStore, CredentialMutationReservation,
-    CredentialMutationStore, DatabaseKey, DesktopPreferencesStore, ExecutionMutationOutcome,
-    ExecutionStore, IdGenerator, KeyProviderError, MAX_ARTIFACT_FILE_BYTES,
-    MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
-    MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS, MAX_CONVERSATION_CONTEXT_BYTES,
-    MAX_CONVERSATION_CONTEXT_MESSAGES, MAX_CONVERSATION_EVENT_BATCH,
-    MAX_CONVERSATION_FORK_DELIVERY_ALIASES, MAX_CONVERSATION_FORK_DIRECT_CHILDREN,
-    MAX_CONVERSATION_FORK_FAMILY_THREADS, MAX_CONVERSATION_FORK_INHERITED_OUTCOMES,
-    MAX_GLOBAL_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_COUNT,
-    MutationCommand, NewRunEvent, PrivilegedDispatchAttempt, PrivilegedOperationStore,
-    PrivilegedPreparation, PrivilegedRecoveryCandidate, ProviderStartCommit, SecretName,
-    SecretValue, SecretVault, SecureKeyProvider, StoreError, TerminalTurnCommit, VaultError,
-    WorkspaceSearchHit, WorkspaceSearchKind, WorkspaceStore, automation_occurrence_is_active,
+    AutomationOccurrenceClaimCompletion, AutomationOccurrenceDispatch,
+    AutomationOccurrenceDispatchResult, AutomationOccurrenceRunCompletion,
+    AutomationScheduleCandidate, AutomationScheduleEvaluationCommit,
+    AutomationScheduleEvaluationResult, AutomationSchedulerJournalStatus,
+    AutomationSchedulerLeaseAcquisition, AutomationSchedulerRecoverySummary,
+    AutomationSchedulerStore, CancelConversationTurnCommit, ChatModelPreferenceStore,
+    ClaimAutomationOccurrence, Clock, ConversationForkCommandResolution, ConversationForkDelivery,
+    ConversationForkDeliveryState, ConversationForkMetadata, ConversationForkPlan,
+    ConversationForkReservation, ConversationForkSnapshot, ConversationInheritedAssistantOutcome,
+    ConversationThreadCredentialBinding, ConversationTurnEventPage, ConversationTurnReservation,
+    ConversationTurnReservationSource, ConversationTurnSnapshot, ConversationTurnStore,
+    CredentialMutationReservation, CredentialMutationStore, DatabaseKey, DesktopPreferencesStore,
+    ExecutionMutationOutcome, ExecutionStore, IdGenerator, KeyProviderError,
+    MAX_ARTIFACT_FILE_BYTES, MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES,
+    MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS,
+    MAX_CONVERSATION_CONTEXT_BYTES, MAX_CONVERSATION_CONTEXT_MESSAGES,
+    MAX_CONVERSATION_EVENT_BATCH, MAX_CONVERSATION_FORK_DELIVERY_ALIASES,
+    MAX_CONVERSATION_FORK_DIRECT_CHILDREN, MAX_CONVERSATION_FORK_FAMILY_THREADS,
+    MAX_CONVERSATION_FORK_INHERITED_OUTCOMES, MAX_GLOBAL_ARTIFACT_BYTES,
+    MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_COUNT, MutationCommand, NewRunEvent,
+    PrivilegedDispatchAttempt, PrivilegedOperationStore, PrivilegedPreparation,
+    PrivilegedRecoveryCandidate, ProviderStartCommit, SecretName, SecretValue, SecretVault,
+    SecureKeyProvider, StoreError, TerminalTurnCommit, VaultError, WorkspaceSearchHit,
+    WorkspaceSearchKind, WorkspaceStore, automation_occurrence_is_active,
     conversation_fork_metadata_is_within_bounds,
 };
 use grok_domain::{
@@ -143,6 +149,8 @@ struct State {
         HashMap<AutomationOccurrenceId, Vec<AutomationOccurrenceClaimAttempt>>,
     automation_occurrence_claim_commands:
         HashMap<(String, String), AutomationOccurrenceClaimCommandRecord>,
+    automation_occurrence_dispatches:
+        HashMap<AutomationOccurrenceId, AutomationOccurrenceDispatchResult>,
     credential_commands: HashMap<(String, String), CredentialCommandRecord>,
     execution_commands: HashMap<(String, String), ExecutionCommandRecord>,
     workspace_commands: HashMap<(String, String), CommandRecord>,
@@ -3806,6 +3814,7 @@ fn invalid_privileged_journal() -> StoreError {
     StoreError::Internal("invalid durable privileged-operation journal".into())
 }
 
+#[allow(clippy::too_many_lines)]
 #[async_trait]
 impl AutomationSchedulerStore for InMemoryExecutionStore {
     async fn acquire_automation_scheduler_lease(
@@ -4252,6 +4261,361 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
         Ok(claimed)
     }
 
+    async fn claim_and_bind_automation_occurrence(
+        &self,
+        mut dispatch: AutomationOccurrenceDispatch,
+    ) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+        let mut state = self.state.lock().await;
+        let claim = &dispatch.claim;
+        validate_scheduler_command(&claim.command, AUTOMATION_CLAIM_SCOPE)?;
+        let command_key = (claim.command.scope.clone(), claim.command.key.clone());
+        if let Some(record) = state.automation_occurrence_claim_commands.get(&command_key) {
+            if record.fingerprint != claim.command.fingerprint
+                || record.occurrence_id != claim.occurrence_id
+            {
+                return Err(StoreError::Conflict);
+            }
+            return state
+                .automation_occurrence_dispatches
+                .get(&claim.occurrence_id)
+                .cloned()
+                .ok_or_else(invalid_automation_scheduler_journal);
+        }
+
+        let lease = require_automation_scheduler_lease(&state, &claim.lease, claim.claimed_at)?;
+        let claim_duration = claim.expires_at.checked_sub(claim.claimed_at);
+        if claim_duration
+            .is_none_or(|duration| duration == 0 || duration > MAX_AUTOMATION_SCHEDULER_LEASE_MS)
+            || claim.expires_at > lease.expires_at
+        {
+            return Err(StoreError::Conflict);
+        }
+        let current = state
+            .automation_occurrences
+            .get(&claim.occurrence_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        AutomationOccurrence::restore(current.clone())
+            .map_err(|_| invalid_automation_scheduler_journal())?;
+        if current.revision != claim.expected_revision
+            || current.state != AutomationOccurrenceState::Pending
+        {
+            return Err(StoreError::Conflict);
+        }
+        let attempts = state
+            .automation_occurrence_claim_attempts
+            .get(&claim.occurrence_id)
+            .cloned()
+            .unwrap_or_default();
+        validate_claim_attempt_sequence(&current, &attempts)?;
+        if attempts
+            .iter()
+            .any(|attempt| attempt.completed_at.is_none())
+        {
+            return Err(invalid_automation_scheduler_journal());
+        }
+
+        dispatch.prompt.sequence = 1;
+        if Thread::restore(dispatch.thread.clone()).is_err()
+            || !matches!(
+                dispatch.thread.lineage.origin,
+                ConversationThreadOrigin::Original
+            )
+            || Message::restore(dispatch.prompt.clone()).is_err()
+            || !dispatch.prompt.derivation.is_original()
+            || dispatch.prompt.role != MessageRole::User
+            || dispatch.prompt.state != MessageState::Active
+            || dispatch.prompt.thread_id != dispatch.thread.id
+            || dispatch.prompt.content != current.snapshot.prompt
+            || dispatch.thread.project_id != current.snapshot.project_id
+            || dispatch.run.project_id != current.snapshot.project_id
+            || dispatch.run.thread_id != dispatch.thread.id
+            || dispatch.run.state != RunState::Queued
+            || dispatch.run.revision != 0
+            || dispatch.thread.created_at != claim.claimed_at
+            || dispatch.prompt.created_at != claim.claimed_at
+            || dispatch.run.created_at != claim.claimed_at
+            || state
+                .projects
+                .get(&current.snapshot.project_id)
+                .is_none_or(|project| project.state != ProjectState::Active)
+            || state.threads.contains_key(&dispatch.thread.id)
+            || state.messages.contains_key(&dispatch.prompt.id)
+            || state.runs.contains_key(&dispatch.run.id)
+            || state
+                .automation_occurrence_dispatches
+                .contains_key(&current.id)
+        {
+            return Err(StoreError::Conflict);
+        }
+
+        let mut linked = current;
+        linked
+            .claim(&claim.lease, claim.claimed_at, claim.expires_at)
+            .map_err(|_| StoreError::Conflict)?;
+        let sequence = linked.claim_attempt_count;
+        if usize::try_from(sequence).ok() != Some(attempts.len().saturating_add(1)) {
+            return Err(invalid_automation_scheduler_journal());
+        }
+        let attempt = AutomationOccurrenceClaimAttempt {
+            occurrence_id: linked.id.clone(),
+            sequence,
+            owner_id: claim.lease.owner_id.clone(),
+            fence: claim.lease.fence,
+            claimed_at: claim.claimed_at,
+            expires_at: claim.expires_at,
+            completed_at: Some(claim.claimed_at),
+            completion: Some(AutomationOccurrenceClaimCompletion::RunLinked),
+            request_fingerprint: claim.command.fingerprint,
+        };
+        let claimed_result = linked.clone();
+        linked
+            .link_run(&claim.lease, dispatch.run.id.clone(), claim.claimed_at)
+            .map_err(|_| StoreError::Conflict)?;
+        let result = AutomationOccurrenceDispatchResult {
+            occurrence: linked.clone(),
+            thread: dispatch.thread.clone(),
+            prompt: dispatch.prompt.clone(),
+            run: dispatch.run.clone(),
+        };
+
+        let mut staged_attempts = attempts;
+        staged_attempts.push(attempt);
+        state
+            .threads
+            .insert(dispatch.thread.id.clone(), dispatch.thread);
+        state
+            .messages
+            .insert(dispatch.prompt.id.clone(), dispatch.prompt);
+        state
+            .runs
+            .insert(dispatch.run.id.clone(), dispatch.run.clone());
+        append_events(
+            &mut state,
+            &dispatch.run.id,
+            vec![NewRunEvent {
+                occurred_at: claim.claimed_at,
+                kind: RunEventKind::Created,
+            }],
+        );
+        state
+            .automation_occurrences
+            .insert(linked.id.clone(), linked.clone());
+        state
+            .automation_occurrence_claim_attempts
+            .insert(linked.id.clone(), staged_attempts);
+        state.automation_occurrence_claim_commands.insert(
+            command_key,
+            AutomationOccurrenceClaimCommandRecord {
+                fingerprint: claim.command.fingerprint,
+                occurrence_id: linked.id.clone(),
+                result: claimed_result,
+            },
+        );
+        state
+            .automation_occurrence_dispatches
+            .insert(result.occurrence.id.clone(), result.clone());
+        Ok(result)
+    }
+
+    async fn list_resumable_automation_dispatches(
+        &self,
+        after: Option<&AutomationOccurrenceId>,
+        limit: usize,
+    ) -> Result<Vec<AutomationOccurrenceDispatchResult>, StoreError> {
+        if limit == 0 || limit > MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS {
+            return Err(StoreError::Conflict);
+        }
+        let state = self.state.lock().await;
+        let mut results = state
+            .automation_occurrence_dispatches
+            .values()
+            .filter_map(|binding| {
+                let occurrence = state.automation_occurrences.get(&binding.occurrence.id)?;
+                let run = state.runs.get(&binding.run.id)?;
+                (occurrence.state == AutomationOccurrenceState::RunLinked
+                    && run.state == RunState::Queued
+                    && occurrence.run_id.as_ref() == Some(&run.id)
+                    && after.is_none_or(|after| occurrence.id.as_str() > after.as_str()))
+                .then(|| AutomationOccurrenceDispatchResult {
+                    occurrence: occurrence.clone(),
+                    thread: binding.thread.clone(),
+                    prompt: binding.prompt.clone(),
+                    run: run.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        results.sort_by(|left, right| left.occurrence.id.cmp(&right.occurrence.id));
+        results.truncate(limit);
+        for dispatch in &results {
+            if state.automation_occurrences.get(&dispatch.occurrence.id)
+                != Some(&dispatch.occurrence)
+                || state.threads.get(&dispatch.thread.id) != Some(&dispatch.thread)
+                || state.messages.get(&dispatch.prompt.id) != Some(&dispatch.prompt)
+                || dispatch.occurrence.run_id.as_ref() != Some(&dispatch.run.id)
+            {
+                return Err(invalid_automation_scheduler_journal());
+            }
+        }
+        Ok(results)
+    }
+
+    async fn begin_automation_occurrence_run(
+        &self,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_occurrence_revision: u64,
+        run_id: &RunId,
+        expected_run_revision: u64,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+        let mut state = self.state.lock().await;
+        let binding = state
+            .automation_occurrence_dispatches
+            .get(occurrence_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        let occurrence = state
+            .automation_occurrences
+            .get(occurrence_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        let mut run = state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        if binding.run.id != *run_id
+            || occurrence.state != AutomationOccurrenceState::RunLinked
+            || occurrence.revision != expected_occurrence_revision
+            || occurrence.run_id.as_ref() != Some(run_id)
+            || run.state != RunState::Queued
+            || run.revision != expected_run_revision
+        {
+            return Err(StoreError::Conflict);
+        }
+        let mut events = Vec::with_capacity(2);
+        let mut from = run.state;
+        run.transition(RunState::Planning, now)
+            .map_err(|_| StoreError::Conflict)?;
+        events.push(NewRunEvent {
+            occurred_at: now,
+            kind: RunEventKind::StateChanged {
+                from,
+                to: RunState::Planning,
+            },
+        });
+        from = run.state;
+        run.transition(RunState::Running, now)
+            .map_err(|_| StoreError::Conflict)?;
+        events.push(NewRunEvent {
+            occurred_at: now,
+            kind: RunEventKind::StateChanged {
+                from,
+                to: RunState::Running,
+            },
+        });
+        state.runs.insert(run.id.clone(), run.clone());
+        append_events(&mut state, &run.id, events);
+        let bound = state
+            .automation_occurrence_dispatches
+            .get_mut(occurrence_id)
+            .ok_or_else(invalid_automation_scheduler_journal)?;
+        bound.run = run.clone();
+        Ok(AutomationOccurrenceDispatchResult {
+            occurrence,
+            thread: binding.thread,
+            prompt: binding.prompt,
+            run,
+        })
+    }
+
+    async fn complete_automation_occurrence_run(
+        &self,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_revision: u64,
+        run_id: &RunId,
+        completion: AutomationOccurrenceRunCompletion,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrence, StoreError> {
+        let mut state = self.state.lock().await;
+        let mut run = state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        let next_run_state = match completion {
+            AutomationOccurrenceRunCompletion::Succeeded => RunState::Completed,
+            AutomationOccurrenceRunCompletion::Failed => RunState::Failed,
+            AutomationOccurrenceRunCompletion::InterruptedNeedsReview => {
+                RunState::InterruptedNeedsReview
+            }
+            AutomationOccurrenceRunCompletion::Cancelled => RunState::Cancelled,
+        };
+        let mut occurrence = state
+            .automation_occurrences
+            .get(occurrence_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        if run.state != RunState::Running
+            || occurrence.revision != expected_revision
+            || occurrence.run_id.as_ref() != Some(run_id)
+        {
+            return Err(StoreError::Conflict);
+        }
+        run.transition(next_run_state, now)
+            .map_err(|_| StoreError::Conflict)?;
+        match completion {
+            AutomationOccurrenceRunCompletion::Succeeded => occurrence.succeed(run_id, now),
+            AutomationOccurrenceRunCompletion::Failed => occurrence.fail(run_id, now),
+            AutomationOccurrenceRunCompletion::InterruptedNeedsReview => {
+                occurrence.interrupt(run_id, now)
+            }
+            AutomationOccurrenceRunCompletion::Cancelled => occurrence.cancel(now),
+        }
+        .map_err(|_| StoreError::Conflict)?;
+        let promoted = sole_queued_occurrence(&state, &occurrence.automation_id)?
+            .map(|mut queued| {
+                queued
+                    .promote_queued(now)
+                    .map_err(|_| StoreError::Conflict)?;
+                Ok::<_, StoreError>(queued)
+            })
+            .transpose()?;
+        if !state
+            .automation_occurrence_dispatches
+            .contains_key(occurrence_id)
+        {
+            return Err(invalid_automation_scheduler_journal());
+        }
+        state
+            .automation_occurrences
+            .insert(occurrence.id.clone(), occurrence.clone());
+        state.runs.insert(run.id.clone(), run.clone());
+        append_events(
+            &mut state,
+            &run.id,
+            vec![NewRunEvent {
+                occurred_at: now,
+                kind: RunEventKind::StateChanged {
+                    from: RunState::Running,
+                    to: next_run_state,
+                },
+            }],
+        );
+        let bound = state
+            .automation_occurrence_dispatches
+            .get_mut(occurrence_id)
+            .ok_or_else(invalid_automation_scheduler_journal)?;
+        bound.occurrence = occurrence.clone();
+        bound.run = run;
+        if let Some(queued) = promoted {
+            state
+                .automation_occurrences
+                .insert(queued.id.clone(), queued);
+        }
+        Ok(occurrence)
+    }
+
     async fn recover_automation_occurrence_claims(
         &self,
         lease: &AutomationSchedulerLeaseToken,
@@ -4289,6 +4653,8 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
 
         let mut staged_occurrences = HashMap::new();
         let mut staged_attempts = HashMap::new();
+        let mut staged_runs = HashMap::new();
+        let mut staged_run_events = Vec::new();
         let mut summary = AutomationSchedulerRecoverySummary {
             truncated,
             ..AutomationSchedulerRecoverySummary::default()
@@ -4318,10 +4684,50 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
                         .run_id
                         .clone()
                         .ok_or_else(invalid_automation_scheduler_journal)?;
-                    occurrence
-                        .interrupt(&run_id, now)
-                        .map_err(|_| invalid_automation_scheduler_journal())?;
-                    summary.interrupted_linked = summary.interrupted_linked.saturating_add(1);
+                    if state
+                        .automation_occurrence_dispatches
+                        .get(&occurrence.id)
+                        .is_some_and(|binding| binding.run.id == run_id)
+                        && state
+                            .runs
+                            .get(&run_id)
+                            .is_some_and(|run| run.state == RunState::Queued)
+                    {
+                        summary.resumable_bound_queued =
+                            summary.resumable_bound_queued.saturating_add(1);
+                        continue;
+                    }
+                    let mut run = state
+                        .runs
+                        .get(&run_id)
+                        .cloned()
+                        .ok_or_else(invalid_automation_scheduler_journal)?;
+                    match run.state {
+                        RunState::Completed => occurrence.succeed(&run_id, now),
+                        RunState::Failed => occurrence.fail(&run_id, now),
+                        RunState::Cancelled => occurrence.cancel(now),
+                        RunState::InterruptedNeedsReview => occurrence.interrupt(&run_id, now),
+                        prior => {
+                            run.transition(RunState::InterruptedNeedsReview, now)
+                                .map_err(|_| invalid_automation_scheduler_journal())?;
+                            staged_run_events.push((
+                                run_id.clone(),
+                                NewRunEvent {
+                                    occurred_at: now,
+                                    kind: RunEventKind::StateChanged {
+                                        from: prior,
+                                        to: RunState::InterruptedNeedsReview,
+                                    },
+                                },
+                            ));
+                            staged_runs.insert(run_id.clone(), run);
+                            occurrence.interrupt(&run_id, now)
+                        }
+                    }
+                    .map_err(|_| invalid_automation_scheduler_journal())?;
+                    if occurrence.state == AutomationOccurrenceState::InterruptedNeedsReview {
+                        summary.interrupted_linked = summary.interrupted_linked.saturating_add(1);
+                    }
                     // Link already records RunLinked claim evidence; recovery
                     // must not rewrite completed attempt rows.
                     let attempts = state
@@ -4330,8 +4736,7 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
                         .cloned()
                         .ok_or_else(invalid_automation_scheduler_journal)?;
                     if attempts.last().is_some_and(|attempt| {
-                        attempt.completion
-                            == Some(AutomationOccurrenceClaimCompletion::RunLinked)
+                        attempt.completion == Some(AutomationOccurrenceClaimCompletion::RunLinked)
                             && attempt.completed_at.is_some()
                     }) {
                         if matches!(
@@ -4375,7 +4780,23 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
             staged_occurrences.insert(current.id, occurrence);
         }
         for (id, occurrence) in staged_occurrences {
+            if let Some(binding) = state.automation_occurrence_dispatches.get_mut(&id) {
+                binding.occurrence = occurrence.clone();
+            }
             state.automation_occurrences.insert(id, occurrence);
+        }
+        for (id, run) in staged_runs {
+            if let Some(binding) = state
+                .automation_occurrence_dispatches
+                .values_mut()
+                .find(|binding| binding.run.id == id)
+            {
+                binding.run = run.clone();
+            }
+            state.runs.insert(id, run);
+        }
+        for (run_id, event) in staged_run_events {
+            append_events(&mut state, &run_id, vec![event]);
         }
         for (id, attempts) in staged_attempts {
             state
@@ -4458,6 +4879,9 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
             .cloned()
             .ok_or(StoreError::NotFound)?;
         if current.revision != expected_revision {
+            return Err(StoreError::Conflict);
+        }
+        if !state.runs.contains_key(&run_id) {
             return Err(StoreError::Conflict);
         }
         let mut occurrence = current.clone();
@@ -4767,24 +5191,18 @@ fn validate_claim_attempt_sequence(
     }
     // Claimed must keep exactly one open attempt. RunLinked may either still be
     // live (open) or already sealed with immutable RunLinked evidence after link.
-    let run_linked_sealed = matches!(
-        occurrence.state,
-        AutomationOccurrenceState::RunLinked
-    ) && open_count == 0
+    let run_linked_sealed = matches!(occurrence.state, AutomationOccurrenceState::RunLinked)
+        && open_count == 0
         && attempts.last().is_some_and(|attempt| {
             attempt.completion == Some(AutomationOccurrenceClaimCompletion::RunLinked)
                 && attempt.completed_at.is_some()
         });
-    if open_count > 1
-        || (matches!(occurrence.state, AutomationOccurrenceState::Claimed) != (open_count == 1)
-            && !(matches!(occurrence.state, AutomationOccurrenceState::RunLinked)
-                && (open_count == 1 || run_linked_sealed))
-            && (open_count == 1
-                && !matches!(
-                    occurrence.state,
-                    AutomationOccurrenceState::Claimed | AutomationOccurrenceState::RunLinked
-                )))
-    {
+    let claim_attempt_shape_valid = match occurrence.state {
+        AutomationOccurrenceState::Claimed => open_count == 1,
+        AutomationOccurrenceState::RunLinked => open_count == 1 || run_linked_sealed,
+        _ => open_count == 0,
+    };
+    if open_count > 1 || !claim_attempt_shape_valid {
         return Err(invalid_automation_scheduler_journal());
     }
     Ok(())
@@ -5072,6 +5490,10 @@ impl WorkspaceStore for InMemoryExecutionStore {
             return Ok(());
         }
         if !message.derivation.is_original()
+            || state
+                .automation_occurrence_dispatches
+                .values()
+                .any(|dispatch| dispatch.prompt.id == message.id)
             || state.conversation_turns.values().any(|turn| {
                 turn.user_message_id == message.id
                     || turn.assistant_message_id.as_ref() == Some(&message.id)
@@ -9044,7 +9466,18 @@ mod tests {
 
         let state = store.state.lock().await;
         assert_eq!(state.runs.len(), 1);
-        assert_eq!(state.runs.get(&linked_run_id), Some(&linked_run));
+        let mut expected_run = linked_run;
+        expected_run
+            .transition(RunState::InterruptedNeedsReview, recovery_at)
+            .expect("recovery transition");
+        assert_eq!(state.runs.get(&linked_run_id), Some(&expected_run));
+        assert!(state.events[&linked_run_id].iter().any(|event| {
+            event.kind
+                == RunEventKind::StateChanged {
+                    from: RunState::Queued,
+                    to: RunState::InterruptedNeedsReview,
+                }
+        }));
         assert_eq!(
             state.automation_occurrence_claim_attempts[&unlinked.id][0].completion,
             Some(AutomationOccurrenceClaimCompletion::ExpiredUnlinked)
@@ -10323,14 +10756,32 @@ mod tests {
         let run_id = RunId::new("linked-run").expect("run id");
         {
             let mut state = store.state.lock().await;
-            let stored = state
-                .automation_occurrences
-                .get_mut(&claimed.id)
-                .expect("stored claim");
-            stored
-                .link_run(&lease, run_id.clone(), claim_time + 1)
-                .expect("link run");
+            let run = Run::queued(
+                run_id.clone(),
+                linked.project_id.clone(),
+                ThreadId::new("linked-thread").expect("thread id"),
+                claim_time + 1,
+            );
+            state.runs.insert(run_id.clone(), run);
+            append_events(
+                &mut state,
+                &run_id,
+                vec![NewRunEvent {
+                    occurred_at: claim_time + 1,
+                    kind: RunEventKind::Created,
+                }],
+            );
         }
+        store
+            .link_automation_occurrence_run(
+                &lease,
+                &claimed.id,
+                claimed.revision,
+                run_id.clone(),
+                claim_time + 1,
+            )
+            .await
+            .expect("link run");
         let recovered = store
             .recover_automation_occurrence_claims(&lease, claim_expiry, 1)
             .await
@@ -14015,9 +14466,27 @@ mod tests {
             .ok_or(StoreError::NotFound)
     }
 
+    struct SuccessfulScheduledDispatcher;
+
+    #[async_trait]
+    impl grok_application::ScheduledGuestDispatcher for SuccessfulScheduledDispatcher {
+        async fn dispatch(
+            &self,
+            request: grok_application::ScheduledGuestRequest,
+            cancellation: tokio_util::sync::CancellationToken,
+        ) -> Result<
+            grok_application::ScheduledGuestOutcome,
+            grok_application::ScheduledGuestDispatchError,
+        > {
+            assert!(!cancellation.is_cancelled());
+            assert!(!request.prompt.is_empty());
+            Ok(grok_application::ScheduledGuestOutcome::Succeeded)
+        }
+    }
+
     #[tokio::test]
     async fn automation_scheduler_execute_due_claims_and_links_a_run() {
-        use grok_application::{CreateProject, RunService, WorkspaceService};
+        use grok_application::{CreateProject, WorkspaceService};
 
         let store = Arc::new(InMemoryExecutionStore::new());
         let clock = Arc::new(FixedClock::new(0));
@@ -14054,11 +14523,9 @@ mod tests {
         let due_clock = Arc::new(FixedClock::new(due_at));
         let scheduler =
             AutomationSchedulerService::new(store.clone(), due_clock.clone(), ids.clone());
-        let workspace = WorkspaceService::new(store.clone(), due_clock.clone(), ids.clone());
-        let runs = RunService::new(store.clone(), due_clock.clone(), ids.clone());
         let owner = AutomationSchedulerOwnerId::new("execute-due-owner").expect("owner");
         let dispatched = scheduler
-            .execute_due(&owner, &runs, &workspace, 10)
+            .execute_due(&owner, 10)
             .await
             .expect("execute due");
         assert!(dispatched >= 1, "expected at least one linked occurrence");
@@ -14074,5 +14541,37 @@ mod tests {
         assert!(occurrences.iter().any(|occurrence| {
             occurrence.state == AutomationOccurrenceState::RunLinked && occurrence.run_id.is_some()
         }));
+        let bound = store
+            .list_resumable_automation_dispatches(None, 10)
+            .await
+            .expect("bound dispatch");
+        let diagnostic = format!("{:?}", bound.first().expect("bound work"));
+        assert!(!diagnostic.contains("Run the brief"));
+        assert!(diagnostic.contains("[REDACTED]"));
+        assert_eq!(
+            scheduler
+                .dispatch_resumable(
+                    &SuccessfulScheduledDispatcher,
+                    &tokio_util::sync::CancellationToken::new(),
+                    10,
+                )
+                .await
+                .expect("isolated dispatch"),
+            dispatched
+        );
+        let terminal = store
+            .list_automation_occurrences(&automation.id, None, 16)
+            .await
+            .expect("terminal occurrences");
+        assert!(terminal.iter().any(|occurrence| {
+            occurrence.state == AutomationOccurrenceState::Succeeded && occurrence.run_id.is_some()
+        }));
+        assert!(
+            store
+                .list_resumable_automation_dispatches(None, 10)
+                .await
+                .expect("no queued replays")
+                .is_empty()
+        );
     }
 }

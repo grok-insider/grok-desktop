@@ -2,10 +2,11 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 use grok_application::{
-    AutomationScheduleCandidate, AutomationScheduleEvaluationCommit,
-    AutomationScheduleEvaluationResult, AutomationSchedulerJournalStatus,
-    AutomationSchedulerLeaseAcquisition, AutomationSchedulerRecoverySummary,
-    AutomationSchedulerStore, ClaimAutomationOccurrence,
+    AutomationOccurrenceDispatch, AutomationOccurrenceDispatchResult,
+    AutomationOccurrenceRunCompletion, AutomationScheduleCandidate,
+    AutomationScheduleEvaluationCommit, AutomationScheduleEvaluationResult,
+    AutomationSchedulerJournalStatus, AutomationSchedulerLeaseAcquisition,
+    AutomationSchedulerRecoverySummary, AutomationSchedulerStore, ClaimAutomationOccurrence,
     MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
     MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS, MutationCommand, StoreError,
 };
@@ -15,9 +16,10 @@ use grok_domain::{
     AutomationOccurrenceId, AutomationOccurrenceState, AutomationScheduleCursor,
     AutomationScheduleDecision, AutomationScheduleFingerprint, AutomationSchedulerLease,
     AutomationSchedulerLeaseToken, AutomationSchedulerOwnerId, AutomationState,
-    MAX_AUTOMATION_OCCURRENCE_CLAIM_ATTEMPTS, MAX_AUTOMATION_SCHEDULE_DECISIONS,
-    MAX_AUTOMATION_SCHEDULER_LEASE_MS, MissedRunPolicy, OverlapPolicy, ProjectId, ProjectState,
-    RunId, UnixMillis,
+    ConversationThreadOrigin, MAX_AUTOMATION_OCCURRENCE_CLAIM_ATTEMPTS,
+    MAX_AUTOMATION_SCHEDULE_DECISIONS, MAX_AUTOMATION_SCHEDULER_LEASE_MS, Message, MessageRole,
+    MessageState, MissedRunPolicy, OverlapPolicy, ProjectId, ProjectState, RunEventKind, RunId,
+    RunState, Thread, UnixMillis,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
@@ -33,6 +35,19 @@ const OCCURRENCE_COLUMNS: &str = "id,automation_id,definition_revision,snapshot_
      calculator_version,nominal_year,nominal_month,nominal_day,nominal_hour,nominal_minute,\
      scheduled_for,occurrence_count,state,claim_owner_id,claim_fence,claimed_at,claim_expires_at,\
      run_id,claim_attempt_count,revision,created_at,updated_at";
+const THREAD_COLUMNS: &str = "id,project_id,title,state,revision,created_at,updated_at,\
+    (SELECT parent_thread_id FROM conversation_thread_forks WHERE child_thread_id=threads.id),\
+    (SELECT source_turn_id FROM conversation_thread_forks WHERE child_thread_id=threads.id),\
+    (SELECT source_message_id FROM conversation_thread_forks WHERE child_thread_id=threads.id),\
+    (SELECT kind FROM conversation_thread_forks WHERE child_thread_id=threads.id),\
+    (SELECT root_thread_id FROM conversation_thread_forks WHERE child_thread_id=threads.id),\
+    (SELECT fork_depth FROM conversation_thread_forks WHERE child_thread_id=threads.id)";
+const MESSAGE_COLUMNS: &str = "id,thread_id,sequence,role,content,state,revision,created_at,updated_at,\
+    (SELECT kind FROM conversation_message_derivations WHERE child_message_id=messages.id),\
+    (SELECT source_message_id FROM conversation_message_derivations WHERE child_message_id=messages.id),\
+    (SELECT source_turn_id FROM conversation_message_derivations WHERE child_message_id=messages.id),\
+    (SELECT source_context_sequence FROM conversation_message_derivations WHERE child_message_id=messages.id)";
+const RUN_COLUMNS: &str = "id,project_id,thread_id,state,revision,created_at,updated_at";
 
 #[async_trait]
 impl AutomationSchedulerStore for SqlCipherStore {
@@ -96,6 +111,72 @@ impl AutomationSchedulerStore for SqlCipherStore {
             .await
     }
 
+    async fn claim_and_bind_automation_occurrence(
+        &self,
+        dispatch: AutomationOccurrenceDispatch,
+    ) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+        self.with_store(move |connection| claim_and_bind_occurrence(connection, dispatch))
+            .await
+    }
+
+    async fn list_resumable_automation_dispatches(
+        &self,
+        after: Option<&AutomationOccurrenceId>,
+        limit: usize,
+    ) -> Result<Vec<AutomationOccurrenceDispatchResult>, StoreError> {
+        let after = after.map(ToString::to_string);
+        self.with_store(move |connection| {
+            list_resumable_dispatches(connection, after.as_deref(), limit)
+        })
+        .await
+    }
+
+    async fn begin_automation_occurrence_run(
+        &self,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_occurrence_revision: u64,
+        run_id: &RunId,
+        expected_run_revision: u64,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+        let occurrence_id = occurrence_id.clone();
+        let run_id = run_id.clone();
+        self.with_store(move |connection| {
+            begin_occurrence_run(
+                connection,
+                &occurrence_id,
+                expected_occurrence_revision,
+                &run_id,
+                expected_run_revision,
+                now,
+            )
+        })
+        .await
+    }
+
+    async fn complete_automation_occurrence_run(
+        &self,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_revision: u64,
+        run_id: &RunId,
+        completion: AutomationOccurrenceRunCompletion,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrence, StoreError> {
+        let occurrence_id = occurrence_id.clone();
+        let run_id = run_id.clone();
+        self.with_store(move |connection| {
+            complete_occurrence_run(
+                connection,
+                &occurrence_id,
+                expected_revision,
+                &run_id,
+                completion,
+                now,
+            )
+        })
+        .await
+    }
+
     async fn recover_automation_occurrence_claims(
         &self,
         lease: &AutomationSchedulerLeaseToken,
@@ -124,7 +205,14 @@ impl AutomationSchedulerStore for SqlCipherStore {
         let lease = lease.clone();
         let occurrence_id = occurrence_id.clone();
         self.with_store(move |connection| {
-            link_occurrence_run(connection, &lease, &occurrence_id, expected_revision, run_id, now)
+            link_occurrence_run(
+                connection,
+                &lease,
+                &occurrence_id,
+                expected_revision,
+                run_id,
+                now,
+            )
         })
         .await
     }
@@ -1001,6 +1089,457 @@ fn claim_occurrence(
     Ok(occurrence)
 }
 
+#[allow(clippy::too_many_lines)]
+fn claim_and_bind_occurrence(
+    connection: &mut Connection,
+    mut dispatch: AutomationOccurrenceDispatch,
+) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+    let claim = &dispatch.claim;
+    validate_command(&claim.command, "automation_scheduler_claim_v1")?;
+    if claim.expires_at <= claim.claimed_at
+        || claim.expires_at - claim.claimed_at > MAX_AUTOMATION_SCHEDULER_LEASE_MS
+    {
+        return Err(StoreError::Conflict);
+    }
+    dispatch.prompt.sequence = 1;
+    if Thread::restore(dispatch.thread.clone()).is_err()
+        || !matches!(
+            dispatch.thread.lineage.origin,
+            ConversationThreadOrigin::Original
+        )
+        || Message::restore(dispatch.prompt.clone()).is_err()
+        || !dispatch.prompt.derivation.is_original()
+        || dispatch.prompt.role != MessageRole::User
+        || dispatch.prompt.state != MessageState::Active
+        || dispatch.prompt.thread_id != dispatch.thread.id
+        || dispatch.run.project_id != dispatch.thread.project_id
+        || dispatch.run.thread_id != dispatch.thread.id
+        || dispatch.run.state != RunState::Queued
+        || dispatch.run.revision != 0
+        || dispatch.thread.created_at != claim.claimed_at
+        || dispatch.thread.updated_at != claim.claimed_at
+        || dispatch.prompt.created_at != claim.claimed_at
+        || dispatch.prompt.updated_at != claim.claimed_at
+        || dispatch.run.created_at != claim.claimed_at
+        || dispatch.run.updated_at != claim.claimed_at
+    {
+        return Err(StoreError::Conflict);
+    }
+
+    let transaction = begin(connection)?;
+    if let Some((fingerprint, occurrence_id, thread_id, prompt_id, run_id)) = transaction
+        .query_row(
+            "SELECT attempt.request_fingerprint,dispatch.occurrence_id,dispatch.thread_id,
+                    dispatch.prompt_message_id,dispatch.run_id
+             FROM automation_occurrence_dispatches dispatch
+             JOIN automation_occurrence_claim_attempts attempt
+               ON attempt.occurrence_id=dispatch.occurrence_id
+              AND attempt.sequence=dispatch.claim_sequence
+             WHERE attempt.command_scope=?1 AND attempt.idempotency_key=?2",
+            params![claim.command.scope, claim.command.key],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite)?
+    {
+        if fingerprint != claim.command.fingerprint
+            || occurrence_id != claim.occurrence_id.as_str()
+            || thread_id != dispatch.thread.id.as_str()
+            || prompt_id != dispatch.prompt.id.as_str()
+            || run_id != dispatch.run.id.as_str()
+        {
+            return Err(StoreError::Conflict);
+        }
+        return query_dispatch_result(
+            &transaction,
+            &occurrence_id,
+            &thread_id,
+            &prompt_id,
+            &run_id,
+        );
+    }
+    // A claim command without a dispatch binding is either a legacy standalone
+    // claim or corrupt partial state. It can never be upgraded into work.
+    let command_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM automation_occurrence_claim_attempts
+             WHERE command_scope=?1 AND idempotency_key=?2)",
+            params![claim.command.scope, claim.command.key],
+            |row| row.get(0),
+        )
+        .map_err(map_sqlite)?;
+    if command_exists {
+        return Err(StoreError::Conflict);
+    }
+
+    ensure_live_lease(
+        &transaction,
+        &claim.lease,
+        claim.claimed_at,
+        Some(claim.expires_at),
+    )?;
+    let mut occurrence = query_occurrence(&transaction, claim.occurrence_id.as_str())?;
+    if occurrence.revision != claim.expected_revision
+        || occurrence.state != AutomationOccurrenceState::Pending
+        || dispatch.thread.project_id != occurrence.snapshot.project_id
+        || dispatch.prompt.content != occurrence.snapshot.prompt
+    {
+        return Err(StoreError::Conflict);
+    }
+    let project_state = transaction
+        .query_row(
+            "SELECT state FROM projects WHERE id=?1",
+            [occurrence.snapshot.project_id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(map_sqlite)?;
+    if project_state != Some(mapping::project_state_to_i64(ProjectState::Active)) {
+        return Err(StoreError::Conflict);
+    }
+
+    occurrence
+        .claim(&claim.lease, claim.claimed_at, claim.expires_at)
+        .map_err(|_| StoreError::Conflict)?;
+    update_occurrence(&transaction, &occurrence)?;
+    transaction
+        .execute(
+            "INSERT INTO automation_occurrence_claim_attempts(
+                 occurrence_id,sequence,command_scope,idempotency_key,request_fingerprint,
+                 owner_id,fence,claimed_at,expires_at,completed_at,outcome,result_occurrence_revision
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,NULL,NULL,?10)",
+            params![
+                occurrence.id.as_str(),
+                i64::from(occurrence.claim_attempt_count),
+                claim.command.scope,
+                claim.command.key,
+                claim.command.fingerprint.as_slice(),
+                claim.lease.owner_id.as_str(),
+                number(claim.lease.fence)?,
+                number(claim.claimed_at)?,
+                number(claim.expires_at)?,
+                number(occurrence.revision)?,
+            ],
+        )
+        .map_err(map_sqlite)?;
+    transaction
+        .execute(
+            "INSERT INTO threads(id,project_id,title,state,revision,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                dispatch.thread.id.as_str(),
+                dispatch.thread.project_id.as_str(),
+                dispatch.thread.title,
+                mapping::thread_state_to_i64(dispatch.thread.state),
+                number(dispatch.thread.revision)?,
+                number(dispatch.thread.created_at)?,
+                number(dispatch.thread.updated_at)?,
+            ],
+        )
+        .map_err(map_sqlite)?;
+    transaction
+        .execute(
+            "INSERT INTO messages(id,thread_id,sequence,role,content,state,revision,created_at,updated_at)
+             VALUES (?1,?2,1,?3,?4,?5,?6,?7,?8)",
+            params![
+                dispatch.prompt.id.as_str(),
+                dispatch.prompt.thread_id.as_str(),
+                mapping::message_role_to_i64(dispatch.prompt.role),
+                dispatch.prompt.content,
+                mapping::message_state_to_i64(dispatch.prompt.state),
+                number(dispatch.prompt.revision)?,
+                number(dispatch.prompt.created_at)?,
+                number(dispatch.prompt.updated_at)?,
+            ],
+        )
+        .map_err(map_sqlite)?;
+    crate::store::insert_run(&transaction, &dispatch.run)?;
+    crate::store::append_events(
+        &transaction,
+        &dispatch.run.id,
+        vec![grok_application::NewRunEvent {
+            occurred_at: claim.claimed_at,
+            kind: RunEventKind::Created,
+        }],
+    )?;
+    occurrence
+        .link_run(&claim.lease, dispatch.run.id.clone(), claim.claimed_at)
+        .map_err(|_| StoreError::Conflict)?;
+    update_occurrence(&transaction, &occurrence)?;
+    complete_open_attempt(&transaction, &occurrence, claim.claimed_at, 1)?;
+    transaction
+        .execute(
+            "INSERT INTO automation_occurrence_dispatches(
+                 occurrence_id,claim_sequence,thread_id,prompt_message_id,run_id,
+                 request_fingerprint,created_at
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                occurrence.id.as_str(),
+                i64::from(occurrence.claim_attempt_count),
+                dispatch.thread.id.as_str(),
+                dispatch.prompt.id.as_str(),
+                dispatch.run.id.as_str(),
+                claim.command.fingerprint.as_slice(),
+                number(claim.claimed_at)?,
+            ],
+        )
+        .map_err(map_sqlite)?;
+    transaction.commit().map_err(map_sqlite)?;
+    Ok(AutomationOccurrenceDispatchResult {
+        occurrence,
+        thread: dispatch.thread,
+        prompt: dispatch.prompt,
+        run: dispatch.run,
+    })
+}
+
+fn query_dispatch_result(
+    connection: &Connection,
+    occurrence_id: &str,
+    thread_id: &str,
+    prompt_id: &str,
+    run_id: &str,
+) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+    Ok(AutomationOccurrenceDispatchResult {
+        occurrence: query_occurrence(connection, occurrence_id)?,
+        thread: connection
+            .query_row(
+                &format!("SELECT {THREAD_COLUMNS} FROM threads WHERE id=?1"),
+                [thread_id],
+                mapping::thread_from_row,
+            )
+            .map_err(map_sqlite)?,
+        prompt: connection
+            .query_row(
+                &format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE id=?1"),
+                [prompt_id],
+                mapping::message_from_row,
+            )
+            .map_err(map_sqlite)?,
+        run: connection
+            .query_row(
+                &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id=?1"),
+                [run_id],
+                mapping::run_from_row,
+            )
+            .map_err(map_sqlite)?,
+    })
+}
+
+fn list_resumable_dispatches(
+    connection: &Connection,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AutomationOccurrenceDispatchResult>, StoreError> {
+    if limit == 0 || limit > MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS {
+        return Err(StoreError::Conflict);
+    }
+    let bindings = {
+        let mut statement = connection
+            .prepare(
+                "SELECT dispatch.occurrence_id,dispatch.thread_id,
+                        dispatch.prompt_message_id,dispatch.run_id
+                 FROM automation_occurrence_dispatches dispatch
+                 JOIN automation_occurrences occurrence ON occurrence.id=dispatch.occurrence_id
+                 JOIN runs run ON run.id=dispatch.run_id
+                 WHERE occurrence.state=3 AND run.state=0
+                   AND (?1 IS NULL OR dispatch.occurrence_id>?1)
+                 ORDER BY dispatch.occurrence_id LIMIT ?2",
+            )
+            .map_err(map_sqlite)?;
+        let rows = statement
+            .query_map(params![after, sql_limit(limit)], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(map_sqlite)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(map_sqlite)?
+    };
+    bindings
+        .into_iter()
+        .map(|(occurrence, thread, prompt, run)| {
+            query_dispatch_result(connection, &occurrence, &thread, &prompt, &run)
+        })
+        .collect()
+}
+
+fn begin_occurrence_run(
+    connection: &mut Connection,
+    occurrence_id: &AutomationOccurrenceId,
+    expected_occurrence_revision: u64,
+    run_id: &RunId,
+    expected_run_revision: u64,
+    now: UnixMillis,
+) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+    let transaction = begin(connection)?;
+    let binding = transaction
+        .query_row(
+            "SELECT thread_id,prompt_message_id,run_id
+             FROM automation_occurrence_dispatches WHERE occurrence_id=?1",
+            [occurrence_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite)?
+        .ok_or(StoreError::NotFound)?;
+    if binding.2 != run_id.as_str() {
+        return Err(StoreError::Conflict);
+    }
+    let occurrence = query_occurrence(&transaction, occurrence_id.as_str())?;
+    let mut run = transaction
+        .query_row(
+            &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id=?1"),
+            [run_id.as_str()],
+            mapping::run_from_row,
+        )
+        .map_err(map_sqlite)?;
+    if occurrence.state != AutomationOccurrenceState::RunLinked
+        || occurrence.revision != expected_occurrence_revision
+        || occurrence.run_id.as_ref() != Some(run_id)
+        || run.state != RunState::Queued
+        || run.revision != expected_run_revision
+    {
+        return Err(StoreError::Conflict);
+    }
+    let mut events = Vec::with_capacity(2);
+    let mut from = run.state;
+    run.transition(RunState::Planning, now)
+        .map_err(|_| StoreError::Conflict)?;
+    events.push(grok_application::NewRunEvent {
+        occurred_at: now,
+        kind: RunEventKind::StateChanged {
+            from,
+            to: RunState::Planning,
+        },
+    });
+    from = run.state;
+    run.transition(RunState::Running, now)
+        .map_err(|_| StoreError::Conflict)?;
+    events.push(grok_application::NewRunEvent {
+        occurred_at: now,
+        kind: RunEventKind::StateChanged {
+            from,
+            to: RunState::Running,
+        },
+    });
+    let changed = transaction
+        .execute(
+            "UPDATE runs SET state=?1,revision=?2,updated_at=?3
+             WHERE id=?4 AND revision=?5",
+            params![
+                mapping::run_state_to_i64(run.state),
+                number(run.revision)?,
+                number(run.updated_at)?,
+                run.id.as_str(),
+                number(expected_run_revision)?,
+            ],
+        )
+        .map_err(map_sqlite)?;
+    if changed != 1 || run.revision != expected_run_revision.saturating_add(2) {
+        return Err(StoreError::Conflict);
+    }
+    crate::store::append_events(&transaction, &run.id, events)?;
+    let result = query_dispatch_result(
+        &transaction,
+        occurrence_id.as_str(),
+        &binding.0,
+        &binding.1,
+        &binding.2,
+    )?;
+    transaction.commit().map_err(map_sqlite)?;
+    Ok(result)
+}
+
+fn complete_occurrence_run(
+    connection: &mut Connection,
+    occurrence_id: &AutomationOccurrenceId,
+    expected_revision: u64,
+    run_id: &RunId,
+    completion: AutomationOccurrenceRunCompletion,
+    now: UnixMillis,
+) -> Result<AutomationOccurrence, StoreError> {
+    let transaction = begin(connection)?;
+    let bound: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM automation_occurrence_dispatches
+             WHERE occurrence_id=?1 AND run_id=?2)",
+            params![occurrence_id.as_str(), run_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(map_sqlite)?;
+    if !bound {
+        return Err(StoreError::Conflict);
+    }
+    let mut run = transaction
+        .query_row(
+            &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id=?1"),
+            [run_id.as_str()],
+            mapping::run_from_row,
+        )
+        .map_err(map_sqlite)?;
+    let next_run_state = match completion {
+        AutomationOccurrenceRunCompletion::Succeeded => RunState::Completed,
+        AutomationOccurrenceRunCompletion::Failed => RunState::Failed,
+        AutomationOccurrenceRunCompletion::InterruptedNeedsReview => {
+            RunState::InterruptedNeedsReview
+        }
+        AutomationOccurrenceRunCompletion::Cancelled => RunState::Cancelled,
+    };
+    let mut occurrence = query_occurrence(&transaction, occurrence_id.as_str())?;
+    if run.state != RunState::Running
+        || occurrence.revision != expected_revision
+        || occurrence.run_id.as_ref() != Some(run_id)
+    {
+        return Err(StoreError::Conflict);
+    }
+    run.transition(next_run_state, now)
+        .map_err(|_| StoreError::Conflict)?;
+    match completion {
+        AutomationOccurrenceRunCompletion::Succeeded => occurrence.succeed(run_id, now),
+        AutomationOccurrenceRunCompletion::Failed => occurrence.fail(run_id, now),
+        AutomationOccurrenceRunCompletion::InterruptedNeedsReview => {
+            occurrence.interrupt(run_id, now)
+        }
+        AutomationOccurrenceRunCompletion::Cancelled => occurrence.cancel(now),
+    }
+    .map_err(|_| StoreError::Conflict)?;
+    crate::store::update_run(&transaction, &run, run.revision.saturating_sub(1))?;
+    crate::store::append_events(
+        &transaction,
+        &run.id,
+        vec![grok_application::NewRunEvent {
+            occurred_at: now,
+            kind: RunEventKind::StateChanged {
+                from: RunState::Running,
+                to: next_run_state,
+            },
+        }],
+    )?;
+    update_occurrence(&transaction, &occurrence)?;
+    promote_queued(&transaction, occurrence.automation_id.as_str(), now)?;
+    transaction.commit().map_err(map_sqlite)?;
+    Ok(occurrence)
+}
+
+#[allow(clippy::too_many_lines)]
 fn recover_claims(
     connection: &mut Connection,
     lease: &AutomationSchedulerLeaseToken,
@@ -1059,13 +1598,61 @@ fn recover_claims(
                 let run_id = occurrence.run_id.clone().ok_or_else(|| {
                     StoreError::Internal("run-linked automation occurrence lacks run id".into())
                 })?;
-                occurrence
-                    .interrupt(&run_id, now)
-                    .map_err(|_| StoreError::Conflict)?;
+                let resumable: bool = transaction
+                    .query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM automation_occurrence_dispatches dispatch
+                            JOIN runs run ON run.id=dispatch.run_id
+                            WHERE dispatch.occurrence_id=?1
+                              AND dispatch.run_id=?2 AND run.state=0
+                        )",
+                        params![occurrence.id.as_str(), run_id.as_str()],
+                        |row| row.get(0),
+                    )
+                    .map_err(map_sqlite)?;
+                if resumable {
+                    summary.resumable_bound_queued =
+                        summary.resumable_bound_queued.saturating_add(1);
+                    continue;
+                }
+                let mut run = transaction
+                    .query_row(
+                        &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id=?1"),
+                        [run_id.as_str()],
+                        mapping::run_from_row,
+                    )
+                    .map_err(map_sqlite)?;
+                match run.state {
+                    RunState::Completed => occurrence.succeed(&run_id, now),
+                    RunState::Failed => occurrence.fail(&run_id, now),
+                    RunState::Cancelled => occurrence.cancel(now),
+                    RunState::InterruptedNeedsReview => occurrence.interrupt(&run_id, now),
+                    prior => {
+                        let expected_revision = run.revision;
+                        run.transition(RunState::InterruptedNeedsReview, now)
+                            .map_err(|_| StoreError::Conflict)?;
+                        crate::store::update_run(&transaction, &run, expected_revision)?;
+                        crate::store::append_events(
+                            &transaction,
+                            &run.id,
+                            vec![grok_application::NewRunEvent {
+                                occurred_at: now,
+                                kind: RunEventKind::StateChanged {
+                                    from: prior,
+                                    to: RunState::InterruptedNeedsReview,
+                                },
+                            }],
+                        )?;
+                        occurrence.interrupt(&run_id, now)
+                    }
+                }
+                .map_err(|_| StoreError::Conflict)?;
                 update_occurrence(&transaction, &occurrence)?;
                 ensure_linked_attempt_evidence(&transaction, &occurrence, now)?;
                 promote_queued(&transaction, occurrence.automation_id.as_str(), now)?;
-                summary.interrupted_linked += 1;
+                if occurrence.state == AutomationOccurrenceState::InterruptedNeedsReview {
+                    summary.interrupted_linked += 1;
+                }
             }
             _ => {
                 return Err(StoreError::Internal(
@@ -1798,6 +2385,321 @@ mod tests {
             )
             .expect("automation row");
         (directory, connection, automation)
+    }
+
+    fn materialize_pending(
+        connection: &mut Connection,
+        automation: &Automation,
+    ) -> (AutomationSchedulerLease, AutomationOccurrence) {
+        let schedule = AutomationSchedule::parse_canonical(&automation.schedule).expect("schedule");
+        let decision = schedule
+            .next_decision_after(&automation.timezone, automation.updated_at)
+            .expect("decision");
+        let due_at = decision.scheduled_for().expect("due");
+        let owner = AutomationSchedulerOwnerId::new("dispatch-owner").expect("owner");
+        let AutomationSchedulerLeaseAcquisition::Acquired { lease, .. } =
+            acquire_lease(connection, owner, due_at, 60_000).expect("lease")
+        else {
+            panic!("expected lease")
+        };
+        let snapshot = AutomationExecutionSnapshot::new(
+            automation.revision,
+            automation.project_id.clone(),
+            automation.title.clone(),
+            automation.prompt.clone(),
+            automation.schedule.clone(),
+            automation.timezone.clone(),
+            automation.missed_run_policy,
+            automation.overlap_policy,
+        )
+        .expect("snapshot");
+        let initialized = AutomationScheduleCursor::new(
+            automation.id.clone(),
+            &snapshot,
+            automation.updated_at,
+            Some(decision),
+            due_at,
+        )
+        .expect("cursor");
+        commit_evaluation(
+            connection,
+            AutomationScheduleEvaluationCommit {
+                lease: lease.token(),
+                expected_automation_revision: automation.revision,
+                expected_cursor_revision: None,
+                cursor: initialized.clone(),
+                occurrences: vec![],
+                observed_at: due_at,
+                command: command("automation_scheduler_evaluate_v1", "dispatch-init", 41),
+            },
+        )
+        .expect("initialize");
+        let next = snapshot
+            .schedule
+            .next_decision_after(&snapshot.timezone, due_at)
+            .expect("next");
+        let mut advanced = initialized;
+        advanced
+            .advance(due_at, Some(next), due_at)
+            .expect("advance");
+        let occurrence = AutomationOccurrence::pending(
+            AutomationOccurrenceId::new("dispatch-occurrence").expect("occurrence id"),
+            automation.id.clone(),
+            snapshot,
+            decision,
+            1,
+            due_at,
+        )
+        .expect("occurrence");
+        let result = commit_evaluation(
+            connection,
+            AutomationScheduleEvaluationCommit {
+                lease: lease.token(),
+                expected_automation_revision: automation.revision,
+                expected_cursor_revision: Some(0),
+                cursor: advanced,
+                occurrences: vec![occurrence],
+                observed_at: due_at,
+                command: command("automation_scheduler_evaluate_v1", "dispatch-evaluate", 42),
+            },
+        )
+        .expect("materialize");
+        (
+            lease,
+            result.occurrences.into_iter().next().expect("pending"),
+        )
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn sql_dispatch_is_atomic_replayable_and_prompt_immutable() {
+        let (_directory, mut connection, automation) = scheduler_fixture();
+        let (lease, occurrence) = materialize_pending(&mut connection, &automation);
+        let now = occurrence.updated_at;
+        let thread = Thread::new(
+            grok_domain::ThreadId::new("dispatch-thread").expect("thread"),
+            automation.project_id.clone(),
+            "Automation · Daily automation".into(),
+            now,
+        )
+        .expect("thread");
+        let prompt = Message::new(
+            grok_domain::MessageId::new("dispatch-prompt").expect("prompt"),
+            thread.id.clone(),
+            MessageRole::User,
+            automation.prompt.clone(),
+            now,
+        )
+        .expect("prompt");
+        let run = grok_domain::Run::queued(
+            RunId::new("dispatch-run").expect("run"),
+            automation.project_id,
+            thread.id.clone(),
+            now,
+        );
+        let dispatch = AutomationOccurrenceDispatch {
+            claim: ClaimAutomationOccurrence {
+                lease: lease.token(),
+                occurrence_id: occurrence.id,
+                expected_revision: occurrence.revision,
+                claimed_at: now,
+                expires_at: now + 30_000,
+                command: command("automation_scheduler_claim_v1", "atomic-dispatch", 43),
+            },
+            thread,
+            prompt,
+            run,
+        };
+        connection
+            .execute_batch(
+                "CREATE TRIGGER inject_dispatch_commit_failure
+                 BEFORE INSERT ON automation_occurrence_dispatches BEGIN
+                     SELECT RAISE(ABORT, 'injected dispatch commit failure');
+                 END;",
+            )
+            .expect("fault trigger");
+        assert!(claim_and_bind_occurrence(&mut connection, dispatch.clone()).is_err());
+        assert_eq!(
+            query_occurrence(&connection, "dispatch-occurrence")
+                .expect("rolled-back occurrence")
+                .state,
+            AutomationOccurrenceState::Pending
+        );
+        let partial_rows: u32 = connection
+            .query_row(
+                "SELECT
+                    (SELECT count(*) FROM automation_occurrence_claim_attempts
+                     WHERE occurrence_id='dispatch-occurrence') +
+                    (SELECT count(*) FROM automation_occurrence_dispatches
+                     WHERE occurrence_id='dispatch-occurrence') +
+                    (SELECT count(*) FROM threads WHERE id='dispatch-thread') +
+                    (SELECT count(*) FROM messages WHERE id='dispatch-prompt') +
+                    (SELECT count(*) FROM runs WHERE id='dispatch-run')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("partial row count");
+        assert_eq!(
+            partial_rows, 0,
+            "the failed transaction must leave no partial work"
+        );
+        connection
+            .execute_batch("DROP TRIGGER inject_dispatch_commit_failure;")
+            .expect("remove fault trigger");
+        let result =
+            claim_and_bind_occurrence(&mut connection, dispatch.clone()).expect("dispatch");
+        assert_eq!(
+            result.occurrence.state,
+            AutomationOccurrenceState::RunLinked
+        );
+        assert_eq!(result.prompt.sequence, 1);
+        assert_eq!(
+            claim_and_bind_occurrence(&mut connection, dispatch).expect("exact replay"),
+            result
+        );
+        let recovery = recover_claims(&mut connection, &lease.token(), now + 30_000, 10)
+            .expect("bound queued recovery");
+        assert_eq!(recovery.resumable_bound_queued, 1);
+        assert_eq!(recovery.interrupted_linked, 0);
+        let resumable = list_resumable_dispatches(&connection, None, 10).expect("resumable");
+        assert_eq!(resumable, vec![result.clone()]);
+        connection
+            .execute_batch(
+                "CREATE TRIGGER inject_second_start_event_failure
+                 BEFORE INSERT ON run_events WHEN new.run_id='dispatch-run' AND new.sequence=3
+                 BEGIN SELECT RAISE(ABORT, 'injected start-event failure'); END;",
+            )
+            .expect("start fault trigger");
+        assert!(
+            begin_occurrence_run(
+                &mut connection,
+                &result.occurrence.id,
+                result.occurrence.revision,
+                &result.run.id,
+                result.run.revision,
+                now,
+            )
+            .is_err()
+        );
+        let rolled_back_run = connection
+            .query_row(
+                &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id='dispatch-run'"),
+                [],
+                mapping::run_from_row,
+            )
+            .expect("rolled-back run");
+        assert_eq!(rolled_back_run.state, RunState::Queued);
+        assert_eq!(rolled_back_run.revision, 0);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM run_events WHERE run_id='dispatch-run'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .expect("rolled-back event count"),
+            1
+        );
+        connection
+            .execute_batch("DROP TRIGGER inject_second_start_event_failure;")
+            .expect("remove start fault trigger");
+        let running = begin_occurrence_run(
+            &mut connection,
+            &result.occurrence.id,
+            result.occurrence.revision,
+            &result.run.id,
+            result.run.revision,
+            now,
+        )
+        .expect("persist dispatch intent");
+        assert_eq!(running.run.state, RunState::Running);
+        assert_eq!(running.run.revision, 2);
+        connection
+            .execute_batch(
+                "CREATE TRIGGER inject_occurrence_completion_failure
+                 BEFORE UPDATE ON automation_occurrences
+                 WHEN old.id='dispatch-occurrence' AND new.state=4
+                 BEGIN SELECT RAISE(ABORT, 'injected occurrence completion failure'); END;",
+            )
+            .expect("completion fault trigger");
+        assert!(
+            complete_occurrence_run(
+                &mut connection,
+                &result.occurrence.id,
+                result.occurrence.revision,
+                &result.run.id,
+                AutomationOccurrenceRunCompletion::Succeeded,
+                now,
+            )
+            .is_err()
+        );
+        let completion_rollback_run = connection
+            .query_row(
+                &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id='dispatch-run'"),
+                [],
+                mapping::run_from_row,
+            )
+            .expect("completion rollback run");
+        assert_eq!(completion_rollback_run.state, RunState::Running);
+        assert_eq!(
+            query_occurrence(&connection, "dispatch-occurrence")
+                .expect("completion rollback occurrence")
+                .state,
+            AutomationOccurrenceState::RunLinked
+        );
+        connection
+            .execute_batch("DROP TRIGGER inject_occurrence_completion_failure;")
+            .expect("remove completion fault trigger");
+        let interrupted = recover_claims(&mut connection, &lease.token(), now + 30_000, 10)
+            .expect("recover running dispatch");
+        assert_eq!(interrupted.interrupted_linked, 1);
+        assert_eq!(
+            query_occurrence(&connection, result.occurrence.id.as_str())
+                .expect("recovered occurrence")
+                .state,
+            AutomationOccurrenceState::InterruptedNeedsReview
+        );
+        let recovered_run = connection
+            .query_row(
+                &format!("SELECT {RUN_COLUMNS} FROM runs WHERE id=?1"),
+                [result.run.id.as_str()],
+                mapping::run_from_row,
+            )
+            .expect("recovered run");
+        assert_eq!(recovered_run.state, RunState::InterruptedNeedsReview);
+        assert!(
+            list_resumable_dispatches(&connection, None, 10)
+                .expect("no replay")
+                .is_empty()
+        );
+        assert!(
+            connection
+                .execute(
+                    "UPDATE messages SET content='forged' WHERE id='dispatch-prompt'",
+                    []
+                )
+                .is_err()
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM threads WHERE id='dispatch-thread'",
+                    [],
+                    |row| row.get::<_, u32>(0)
+                )
+                .expect("thread count"),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM runs WHERE id='dispatch-run'",
+                    [],
+                    |row| row.get::<_, u32>(0)
+                )
+                .expect("run count"),
+            1
+        );
     }
 
     #[test]

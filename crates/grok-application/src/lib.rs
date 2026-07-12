@@ -15,6 +15,7 @@ mod error;
 mod grok_build_auth;
 mod isolation;
 mod isolation_runtime;
+mod managed_integrations;
 mod models;
 mod mutations;
 mod ports;
@@ -50,13 +51,17 @@ pub use artifacts::{
 };
 pub use automation_scheduler::{
     AUTOMATION_SCHEDULER_LEASE_TTL_MS, AutomationOccurrenceClaimAttempt,
-    AutomationOccurrenceClaimCompletion, AutomationScheduleCandidate,
-    AutomationScheduleEvaluationCommit, AutomationScheduleEvaluationResult,
-    AutomationSchedulerJournalStatus, AutomationSchedulerLeaseAcquisition,
-    AutomationSchedulerRecoverySummary, AutomationSchedulerService, AutomationSchedulerStore,
-    AutomationSchedulerTickStatus, AutomationSchedulerTickSummary, ClaimAutomationOccurrence,
+    AutomationOccurrenceClaimCompletion, AutomationOccurrenceDispatch,
+    AutomationOccurrenceDispatchResult, AutomationOccurrenceRunCompletion,
+    AutomationScheduleCandidate, AutomationScheduleEvaluationCommit,
+    AutomationScheduleEvaluationResult, AutomationSchedulerJournalStatus,
+    AutomationSchedulerLeaseAcquisition, AutomationSchedulerRecoverySummary,
+    AutomationSchedulerService, AutomationSchedulerStore, AutomationSchedulerTickStatus,
+    AutomationSchedulerTickSummary, ClaimAutomationOccurrence,
     MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
-    MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS, automation_occurrence_is_active,
+    MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS, ScheduledGuestDispatchError,
+    ScheduledGuestDispatcher, ScheduledGuestOutcome, ScheduledGuestRequest,
+    automation_occurrence_is_active,
 };
 pub use capabilities::{CapabilityFacts, CapabilityResolver};
 pub use chat_models::{ChatModelCatalog, ChatModelCatalogEntry, ChatModelService, SelectChatModel};
@@ -96,6 +101,12 @@ pub use isolation::{
     IsolationContractVersion, IsolationProbe, IsolationProbeError, IsolationWorkspaceMode,
 };
 pub use isolation_runtime::{IsolationRuntime, IsolationRuntimeFacts};
+pub use managed_integrations::{
+    ApplyManagedIntegrationLifecycle, MAX_MANAGED_INTEGRATION_RECOVERY_BATCH,
+    ManagedIntegrationLifecycle, ManagedIntegrationLifecycleCommit,
+    ManagedIntegrationLifecycleStore, ManagedIntegrationMutation, ManagedIntegrationPhase,
+    ManagedIntegrationRecoveryEntry,
+};
 pub use models::{
     Citation, ContentPart, ConversationEvent, ConversationMessage, ConversationModel,
     ConversationModelFactory, ConversationRequest, ConversationRole, ConversationStream,

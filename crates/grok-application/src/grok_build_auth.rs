@@ -7,11 +7,9 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::{
-    AgentRuntime, AgentRuntimeErrorKind, ApplicationError, Clock,
-};
+use crate::{AgentRuntime, AgentRuntimeErrorKind, ApplicationError, Clock};
 
-/// Non-secret Grok Build host-auth status for Setup and AccountState.
+/// Non-secret Grok Build host-auth status for Setup and `AccountState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GrokBuildAuthStatus {
     /// No successful authenticate in this daemon process (or cleared).
@@ -55,7 +53,7 @@ impl GrokBuildAuthService {
         self.state.read().await.status
     }
 
-    /// Whether subscription_authenticated capability fact should be true.
+    /// Whether `subscription_authenticated` capability fact should be true.
     pub async fn is_authenticated(&self) -> bool {
         self.state.read().await.authenticated
     }
@@ -74,11 +72,7 @@ impl GrokBuildAuthService {
             state.status = GrokBuildAuthStatus::InProgress;
         }
 
-        let probe = self
-            .runtime
-            .probe()
-            .await
-            .map_err(|error| map_runtime(error))?;
+        let probe = self.runtime.probe().await.map_err(map_runtime)?;
         let method_id = probe
             .auth_methods
             .first()

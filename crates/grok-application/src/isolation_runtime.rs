@@ -1,7 +1,7 @@
 //! Live isolation readiness: broker probe + privileged guest health gateway.
 //!
 //! Strong isolation is ready only when the broker is qualified **and** a
-//! journaled `runner.health` guest-control call succeeds under PoP. Failures
+//! journaled `runner.health` guest-control call succeeds under `PoP`. Failures
 //! never enable Work via host-exec fallback.
 
 use std::sync::Arc;
@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::{
-    ApplicationError, Clock, IdGenerator, IsolationProbe, IsolationProbeError,
-    PrivilegedGateway, PrivilegedGuestControlTransport,
+    ApplicationError, Clock, IdGenerator, IsolationProbe, IsolationProbeError, PrivilegedGateway,
+    PrivilegedGuestControlTransport,
 };
 
 /// Snapshot of live isolation readiness facts for capability resolution.
@@ -63,16 +63,21 @@ impl IsolationRuntime {
     ///
     /// Returns application errors only for storage/gateway failures after the
     /// broker is considered qualified; probe unavailability clears facts.
-    pub async fn refresh(&self, idempotency_key: &str) -> Result<IsolationRuntimeFacts, ApplicationError> {
+    pub async fn refresh(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<IsolationRuntimeFacts, ApplicationError> {
         let mut next = IsolationRuntimeFacts::default();
         match self.probe.probe().await {
             Ok(_caps) => {
                 next.broker_qualified = true;
             }
-            Err(IsolationProbeError::Unavailable)
-            | Err(IsolationProbeError::Unqualified)
-            | Err(IsolationProbeError::Incompatible)
-            | Err(IsolationProbeError::Protocol) => {
+            Err(
+                IsolationProbeError::Unavailable
+                | IsolationProbeError::Unqualified
+                | IsolationProbeError::Incompatible
+                | IsolationProbeError::Protocol,
+            ) => {
                 *self.facts.write().await = next;
                 return Ok(next);
             }
@@ -104,13 +109,13 @@ impl IsolationRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::{Clock, IdGenerator};
     use crate::{
         IsolationBackend, IsolationBrokerCapabilities, IsolationBrokerOperation,
         IsolationContractVersion, IsolationWorkspaceMode, PrivilegedDispatchAttempt,
-        PrivilegedGuestControlTransport, PrivilegedGatewayError, PrivilegedOperationStore,
+        PrivilegedGatewayError, PrivilegedGuestControlTransport, PrivilegedOperationStore,
         PrivilegedPreparation, PrivilegedRecoveryCandidate, StoreError,
     };
-    use crate::ports::{Clock, IdGenerator};
     use async_trait::async_trait;
     use grok_domain::{
         PrivilegedOperation, PrivilegedOperationId, PrivilegedOperationIntent, UnixMillis,
@@ -139,9 +144,7 @@ mod tests {
     }
     #[async_trait]
     impl IsolationProbe for Probe {
-        async fn probe(
-            &self,
-        ) -> Result<IsolationBrokerCapabilities, IsolationProbeError> {
+        async fn probe(&self) -> Result<IsolationBrokerCapabilities, IsolationProbeError> {
             if !self.ok.load(Ordering::SeqCst) {
                 return Err(IsolationProbeError::Unavailable);
             }

@@ -4,10 +4,31 @@
   "title": "Grok Desktop managed integration catalog v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "revision", "bundles"],
+  "required": ["version", "revision", "publisherId", "signature", "bundles"],
   "properties": {
     "version": { "const": 1 },
     "revision": { "type": "integer", "minimum": 1 },
+    "publisherId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.-]+$",
+      "maxLength": 128
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "value"],
+      "properties": {
+        "algorithm": { "const": "ed25519" },
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{86}==$"
+        }
+      }
+    },
     "bundles": {
       "type": "array",
       "maxItems": 64,

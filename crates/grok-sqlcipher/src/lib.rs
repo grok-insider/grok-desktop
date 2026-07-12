@@ -5,6 +5,7 @@ mod automation_scheduler_store;
 mod chat_model_preferences_store;
 mod conversation_store;
 mod credential_store;
+mod managed_integration_store;
 mod mapping;
 mod preferences_store;
 mod privileged_operation_store;

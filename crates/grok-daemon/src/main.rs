@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "linux")]
 mod linux_guest_transport;
+#[cfg(target_os = "linux")]
+mod linux_isolation_probe;
 
 use std::{
     collections::HashSet,
@@ -26,15 +28,16 @@ use grok_application::{
     AgentPermissionDecision, AgentRuntime, AgentRuntimeErrorKind, ApplicationError,
     ApprovalService, ArtifactContentRetention, ArtifactContentStore, ArtifactOpener,
     ArtifactService, ArtifactStore, AutomationSchedulerService, AutomationSchedulerStore,
-    CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ChatRailSelection,
+    CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ChatRailSelection, Clock,
     ConversationModelFactory, ConversationService, ConversationTurnStore,
     CredentialEnrollmentService, CredentialMutationStore, CredentialService,
     DesktopPreferencesService, DesktopPreferencesStore, ExecutionStore, IdGenerator,
     IsolationProbe, IsolationProbeError, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH,
     MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_CONVERSATION_RECOVERY_BATCH,
-    MAX_PRIVILEGED_RECOVERY_BATCH, PrivilegedGatewayError, PrivilegedGuestControlTransport,
-    PrivilegedOperationService, PrivilegedOperationStore, RunService, SecretName, SecretValue,
-    SecretVault, SuperGrokEnrollmentService, VaultError, WorkspaceService, WorkspaceStore,
+    MAX_PRIVILEGED_RECOVERY_BATCH, ManagedIntegrationLifecycleStore, PrivilegedGatewayError,
+    PrivilegedGuestControlTransport, PrivilegedOperationService, PrivilegedOperationStore,
+    RunService, ScheduledGuestDispatcher, SecretName, SecretValue, SecretVault,
+    SuperGrokEnrollmentService, VaultError, WorkspaceService, WorkspaceStore,
 };
 #[cfg(target_os = "linux")]
 use grok_artifact_storage::LinuxArtifactContent;
@@ -45,7 +48,8 @@ use grok_daemon::{
 };
 use grok_domain::{AutomationSchedulerOwnerId, ChatRail};
 use grok_memory::{
-    EphemeralKeyProvider, InMemoryExecutionStore, InMemorySecretVault, SystemClock, UuidGenerator,
+    EphemeralKeyProvider, InMemoryExecutionStore, InMemoryManagedIntegrationLifecycleStore,
+    InMemorySecretVault, SystemClock, UuidGenerator,
 };
 use grok_sqlcipher::{DatabaseLock, SqlCipherStore};
 use grok_vault::OsVault;
@@ -56,6 +60,7 @@ use grok_xai::{
     OfficialXaiOAuthConversationModelFactory,
 };
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use zeroize::Zeroize;
@@ -65,6 +70,9 @@ type DynError = Box<dyn Error + Send + Sync>;
 const ACP_BUILD_KEYS: Option<&str> = option_env!("GROK_ACP_CATALOG_TRUSTED_KEYS");
 const ACP_BUILD_TRUST_BINDING: Option<&str> = option_env!("GROK_ACP_CATALOG_TRUST_BINDING");
 const ACP_BUILD_TRUST_BINDING_PREFIX: &str = "grok-acp-catalog-trust-v1:";
+const WISP_BUILD_KEYS: Option<&str> = option_env!("GROK_WISP_CATALOG_TRUSTED_KEYS");
+const WISP_BUILD_TRUST_BINDING: Option<&str> = option_env!("GROK_WISP_CATALOG_TRUST_BINDING");
+const WISP_BUILD_TRUST_BINDING_PREFIX: &str = "grok-wisp-catalog-trust-v1:";
 const ACP_COMPONENT_DIRECTORY: &str = "components";
 const ACP_COMPONENT_NAME: &str = "grok-acp";
 const ACP_CATALOG_FILE: &str = "catalog.json";
@@ -73,6 +81,8 @@ const ACP_CATALOG_WATERMARK_MAGIC: &[u8; 8] = b"GRKACP01";
 const MAX_BUILD_KEY_INPUT_BYTES: usize = 4096;
 const MAX_BUILD_KEYS: usize = 16;
 const MAX_CONCURRENT_IPC_CONNECTIONS: usize = 64;
+const AUTOMATION_SCHEDULER_LOOP_INTERVAL: Duration = Duration::from_secs(5);
+const AUTOMATION_SCHEDULER_SHUTDOWN_GRACE: Duration = Duration::from_secs(65);
 const LEGACY_STARTUP_NONCE_VARIABLE: &str = "GROK_DAEMON_STARTUP_NONCE_HEX";
 const STARTUP_NONCE_STDIN_MARKER: &str = "GROK_DAEMON_STARTUP_NONCE_STDIN";
 const LEGACY_ACP_VARIABLES: [&str; 4] = [
@@ -154,7 +164,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         clock.clone(),
         ids.clone(),
     ));
-    let automation_scheduler_lifecycle =
+    let mut automation_scheduler_lifecycle =
         recover_automation_scheduler(automation_scheduler.as_ref(), &automation_scheduler_owner)
             .await;
     recover_privileged_operations(&stores, clock.clone(), ids.clone()).await?;
@@ -185,15 +195,15 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         credential_mutations.clone(),
         Arc::new(OfficialXaiApiKeyValidator::new()),
     ));
-    let isolation_probe = VmServiceIsolationProbe::new();
-    let (xai_probe, isolation_probe) = tokio::join!(
+    let isolation_probe = configured_isolation_probe();
+    let (xai_probe, isolation_probe_result) = tokio::join!(
         credentials.refresh_xai_capabilities(),
         isolation_probe.probe()
     );
     if let Err(error) = xai_probe {
         warn!(%error, "xAI capabilities remain unresolved after startup probe");
     }
-    let isolation_broker_qualified = match isolation_probe {
+    let isolation_broker_qualified = match isolation_probe_result {
         Ok(_) => {
             info!("packaged isolation broker passed static qualification");
             true
@@ -230,6 +240,38 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     let mut runtime_capability_facts = provider_network_policy(isolation_broker_qualified);
     runtime_capability_facts.artifact_content_ready =
         artifact_content_available && artifact_open_available;
+    let isolation_runtime = configured_isolation_runtime(
+        isolation_probe,
+        stores.privileged_operations.clone(),
+        clock.clone(),
+        ids.clone(),
+    );
+    let scheduler_runtime = if let Some(dispatcher) = configured_scheduled_guest_dispatcher() {
+        if automation_scheduler_lifecycle
+            == AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled
+        {
+            let facts = isolation_runtime
+                .refresh("automation-isolation-startup")
+                .await
+                .unwrap_or_default();
+            if scheduler_runtime_eligible(automation_scheduler_lifecycle, true, facts) {
+                automation_scheduler_lifecycle =
+                    AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled;
+                Some(start_automation_scheduler(
+                    automation_scheduler.clone(),
+                    automation_scheduler_owner,
+                    isolation_runtime.clone(),
+                    dispatcher,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let mut daemon = Daemon::new(
         runs,
         approvals,
@@ -256,13 +298,8 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     ));
     // Journaled guest health gateway: strong isolation is ready only after a
     // successful runner.health through PrivilegedGateway (never host-exec).
-    daemon = daemon.with_isolation_runtime(configured_isolation_runtime(
-        Arc::new(VmServiceIsolationProbe::new()),
-        stores.privileged_operations.clone(),
-        clock.clone(),
-        ids.clone(),
-    ));
-    if let Some(managed) = configured_managed_integrations() {
+    daemon = daemon.with_isolation_runtime(isolation_runtime);
+    if let Some(managed) = configured_managed_integrations(&stores).await? {
         daemon = daemon.with_managed_integrations(managed);
     }
     let daemon = Arc::new(match configured_agent_runtime(runtime_vault).await {
@@ -273,10 +310,54 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         }
     });
 
-    if let Ok(address) = std::env::var("GROK_DAEMON_DEV_TCP_ADDR") {
-        return serve_tcp(&address, daemon).await;
+    let serving = async {
+        if let Ok(address) = std::env::var("GROK_DAEMON_DEV_TCP_ADDR") {
+            serve_tcp(&address, daemon).await
+        } else {
+            serve_platform(daemon).await
+        }
+    };
+    let result = tokio::select! {
+        result = serving => result,
+        result = shutdown_signal() => result,
+    };
+    if let Some(runtime) = scheduler_runtime
+        && let Err(error) = runtime.shutdown().await
+    {
+        return Err(format!("automation scheduler task failed to join: {error}").into());
     }
-    serve_platform(daemon).await
+    result
+}
+
+async fn shutdown_signal() -> Result<(), DynError> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result?,
+            _ = terminate.recv() => {}
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok(())
+    }
+}
+
+fn configured_isolation_probe() -> Arc<dyn IsolationProbe> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(probe) = linux_isolation_probe::LinuxVmServiceIsolationProbe::production() {
+            return Arc::new(probe);
+        }
+        if let Some(probe) = linux_isolation_probe::LinuxVmServiceIsolationProbe::from_env() {
+            return Arc::new(probe);
+        }
+    }
+    Arc::new(VmServiceIsolationProbe::new())
 }
 
 fn new_daemon_instance_identity()
@@ -293,10 +374,7 @@ struct FailClosedGuestHealthTransport;
 
 #[async_trait::async_trait]
 impl PrivilegedGuestControlTransport for FailClosedGuestHealthTransport {
-    async fn runner_health(
-        &self,
-        _vm_id: &str,
-    ) -> Result<Vec<u8>, PrivilegedGatewayError> {
+    async fn runner_health(&self, _vm_id: &str) -> Result<Vec<u8>, PrivilegedGatewayError> {
         Err(PrivilegedGatewayError::Unavailable(
             "guest runner.health dial is not configured".into(),
         ))
@@ -309,50 +387,119 @@ struct EnvGuestHealthTransport;
 
 #[async_trait::async_trait]
 impl PrivilegedGuestControlTransport for EnvGuestHealthTransport {
-    async fn runner_health(
-        &self,
-        vm_id: &str,
-    ) -> Result<Vec<u8>, PrivilegedGatewayError> {
+    async fn runner_health(&self, vm_id: &str) -> Result<Vec<u8>, PrivilegedGatewayError> {
         match std::env::var("GROK_ISOLATION_FAKE_GUEST_HEALTH").as_deref() {
-            Ok("ok") => Ok(format!(r#"{{"status":"ok","vm":"{vm_id}","source":"lab"}}"#).into_bytes()),
+            Ok("ok") => {
+                Ok(format!(r#"{{"status":"ok","vm":"{vm_id}","source":"lab"}}"#).into_bytes())
+            }
             _ => Err(PrivilegedGatewayError::Unavailable(
                 "guest runner.health dial is not configured".into(),
             )),
         }
     }
-
 }
 
-/// Configures the signed Wisp lifecycle when `GROK_WISP_BUNDLE_ROOT` points at a
-/// verified bundle (lab uses `integrations/testdata/wisp-signed`).
-fn configured_managed_integrations() -> Option<Arc<grok_daemon::ManagedIntegrationService>> {
-    use base64::Engine as _;
+/// Configures the signed Wisp lifecycle in debug builds when
+/// `GROK_WISP_BUNDLE_ROOT` points at a catalog release root. Trust keys come
+/// from an independent bound build input or debug-only trust configuration,
+/// never from that release root.
+async fn configured_managed_integrations(
+    stores: &Stores,
+) -> Result<Option<Arc<grok_daemon::ManagedIntegrationService>>, DynError> {
     use grok_daemon::ManagedIntegrationService;
 
-    let bundle = std::env::var_os("GROK_WISP_BUNDLE_ROOT").map(PathBuf::from)?;
-    let state = std::env::var_os("GROK_MANAGED_INTEGRATION_STATE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            directories::ProjectDirs::from("com", "grok", "desktop")
-                .map(|dirs| dirs.data_dir().join("managed-integrations.json"))
-                .unwrap_or_else(|| PathBuf::from("managed-integrations.json"))
-        });
-    let mut service = ManagedIntegrationService::new(state);
-    let pub_path = bundle.join("keys/public.b64");
-    let key_id_path = bundle.join("keys/key-id.txt");
-    let pub_b64 = std::fs::read_to_string(&pub_path).ok()?;
-    let key_id = std::fs::read_to_string(&key_id_path).ok()?;
-    let pub_raw = base64::engine::general_purpose::STANDARD
-        .decode(pub_b64.trim().as_bytes())
-        .ok()?;
-    service
-        .trust_key("grok-insider", key_id.trim(), &pub_raw)
-        .ok()?;
-    let _ = service.load();
-    if let Ok(verified) = service.verify_signed_bundle(&bundle) {
-        let _ = service.register_bundle(&verified);
+    let Some(bundle) = std::env::var_os("GROK_WISP_BUNDLE_ROOT").map(PathBuf::from) else {
+        return Ok(None);
+    };
+    if !cfg!(debug_assertions) {
+        return Err("GROK_WISP_BUNDLE_ROOT is a debug-only release-root override".into());
     }
-    Some(Arc::new(service))
+    if !grok_daemon::managed_integration_publication_qualified() {
+        return Err("managed-integration publication is not qualified on this platform".into());
+    }
+    let state = std::env::var_os("GROK_MANAGED_INTEGRATION_STATE").map_or_else(
+        || {
+            stores
+                .artifact_content_base
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("managed-integrations.state-anchor")
+        },
+        PathBuf::from,
+    );
+    let mut service =
+        ManagedIntegrationService::with_lifecycle_store(state, stores.managed_integrations.clone());
+    let trusted_keys = configured_wisp_catalog_keys()
+        .map_err(|()| "Wisp catalog trust configuration is missing or invalid")?;
+    for (key_id, public_key) in trusted_keys {
+        service.trust_key("grok-insider", key_id, &public_key)?;
+    }
+    let verified = service.verify_catalog_bound_bundle(&bundle)?;
+    service.register_bundle(&verified)?;
+    let service = Arc::new(service);
+    let recovered = service
+        .recover_pending_publications(SystemClock.now())
+        .await?;
+    if recovered > 0 {
+        info!(recovered, "recovered managed-integration publications");
+    }
+    Ok(Some(service))
+}
+
+fn configured_wisp_catalog_keys() -> Result<Vec<(String, [u8; 32])>, ()> {
+    match (WISP_BUILD_KEYS, WISP_BUILD_TRUST_BINDING) {
+        (Some(value), Some(binding)) if wisp_catalog_trust_binding(value) == binding => {
+            parse_wisp_catalog_keys(value)
+        }
+        (None, None) if cfg!(debug_assertions) => {
+            let value = std::env::var("GROK_WISP_CATALOG_TRUSTED_KEYS").map_err(|_| ())?;
+            parse_wisp_catalog_keys(&value)
+        }
+        _ => Err(()),
+    }
+}
+
+fn wisp_catalog_trust_binding(value: &str) -> String {
+    format!(
+        "{WISP_BUILD_TRUST_BINDING_PREFIX}{}",
+        hex::encode(Sha256::digest(value.as_bytes()))
+    )
+}
+
+fn parse_wisp_catalog_keys(value: &str) -> Result<Vec<(String, [u8; 32])>, ()> {
+    if value.is_empty() || value.len() > MAX_BUILD_KEY_INPUT_BYTES {
+        return Err(());
+    }
+    let mut keys = Vec::new();
+    let mut previous = None;
+    for record in value.split(';') {
+        let (key_id, encoded) = record.split_once('=').ok_or(())?;
+        if record.matches('=').count() != 1
+            || key_id.is_empty()
+            || key_id.len() > 128
+            || !key_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+            || encoded.len() != 64
+            || !encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            || previous.is_some_and(|prior| key_id <= prior)
+        {
+            return Err(());
+        }
+        let public_key: [u8; 32] = hex::decode(encoded)
+            .map_err(|_| ())?
+            .try_into()
+            .map_err(|_| ())?;
+        ed25519_dalek::VerifyingKey::from_bytes(&public_key).map_err(|_| ())?;
+        keys.push((key_id.to_owned(), public_key));
+        if keys.len() > MAX_BUILD_KEYS {
+            return Err(());
+        }
+        previous = Some(key_id);
+    }
+    if keys.is_empty() { Err(()) } else { Ok(keys) }
 }
 
 fn configured_isolation_runtime(
@@ -392,6 +539,118 @@ fn configured_isolation_runtime(
         "work-vm",
         "authority-grant-isolation-default",
     ))
+}
+
+/// Joined daemon-lifetime scheduler task.
+struct AutomationSchedulerRuntime {
+    cancellation: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl AutomationSchedulerRuntime {
+    async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.cancellation.cancel();
+        let mut task = self.task;
+        if let Ok(result) =
+            tokio::time::timeout(AUTOMATION_SCHEDULER_SHUTDOWN_GRACE, &mut task).await
+        {
+            result
+        } else {
+            task.abort();
+            match task.await {
+                Err(error) if error.is_cancelled() => Ok(()),
+                result => result,
+            }
+        }
+    }
+}
+
+fn start_automation_scheduler(
+    scheduler: Arc<AutomationSchedulerService>,
+    owner_id: AutomationSchedulerOwnerId,
+    isolation: Arc<IsolationRuntime>,
+    dispatcher: Arc<dyn ScheduledGuestDispatcher>,
+) -> AutomationSchedulerRuntime {
+    let cancellation = CancellationToken::new();
+    let task_cancellation = cancellation.clone();
+    let task = tokio::spawn(async move {
+        let mut cycle = 0_u64;
+        loop {
+            if task_cancellation.is_cancelled() {
+                return;
+            }
+            cycle = cycle.wrapping_add(1);
+            let refresh_key = format!("automation-isolation-{cycle:016x}");
+            let isolation_ready = isolation
+                .refresh(&refresh_key)
+                .await
+                .is_ok_and(|facts| facts.broker_qualified && facts.strong_isolation_ready);
+            if isolation_ready {
+                if let Err(error) = scheduler
+                    .dispatch_resumable(
+                        dispatcher.as_ref(),
+                        &task_cancellation,
+                        grok_application::MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS,
+                    )
+                    .await
+                {
+                    warn!(%error, "automation scheduler resumable dispatch failed closed");
+                }
+                if !task_cancellation.is_cancelled() {
+                    if let Err(error) = scheduler
+                        .execute_due(
+                            &owner_id,
+                            grok_application::MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS,
+                        )
+                        .await
+                    {
+                        warn!(%error, "automation scheduler evaluation failed closed");
+                    }
+                    if let Err(error) = scheduler
+                        .dispatch_resumable(
+                            dispatcher.as_ref(),
+                            &task_cancellation,
+                            grok_application::MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS,
+                        )
+                        .await
+                    {
+                        warn!(%error, "automation scheduler dispatch failed closed");
+                    }
+                }
+            }
+            tokio::select! {
+                () = task_cancellation.cancelled() => return,
+                () = tokio::time::sleep(AUTOMATION_SCHEDULER_LOOP_INTERVAL) => {}
+            }
+        }
+    });
+    AutomationSchedulerRuntime { cancellation, task }
+}
+
+/// Production remains fail-closed until a qualified platform adapter exposes
+/// the dedicated scheduled-work guest contract. Health-only guest control is
+/// intentionally not widened into execution authority.
+fn configured_scheduled_guest_dispatcher() -> Option<Arc<dyn ScheduledGuestDispatcher>> {
+    #[cfg(target_os = "linux")]
+    {
+        linux_guest_transport::scheduled::LinuxScheduledGuestDispatcher::from_env()
+            .map(|dispatcher| Arc::new(dispatcher) as Arc<dyn ScheduledGuestDispatcher>)
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+const fn scheduler_runtime_eligible(
+    lifecycle: AutomationSchedulerLifecycle,
+    dispatcher_configured: bool,
+    isolation: grok_application::IsolationRuntimeFacts,
+) -> bool {
+    matches!(
+        lifecycle,
+        AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled
+    ) && dispatcher_configured
+        && isolation.broker_qualified
+        && isolation.strong_isolation_ready
 }
 
 /// Performs exactly one bounded, journal-only recovery pass before IPC starts.
@@ -1048,6 +1307,7 @@ struct Stores {
     desktop_preferences: Arc<dyn DesktopPreferencesStore>,
     chat_model_preferences: Arc<dyn ChatModelPreferenceStore>,
     privileged_operations: Arc<dyn PrivilegedOperationStore>,
+    managed_integrations: Arc<dyn ManagedIntegrationLifecycleStore>,
     vault: Arc<dyn SecretVault>,
     artifact_content_base: Option<PathBuf>,
 }
@@ -1055,6 +1315,7 @@ struct Stores {
 impl Stores {
     fn from_store<T>(
         store: Arc<T>,
+        managed_integrations: Arc<dyn ManagedIntegrationLifecycleStore>,
         vault: Arc<dyn SecretVault>,
         artifact_content_base: Option<PathBuf>,
     ) -> Self
@@ -1080,6 +1341,7 @@ impl Stores {
             chat_model_preferences: store.clone(),
             privileged_operations: store.clone(),
             credential_mutations: store,
+            managed_integrations,
             vault,
             artifact_content_base,
         }
@@ -1094,6 +1356,7 @@ async fn stores() -> Result<Stores, DynError> {
         info!("using explicitly requested non-persistent execution store");
         return Ok(Stores::from_store(
             Arc::new(InMemoryExecutionStore::new()),
+            Arc::new(InMemoryManagedIntegrationLifecycleStore::new()),
             Arc::new(InMemorySecretVault::new()),
             None,
         ));
@@ -1118,6 +1381,7 @@ async fn stores() -> Result<Stores, DynError> {
             let vault = os_vault()?;
             info!("using debug-configured persistent SQLCipher execution store");
             Ok(Stores::from_store(
+                Arc::new(store.clone()),
                 Arc::new(store),
                 vault,
                 Some(artifact_content_base),
@@ -1146,6 +1410,7 @@ async fn stores() -> Result<Stores, DynError> {
             let store = SqlCipherStore::open_locked(path, vault.clone(), lock).await?;
             info!("using platform-vault-backed persistent SQLCipher execution store");
             Ok(Stores::from_store(
+                Arc::new(store.clone()),
                 Arc::new(store),
                 vault,
                 Some(artifact_content_base),
@@ -1347,14 +1612,15 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use ed25519_dalek::{Signer, SigningKey};
     use grok_application::{
-        AutomationScheduleCandidate, AutomationScheduleEvaluationCommit,
-        AutomationScheduleEvaluationResult, AutomationSchedulerJournalStatus,
-        AutomationSchedulerLeaseAcquisition, AutomationSchedulerRecoverySummary,
-        ClaimAutomationOccurrence, StoreError,
+        AutomationOccurrenceDispatch, AutomationOccurrenceDispatchResult,
+        AutomationOccurrenceRunCompletion, AutomationScheduleCandidate,
+        AutomationScheduleEvaluationCommit, AutomationScheduleEvaluationResult,
+        AutomationSchedulerJournalStatus, AutomationSchedulerLeaseAcquisition,
+        AutomationSchedulerRecoverySummary, ClaimAutomationOccurrence, StoreError,
     };
     use grok_domain::{
         AutomationId, AutomationOccurrence, AutomationOccurrenceId, AutomationSchedulerLease,
-        AutomationSchedulerLeaseToken, UnixMillis,
+        AutomationSchedulerLeaseToken, RunId, UnixMillis,
     };
     use serde_json::json;
     use sha2::{Digest, Sha256};
@@ -1454,6 +1720,43 @@ mod tests {
             _claim: ClaimAutomationOccurrence,
         ) -> Result<AutomationOccurrence, StoreError> {
             panic!("startup recovery must not claim work")
+        }
+
+        async fn claim_and_bind_automation_occurrence(
+            &self,
+            _dispatch: AutomationOccurrenceDispatch,
+        ) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+            panic!("startup recovery must not bind work")
+        }
+
+        async fn list_resumable_automation_dispatches(
+            &self,
+            _after: Option<&AutomationOccurrenceId>,
+            _limit: usize,
+        ) -> Result<Vec<AutomationOccurrenceDispatchResult>, StoreError> {
+            panic!("startup recovery must not resume work")
+        }
+
+        async fn begin_automation_occurrence_run(
+            &self,
+            _occurrence_id: &AutomationOccurrenceId,
+            _expected_occurrence_revision: u64,
+            _run_id: &RunId,
+            _expected_run_revision: u64,
+            _now: UnixMillis,
+        ) -> Result<AutomationOccurrenceDispatchResult, StoreError> {
+            panic!("startup recovery must not begin work")
+        }
+
+        async fn complete_automation_occurrence_run(
+            &self,
+            _occurrence_id: &AutomationOccurrenceId,
+            _expected_revision: u64,
+            _run_id: &RunId,
+            _completion: AutomationOccurrenceRunCompletion,
+            _now: UnixMillis,
+        ) -> Result<AutomationOccurrence, StoreError> {
+            panic!("startup recovery must not complete work")
         }
 
         async fn recover_automation_occurrence_claims(
@@ -1596,12 +1899,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scheduler_runtime_shutdown_cancels_and_joins() {
+        let cancellation = CancellationToken::new();
+        let observed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_cancellation = cancellation.clone();
+        let task_observed = observed.clone();
+        let task = tokio::spawn(async move {
+            task_cancellation.cancelled().await;
+            task_observed.store(true, Ordering::SeqCst);
+        });
+        AutomationSchedulerRuntime { cancellation, task }
+            .shutdown()
+            .await
+            .expect("joined scheduler task");
+        assert!(observed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn production_scheduler_dispatcher_is_fail_closed() {
+        assert!(configured_scheduled_guest_dispatcher().is_none());
+    }
+
+    #[test]
+    fn scheduler_runtime_requires_journal_dispatcher_and_live_isolation() {
+        let ready = grok_application::IsolationRuntimeFacts {
+            broker_qualified: true,
+            strong_isolation_ready: true,
+        };
+        assert!(scheduler_runtime_eligible(
+            AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
+            true,
+            ready,
+        ));
+        assert!(!scheduler_runtime_eligible(
+            AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled,
+            true,
+            ready,
+        ));
+        assert!(!scheduler_runtime_eligible(
+            AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
+            false,
+            ready,
+        ));
+        for isolation in [
+            grok_application::IsolationRuntimeFacts {
+                broker_qualified: false,
+                strong_isolation_ready: true,
+            },
+            grok_application::IsolationRuntimeFacts {
+                broker_qualified: true,
+                strong_isolation_ready: false,
+            },
+        ] {
+            assert!(!scheduler_runtime_eligible(
+                AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
+                true,
+                isolation,
+            ));
+        }
+    }
+
+    #[tokio::test]
     async fn scheduler_startup_recovery_is_single_bounded_and_non_executing() {
         let store = Arc::new(StartupRecoveryStore::new(StartupRecoveryOutcome::Summary(
             AutomationSchedulerRecoverySummary {
                 released_unlinked: 1,
                 interrupted_linked: 1,
                 attempts_exhausted: 1,
+                resumable_bound_queued: 0,
                 truncated: false,
             },
         )));
@@ -2069,6 +2434,25 @@ mod tests {
                 .expect("bound keys")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn wisp_catalog_trust_requires_independent_bound_release_keys() {
+        let key = SigningKey::from_bytes(&[11; 32]);
+        let configured = format!(
+            "wisp-release={}",
+            hex::encode(key.verifying_key().to_bytes())
+        );
+        let binding = wisp_catalog_trust_binding(&configured);
+        assert_ne!(binding, catalog_trust_binding(&configured));
+        assert_eq!(
+            parse_wisp_catalog_keys(&configured)
+                .expect("valid independent Wisp trust")
+                .len(),
+            1
+        );
+        assert!(parse_wisp_catalog_keys("wisp-release=not-a-key").is_err());
+        assert!(parse_wisp_catalog_keys(&format!("{configured};{configured}")).is_err());
     }
 
     #[test]

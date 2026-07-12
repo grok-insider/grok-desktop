@@ -10,7 +10,7 @@ pub struct CapabilityFacts {
     pub subscription_authenticated: bool,
     /// A user-owned xAI API key is configured.
     pub xai_api_key_configured: bool,
-    /// A daemon-owned SuperGrok `api:access` grant is connected.
+    /// A daemon-owned `SuperGrok` `api:access` grant is connected.
     pub supergrok_api_connected: bool,
     /// The daemon validated its selected xAI model for the active API rail.
     pub xai_capabilities_resolved: bool,

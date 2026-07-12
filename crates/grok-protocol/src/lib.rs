@@ -5,7 +5,7 @@ mod validation;
 
 /// Current compatibility epoch accepted by the daemon.
 ///
-/// Epoch twenty-one adds daemon-owned SuperGrok device OAuth enrollment while
+/// Epoch twenty-one adds daemon-owned `SuperGrok` device OAuth enrollment while
 /// retaining epoch twenty's withdrawal of automatic scheduler execution and managed-integration
 /// mutations until their atomic execution and durable trust boundaries are
 /// qualified. Definitions and persisted integration records remain readable.

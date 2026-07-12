@@ -22,7 +22,7 @@ use crate::{
 /// Transport that performs one allowlisted guest-mediated call.
 #[async_trait]
 pub trait PrivilegedGuestControlTransport: Send + Sync {
-    /// Invokes `runner.health` for a running VM after PoP grant.
+    /// Invokes `runner.health` for a running VM after `PoP` grant.
     async fn runner_health(&self, vm_id: &str) -> Result<Vec<u8>, PrivilegedGatewayError>;
 }
 
@@ -71,8 +71,7 @@ impl PrivilegedGateway {
         ids: Arc<dyn IdGenerator>,
         transport: Arc<dyn PrivilegedGuestControlTransport>,
     ) -> Self {
-        let service =
-            PrivilegedOperationService::new(Arc::clone(&store), Arc::clone(&clock), ids);
+        let service = PrivilegedOperationService::new(Arc::clone(&store), Arc::clone(&clock), ids);
         Self {
             store,
             clock,
@@ -81,11 +80,12 @@ impl PrivilegedGateway {
         }
     }
 
-    /// Runs `runner.health` with prepare → begin_dispatch → complete/interrupt.
+    /// Runs `runner.health` with prepare → `begin_dispatch` → complete/interrupt.
     ///
     /// # Errors
     ///
     /// Returns application errors for invalid inputs, conflicts, or storage.
+    #[allow(clippy::too_many_lines)]
     pub async fn runner_health(
         &self,
         authority_grant_id: &str,
@@ -111,9 +111,7 @@ impl PrivilegedGateway {
         let expires: UnixMillis = self.clock.now().saturating_add(30_000);
         let intent = PrivilegedOperationIntent::new(
             PrivilegedOperationKind::RunnerHealth,
-            PrivilegedOperationTarget::Runner {
-                vm_id: vm_resource,
-            },
+            PrivilegedOperationTarget::Runner { vm_id: vm_resource },
             payload_digest,
             PrivilegedAuthority::new(
                 AuthorityGrantId::new(authority_grant_id)
@@ -144,7 +142,11 @@ impl PrivilegedGateway {
                     interrupted: false,
                 },
                 PrivilegedOperationState::InterruptedNeedsReview
-                | PrivilegedOperationState::RetryPending => PrivilegedGatewayResult {
+                | PrivilegedOperationState::RetryPending
+                | PrivilegedOperationState::Prepared
+                | PrivilegedOperationState::Dispatching
+                | PrivilegedOperationState::Reviewed
+                | PrivilegedOperationState::Cancelled => PrivilegedGatewayResult {
                     operation_id: preparation.operation.id.clone(),
                     body: None,
                     interrupted: true,
@@ -154,20 +156,11 @@ impl PrivilegedGateway {
                         "privileged runner.health previously failed".into(),
                     ));
                 }
-                PrivilegedOperationState::Prepared
-                | PrivilegedOperationState::Dispatching
-                | PrivilegedOperationState::Reviewed
-                | PrivilegedOperationState::Cancelled => PrivilegedGatewayResult {
-                    operation_id: preparation.operation.id.clone(),
-                    body: None,
-                    interrupted: true,
-                },
             });
         }
 
-        let digest = Sha256::digest(
-            format!("{}:{}", preparation.operation.id.as_str(), vm_id).as_bytes(),
-        );
+        let digest =
+            Sha256::digest(format!("{}:{}", preparation.operation.id.as_str(), vm_id).as_bytes());
         let transport_id = format!(
             "transport-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
             digest[0],
@@ -264,10 +257,10 @@ impl PrivilegedGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::{Clock, IdGenerator};
     use crate::{
         PrivilegedDispatchAttempt, PrivilegedPreparation, PrivilegedRecoveryCandidate, StoreError,
     };
-    use crate::ports::{Clock, IdGenerator};
     use grok_domain::PrivilegedOperation;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -383,7 +376,10 @@ mod tests {
                 operation.authority.grant_id.as_str().to_owned(),
                 operation.idempotency.key.as_str().to_owned(),
             );
-            self.by_key.lock().expect("lock").insert(key, operation.clone());
+            self.by_key
+                .lock()
+                .expect("lock")
+                .insert(key, operation.clone());
             Ok(operation)
         }
 
@@ -424,7 +420,10 @@ mod tests {
                 operation.authority.grant_id.as_str().to_owned(),
                 operation.idempotency.key.as_str().to_owned(),
             );
-            self.by_key.lock().expect("lock").insert(key, operation.clone());
+            self.by_key
+                .lock()
+                .expect("lock")
+                .insert(key, operation.clone());
             Ok(operation)
         }
     }

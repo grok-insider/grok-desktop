@@ -517,10 +517,7 @@ fn bounded_visible(value: String, maximum: usize) -> Result<String, OAuthError> 
 fn verified_https_url(value: &str) -> Result<Url, OAuthError> {
     let url = Url::parse(value).map_err(|_| OAuthError::Protocol)?;
     let approved_host = matches!(url.host_str(), Some("x.ai" | "accounts.x.ai" | "auth.x.ai"));
-    if url.scheme() != "https"
-        || !approved_host
-        || url.username() != ""
-        || url.password().is_some()
+    if url.scheme() != "https" || !approved_host || url.username() != "" || url.password().is_some()
     {
         return Err(OAuthError::Protocol);
     }
