@@ -35,6 +35,7 @@ import { isTrustedTopLevelAppSender } from "./trustedSenderPolicy.js";
 import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy.js";
 import { withStartupDeadline } from "./startupDeadline.js";
 import { UpdateCoordinator } from "./updateCoordinator.js";
+import { resolveLinuxUpdateRunner } from "./linuxAppImageUpdater.js";
 import {
   applyGraphicsPolicy,
   DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE,
@@ -925,6 +926,16 @@ if (primaryInstance) app.whenReady().then(async () => {
     platform: process.platform,
     architecture: process.arch,
     version: app.getVersion(),
+    linuxUpdater: resolveLinuxUpdateRunner({
+      packaged: app.isPackaged,
+      platform: process.platform,
+      resourcesPath: process.resourcesPath,
+      appImagePath: process.env.APPIMAGE,
+    }),
+    restart: () => {
+      app.relaunch();
+      app.quit();
+    },
   });
   updateCoordinator.start();
   if (!developmentServer) {

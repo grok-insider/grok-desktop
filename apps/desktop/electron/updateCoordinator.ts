@@ -23,18 +23,37 @@ export interface NativeAutoUpdater {
   quitAndInstall(): void;
 }
 
+export interface LinuxAppImageUpdater {
+  download(): Promise<boolean>;
+}
+
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
+const INITIAL_CHECK_DELAY_MS = 30 * 1_000;
 
 export class UpdateCoordinator {
   private state: DesktopUpdateState;
   private checkTimer: ReturnType<typeof setInterval> | undefined;
+  private initialCheckTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly linuxUpdater: LinuxAppImageUpdater | undefined;
+  private readonly restart: (() => void) | undefined;
 
   constructor(
     private readonly updater: NativeAutoUpdater | undefined,
-    options: { packaged: boolean; platform: NodeJS.Platform; architecture: string; version: string },
+    options: {
+      packaged: boolean;
+      platform: NodeJS.Platform;
+      architecture: string;
+      version: string;
+      linuxUpdater?: LinuxAppImageUpdater;
+      restart?: () => void;
+    },
   ) {
-    const supported = options.packaged && options.platform === "win32"
-      && (options.architecture === "x64" || options.architecture === "arm64") && updater;
+    this.linuxUpdater = options.linuxUpdater;
+    this.restart = options.restart;
+    const supported = options.packaged && (
+      (options.platform === "win32" && (options.architecture === "x64" || options.architecture === "arm64") && updater)
+      || (options.platform === "linux" && options.linuxUpdater && options.restart)
+    );
     this.state = {
       phase: supported ? "idle" : "unsupported",
       currentVersion: options.version,
@@ -45,11 +64,13 @@ export class UpdateCoordinator {
     };
     if (!supported) return;
     this.state.reasonCode = "";
-    updater.setFeedURL({
-      url: `https://github.com/grok-insider/grok-desktop/releases/latest/download/GrokDesktop-stable-${options.architecture}.msix`,
-      allowAnyVersion: false,
-    });
-    this.bindEvents(updater);
+    if (updater && options.platform === "win32") {
+      updater.setFeedURL({
+        url: `https://github.com/grok-insider/grok-desktop/releases/latest/download/GrokDesktop-stable-${options.architecture}.msix`,
+        allowAnyVersion: false,
+      });
+      this.bindEvents(updater);
+    }
   }
 
   getState(): DesktopUpdateState {
@@ -57,31 +78,53 @@ export class UpdateCoordinator {
   }
 
   start(): void {
-    if (!this.updater || this.state.phase === "unsupported" || this.checkTimer) return;
+    if ((!this.updater && !this.linuxUpdater) || this.state.phase === "unsupported"
+        || this.checkTimer || this.initialCheckTimer) return;
+    this.initialCheckTimer = setTimeout(() => {
+      this.initialCheckTimer = undefined;
+      this.check();
+    }, INITIAL_CHECK_DELAY_MS);
+    this.initialCheckTimer.unref?.();
     this.checkTimer = setInterval(() => this.check(), CHECK_INTERVAL_MS);
     this.checkTimer.unref?.();
   }
 
   stop(): void {
+    if (this.initialCheckTimer) clearTimeout(this.initialCheckTimer);
     if (this.checkTimer) clearInterval(this.checkTimer);
+    this.initialCheckTimer = undefined;
     this.checkTimer = undefined;
   }
 
   check(): DesktopUpdateState {
-    if (!this.updater || this.state.phase === "unsupported") return this.getState();
+    if ((!this.updater && !this.linuxUpdater) || this.state.phase === "unsupported") return this.getState();
     if (this.state.phase === "checking" || this.state.phase === "available") return this.getState();
     this.state = { ...this.state, phase: "checking", reasonCode: "" };
-    try {
-      this.updater.checkForUpdates();
-    } catch {
-      this.fail();
+    if (this.linuxUpdater) {
+      void this.linuxUpdater.download().then((changed) => {
+        this.state = {
+          ...this.state,
+          phase: changed ? "downloaded" : "not_available",
+          checkedAtUnixMs: Date.now(),
+          targetVersion: changed ? "latest" : "",
+          reasonCode: "",
+        };
+      }, () => this.fail());
+    } else {
+      try {
+        this.updater?.checkForUpdates();
+      } catch {
+        this.fail();
+      }
     }
     return this.getState();
   }
 
   install(): boolean {
-    if (!this.updater || this.state.phase !== "downloaded") return false;
-    this.updater.quitAndInstall();
+    if (this.state.phase !== "downloaded") return false;
+    if (this.linuxUpdater && this.restart) this.restart();
+    else if (this.updater) this.updater.quitAndInstall();
+    else return false;
     return true;
   }
 

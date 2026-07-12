@@ -14,7 +14,9 @@ pnpm --filter @grok-desktop/desktop build
 cargo build -p grok-daemon --release   # or use target/debug
 pnpm package:linux -- --arch x64 \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
-  --appimagetool-sha256 <lowercase-sha256>
+  --appimagetool-sha256 <lowercase-sha256> \
+  --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
+  --appimageupdatetool-sha256 <lowercase-sha256>
 ```
 
 Optional:
@@ -22,7 +24,9 @@ Optional:
 ```sh
 pnpm package:linux -- --arch x64 --daemon /path/to/grok-daemon --out /path/to/out \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
-  --appimagetool-sha256 <lowercase-sha256>
+  --appimagetool-sha256 <lowercase-sha256> \
+  --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
+  --appimageupdatetool-sha256 <lowercase-sha256>
 ```
 
 For the product inputs, build the daemon with both public trust bindings, then
@@ -39,10 +43,12 @@ pnpm package:linux -- \
   --daemon-uid 1000 \
   --service-group grok-desktop-broker \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
-  --appimagetool-sha256 <lowercase-sha256>
+  --appimagetool-sha256 <lowercase-sha256> \
+  --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
+  --appimageupdatetool-sha256 <lowercase-sha256>
 ```
 
-The package command verifies the explicitly supplied `appimagetool` digest,
+The package command verifies both explicitly supplied AppImage tool digests,
 preserves the already-verified Electron layout, and emits a stable AppImage plus
 its `.zsync` differential-update metadata. Release workers pin the tool bytes;
 the packaging command never downloads or discovers a tool at runtime.
@@ -91,6 +97,10 @@ are stripped for packaged launches.
 - `pinentry` (or `pinentry-qt` / distro pinentry) for BYOK enrollment
 - Secret Service / libsecret for vault persistence
 - `xdg-desktop-portal` for artifact open on Linux
+- An FHS-compatible runtime providing the baseline AppImageUpdate libraries
+  (`libstdc++`, zlib, and libgpg-error) for in-place AppImage updates. NixOS
+  users should use a distribution package/update service until a qualified Nix
+  package ships; the raw upstream update helper fails closed there.
 - For **Work** (not embedded in this package): KVM (`/dev/kvm`), the
   `linux-vm-service` privileged unit, and a signed virtio guest image
 
@@ -111,8 +121,19 @@ owners/modes, and binds accepted peers to UID plus executable device/inode.
 
 ## Updates
 
-In-app auto-update is not connected. Settings must remain honest about manual
-channel updates until a signed updater ships.
+Public AppImages embed the canonical stable GitHub `.zsync` location and a
+digest-pinned AppImageUpdate helper. Packaged launches from an absolute
+`APPIMAGE` path check the stable channel shortly after startup and every six
+hours. A successful differential update replaces only that AppImage, then
+Settings offers an explicit restart. Development, extracted, package-manager,
+and otherwise unsupported installs remain read-only and report that status
+honestly.
+
+The helper receives only a narrow non-secret environment, fixed arguments, and
+the current AppImage path. Packaging verifies its pinned release digest before
+embedding it. Release publication must upload the stable `.AppImage` and its
+matching `.AppImage.zsync` asset together; until those assets exist, checks
+fail closed without changing the current executable.
 
 ## Isolation honesty
 

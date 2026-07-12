@@ -27,9 +27,11 @@ test("parseLinuxPackageArguments defaults arch from host and rejects bad options
   assert.throws(() => parseLinuxPackageArguments(["--vm-service", "/bin/true"]), /daemon-uid/);
   assert.throws(() => parseLinuxPackageArguments(["--acp-catalog", "/tmp/catalog"]), /requires/);
   assert.throws(() => parseLinuxPackageArguments(["--appimagetool", "/tmp/tool"]), /sha256/);
+  assert.throws(() => parseLinuxPackageArguments(["--appimageupdatetool", "/tmp/update-tool"]), /sha256/);
   assert.equal(parseLinuxPackageArguments([
     "--appimagetool", "/tmp/tool", "--appimagetool-sha256", "a".repeat(64),
-  ]).appimagetoolSha256, "a".repeat(64));
+    "--appimageupdatetool", "/tmp/update-tool", "--appimageupdatetool-sha256", "b".repeat(64),
+  ]).appimageupdatetoolSha256, "b".repeat(64));
 });
 
 test("pins AppImage updates to the canonical stable GitHub release asset", () => {
@@ -187,6 +189,11 @@ test("resolveLinuxDaemonBinary and verifyLinuxPackagedLayout use real files", as
     await writeFile(path.join(appDir, "resources", "bin", "grok-daemon"), "#!/bin/sh\n", {
       mode: 0o755,
     });
+    await writeFile(
+      path.join(appDir, "resources", "bin", "appimageupdatetool.AppImage"),
+      "#!/bin/sh\n",
+      { mode: 0o755 },
+    );
     await writeFile(
       path.join(appDir, "grok-desktop.desktop"),
       renderLinuxDesktopEntry({

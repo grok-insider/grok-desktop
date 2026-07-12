@@ -9,6 +9,21 @@ class FakeUpdater extends EventEmitter implements NativeAutoUpdater {
 }
 
 describe("UpdateCoordinator", () => {
+  it("checks the stable channel shortly after startup", () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    const coordinator = new UpdateCoordinator(updater, {
+      packaged: true, platform: "win32", architecture: "x64", version: "1.0.0",
+    });
+    coordinator.start();
+    vi.advanceTimersByTime(29_999);
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    coordinator.stop();
+    vi.useRealTimers();
+  });
+
   it("is honest for development and unsupported platform installs", () => {
     expect(new UpdateCoordinator(undefined, {
       packaged: false, platform: "linux", architecture: "x64", version: "0.1.0",
@@ -44,5 +59,24 @@ describe("UpdateCoordinator", () => {
     });
     expect(coordinator.check()).toMatchObject({ phase: "failed", reasonCode: "check_failed" });
     expect(JSON.stringify(coordinator.getState())).not.toContain("secret native detail");
+  });
+
+  it("downloads Linux AppImage updates before offering a clean restart", async () => {
+    const restart = vi.fn();
+    const linuxUpdater = { download: vi.fn(async () => true) };
+    const coordinator = new UpdateCoordinator(undefined, {
+      packaged: true,
+      platform: "linux",
+      architecture: "x64",
+      version: "1.0.0",
+      linuxUpdater,
+      restart,
+    });
+    expect(coordinator.check()).toMatchObject({ phase: "checking" });
+    await vi.waitFor(() => expect(coordinator.getState()).toMatchObject({
+      phase: "downloaded", targetVersion: "latest",
+    }));
+    expect(coordinator.install()).toBe(true);
+    expect(restart).toHaveBeenCalledOnce();
   });
 });

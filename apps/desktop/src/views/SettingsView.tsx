@@ -284,6 +284,22 @@ function GeneralSettings() {
   }, [client]);
 
   useEffect(() => {
+    if (update?.phase !== "checking" && update?.phase !== "available") return;
+    let active = true;
+    const poll = setInterval(() => {
+      void client.getUpdateState().then((value) => {
+        if (active) setUpdate(value);
+      }).catch(() => {
+        // Preserve the last trustworthy state; the next poll may recover.
+      });
+    }, 500);
+    return () => {
+      active = false;
+      clearInterval(poll);
+    };
+  }, [client, update?.phase]);
+
+  useEffect(() => {
     let active = true;
     void client.getUpdateState().then((value) => {
       if (active) setUpdate(value);

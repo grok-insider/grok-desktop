@@ -45,6 +45,7 @@ export function parseLinuxPackageArguments(argv) {
       throw new Error("linux package arguments must be option/value pairs");
     }
     if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component", "--appimagetool", "--appimagetool-sha256",
+      "--appimageupdatetool", "--appimageupdatetool-sha256",
       "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
       throw new Error(`unsupported linux package option ${option}`);
     }
@@ -64,6 +65,13 @@ export function parseLinuxPackageArguments(argv) {
   const appimagetoolSha256 = values["--appimagetool-sha256"];
   if (appimagetool && !/^[a-f0-9]{64}$/.test(appimagetoolSha256 ?? "")) {
     throw new Error("--appimagetool-sha256 is required and must be lowercase SHA-256");
+  }
+  const appimageupdatetool = values["--appimageupdatetool"]
+    ? path.resolve(values["--appimageupdatetool"])
+    : undefined;
+  const appimageupdatetoolSha256 = values["--appimageupdatetool-sha256"];
+  if (appimageupdatetool && !/^[a-f0-9]{64}$/.test(appimageupdatetoolSha256 ?? "")) {
+    throw new Error("--appimageupdatetool-sha256 is required and must be lowercase SHA-256");
   }
   if (!vmService && values["--daemon-uid"] !== undefined) {
     throw new Error("--daemon-uid is valid only with --vm-service");
@@ -88,6 +96,8 @@ export function parseLinuxPackageArguments(argv) {
     vmService,
     appimagetool,
     appimagetoolSha256,
+    appimageupdatetool,
+    appimageupdatetoolSha256,
     daemonUid: vmService ? Number(values["--daemon-uid"]) : undefined,
     serviceGroup,
   };
@@ -155,6 +165,20 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   });
   await assertExecutableFile(appImage, "AppImage");
   return appImage;
+}
+
+async function stageAppImageUpdateTool(resourcesBin, options) {
+  if (!options.appimageupdatetool) {
+    throw new Error("--appimageupdatetool is required to produce the public AppImage");
+  }
+  await assertExecutableFile(options.appimageupdatetool, "appimageupdatetool");
+  if (await sha256File(options.appimageupdatetool) !== options.appimageupdatetoolSha256) {
+    throw new Error("appimageupdatetool does not match the pinned release digest");
+  }
+  const destination = path.join(resourcesBin, "appimageupdatetool.AppImage");
+  await cp(options.appimageupdatetool, destination, { errorOnExist: true });
+  await chmod(destination, 0o755);
+  return destination;
 }
 
 /** Resolves the daemon binary candidates used by development and package embeds. */
@@ -337,6 +361,10 @@ X-GrokDesktop-Version=${version}
 export async function verifyLinuxPackagedLayout(appDirectory, daemonRelativePath = "resources/bin/grok-daemon") {
   const daemonPath = path.join(appDirectory, daemonRelativePath);
   await assertExecutableFile(daemonPath, "packaged daemon");
+  await assertExecutableFile(
+    path.join(appDirectory, "resources", "bin", "appimageupdatetool.AppImage"),
+    "packaged AppImage update helper",
+  );
   const desktopEntry = path.join(appDirectory, "grok-desktop.desktop");
   const entry = await readFile(desktopEntry, "utf8");
   if (!entry.includes("x-scheme-handler/grok-desktop")) {
@@ -512,6 +540,7 @@ async function main() {
   const stagedDaemon = path.join(resourcesBin, "grok-daemon");
   await cp(daemonSource, stagedDaemon);
   await chmod(stagedDaemon, 0o755);
+  const stagedUpdateTool = await stageAppImageUpdateTool(resourcesBin, options);
   const stagedAcp = await stageVerifiedLinuxAcp(
     resourcesBin, options, daemonSource, Math.floor(Date.now() / 1000),
   );
@@ -577,6 +606,7 @@ async function main() {
       executable,
       appImage,
       appImageSha256: await sha256File(appImage),
+      updateToolSha256: await sha256File(stagedUpdateTool),
       daemonSha256: await sha256File(packagedDaemon),
       daemonSource,
       acp: stagedAcp ? {
