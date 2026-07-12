@@ -11,9 +11,8 @@ use grok_application::{
     MAX_CONVERSATION_EVENT_BATCH, MAX_CONVERSATION_FORK_DELIVERY_ALIASES,
     MAX_CONVERSATION_FORK_DIRECT_CHILDREN, MAX_CONVERSATION_FORK_FAMILY_THREADS,
     MAX_CONVERSATION_FORK_INHERITED_OUTCOMES, MAX_CONVERSATION_FORK_METADATA_BYTES,
-    MutationCommand, NewRunEvent, ProviderStartCommit, StoreError, TerminalTurnCommit,
-    UsageScope, UsageSummary, UsageWindow, conversation_fork_metadata_is_within_bounds,
-    window_lower_bound,
+    MutationCommand, NewRunEvent, ProviderStartCommit, StoreError, TerminalTurnCommit, UsageScope,
+    UsageSummary, UsageWindow, conversation_fork_metadata_is_within_bounds, window_lower_bound,
 };
 use grok_domain::{
     ChatRail, ConversationCitation, ConversationFailure, ConversationFailureKind,

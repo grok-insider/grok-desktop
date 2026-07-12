@@ -15,10 +15,10 @@ use grok_application::{
     ChatModelService, ConversationForkCommandResolution, ConversationForkSnapshot,
     ConversationService, ConversationTurnSnapshot, CreateAutomation, CreateProject, CreateThread,
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
-    DesktopPreferencesService, EditAndBranchConversationTurn, GetUsageSummary, GrokBuildAuthService,
-    GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH, OAuthCancellation,
-    RegenerateConversationTurn, RetryConversationTurn, RunService, SelectChatModel,
-    StartConversationTurn, StartedConversationFork, StartedConversationTurn,
+    DesktopPreferencesService, EditAndBranchConversationTurn, GetUsageSummary,
+    GrokBuildAuthService, GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH,
+    OAuthCancellation, RegenerateConversationTurn, RetryConversationTurn, RunService,
+    SelectChatModel, StartConversationTurn, StartedConversationFork, StartedConversationTurn,
     SuperGrokEnrollmentService, SuperGrokEnrollmentStatus, UpdateAutomation,
     UpdateDesktopPreferences, UpdateProject, UpdateThread, UsageScope, UsageWindow,
     WorkspaceService,
@@ -2873,8 +2873,8 @@ mod tests {
         ApprovalRisk, ApprovalScope, ConversationCitation, ConversationTurn, ConversationTurnEvent,
         ConversationTurnEventKind, ConversationTurnId, ConversationTurnLineage, ConversationUsage,
         EffectId, EffectKind, EffectState, Idempotency, MAX_CONVERSATION_CITATION_TOTAL_BYTES,
-        MAX_CONVERSATION_USAGE_VALUE, MAX_MESSAGE_BYTES, Message, MessageId, MessageRole, ProjectId,
-        RequestedAction, Run, RunEventKind, RunId, RunState, SideEffect, ThreadId,
+        MAX_CONVERSATION_USAGE_VALUE, MAX_MESSAGE_BYTES, Message, MessageId, MessageRole,
+        ProjectId, RequestedAction, Run, RunEventKind, RunId, RunState, SideEffect, ThreadId,
     };
     use grok_memory::{
         FixedClock, InMemoryExecutionStore, InMemorySecretVault, SequentialIdGenerator,
@@ -8386,7 +8386,11 @@ mod tests {
             clock.clone(),
             ids.clone(),
         ));
-        let workspace = Arc::new(WorkspaceService::new(store.clone(), clock.clone(), ids.clone()));
+        let workspace = Arc::new(WorkspaceService::new(
+            store.clone(),
+            clock.clone(),
+            ids.clone(),
+        ));
         let credentials = Arc::new(CredentialService::new(
             vault,
             store.clone(),

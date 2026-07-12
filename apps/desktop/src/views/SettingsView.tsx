@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   Bot,
   ChartColumn,
@@ -453,7 +453,7 @@ function UsageSettings() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setStatus("loading");
     setError("");
     try {
@@ -468,11 +468,11 @@ function UsageSettings() {
       setStatus("error");
       setError(cause instanceof Error ? cause.message : "Usage could not be loaded.");
     }
-  };
+  }, [client]);
 
   useEffect(() => {
     void load();
-  }, [client]);
+  }, [load]);
 
   return (
     <>

@@ -2,15 +2,16 @@
 
 - Snapshot date: 2026-07-12
 - Release status: not qualified for distribution
-- Wire/schema tip: **IPC protocol epoch 21**, **SQLCipher schema 20**. Scheduler
-  execution and managed-integration mutation remain disabled; schema 20 adds
-  immutable per-conversation credential-rail lineage. Older narrative below
+- Wire/schema tip: **IPC protocol epoch 23**, **SQLCipher schema 23**. Scheduler
+  execution and managed-integration mutation remain disabled; schema 23 adds
+  local completed-turn usage-summary indexes while retaining immutable
+  per-conversation credential-rail lineage. Older narrative below
   describes retained contracts unless a later epoch explicitly replaced them.
 - Linux full product GA contract and milestones:
   [linux-ga.md](linux-ga.md). Platform isolation on Linux is **specified**
-  (platform ADRs 0004–0007) and **not implemented**; Work remains Limited Mode
-  on Linux until the QEMU/KVM broker, virtio guest image, PoP, and privileged
-  gateway qualify.
+  (platform ADRs 0004–0007) and has fail-closed broker, transport, and packaging
+  foundations; Work remains Limited Mode until the signed QEMU/KVM guest,
+  proof-of-possession, privileged gateway, and hardware qualification complete.
 
 This ledger distinguishes implemented code from an end-to-end product workflow
 and from release evidence. A locally passing adapter or cross-compiled binary

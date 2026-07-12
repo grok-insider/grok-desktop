@@ -82,7 +82,10 @@ impl UsageSummaryService {
     ///
     /// Returns [`ApplicationError`] when the scope identifiers are invalid in the
     /// store layer or persistence fails.
-    pub async fn summarize(&self, input: GetUsageSummary) -> Result<UsageSummary, ApplicationError> {
+    pub async fn summarize(
+        &self,
+        input: GetUsageSummary,
+    ) -> Result<UsageSummary, ApplicationError> {
         let as_of = self.clock.now();
         let summary = self
             .store

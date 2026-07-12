@@ -3,7 +3,7 @@
 - Snapshot: 2026-07-12
 - Reviewed baseline: `66787d5ef3fe4bd23aadb49951b8d347ab32e8b6`
 - Review range: `226484610d5ea4ecbb1c614cc7a741a2d054fc65..HEAD`
-- Wire/schema implemented in the current tree: IPC epoch 21, SQLCipher schema 22
+- Wire/schema implemented in the current tree: IPC epoch 23, SQLCipher schema 23
 - Release status: not qualified for distribution
 
 This directory is the canonical handoff for continuing the current work. It

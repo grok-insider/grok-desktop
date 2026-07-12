@@ -29,9 +29,30 @@ async fn summarize_usage_scopes_windows_and_completed_only() {
     let (project_a, thread_a) = seed_workspace(&store, ids.clone(), "a").await;
     let (project_b, thread_b) = seed_workspace(&store, ids.clone(), "b").await;
 
-    complete_turn(&store, project_a.clone(), thread_a.clone(), 1, usage(10, 4, 100)).await;
-    complete_turn(&store, project_a.clone(), thread_a.clone(), 2, usage(20, 6, 200)).await;
-    complete_turn(&store, project_b.clone(), thread_b.clone(), 3, usage(5, 1, 50)).await;
+    complete_turn(
+        &store,
+        project_a.clone(),
+        thread_a.clone(),
+        1,
+        usage(10, 4, 100),
+    )
+    .await;
+    complete_turn(
+        &store,
+        project_a.clone(),
+        thread_a.clone(),
+        2,
+        usage(20, 6, 200),
+    )
+    .await;
+    complete_turn(
+        &store,
+        project_b.clone(),
+        thread_b.clone(),
+        3,
+        usage(5, 1, 50),
+    )
+    .await;
     let _reserved = reserve_turn(&store, project_a.clone(), thread_a.clone(), 4).await;
 
     let as_of = 1_000_u64;
@@ -151,11 +172,7 @@ async fn seed_workspace(
     ids: Arc<SequentialIdGenerator>,
     suffix: &str,
 ) -> (ProjectId, ThreadId) {
-    let workspace = WorkspaceService::new(
-        store.clone(),
-        Arc::new(FixedClock::new(1)),
-        ids,
-    );
+    let workspace = WorkspaceService::new(store.clone(), Arc::new(FixedClock::new(1)), ids);
     let project = workspace
         .create_project(
             CreateProject {

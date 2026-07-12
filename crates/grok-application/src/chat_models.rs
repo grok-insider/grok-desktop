@@ -419,10 +419,7 @@ mod tests {
         let catalog = validate_catalog(vec![
             model("grok-4.3", &["grok-latest"]),
             // Empty modalities would otherwise fail-open as text-ready (ADR 0009).
-            model(
-                "grok-imagine-image",
-                &["grok-imagine-image-2026-03-02"],
-            ),
+            model("grok-imagine-image", &["grok-imagine-image-2026-03-02"]),
             model(
                 "grok-imagine-video-1.5",
                 &["grok-imagine-video-1.5-preview"],

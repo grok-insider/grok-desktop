@@ -5,11 +5,12 @@ durable contracts they carry. Stable process architecture lives in
 [overview.md](overview.md). Layering rules live in [principles.md](principles.md).
 Decision detail lives in the linked ADRs.
 
-**Current surface (maintain as you bump):** desktop IPC **v21** rejects epochs
-**0–20** before dispatch. SQLCipher production schema tracks the latest
-forward-only migration (schema **22**: atomic scheduler dispatch binding and
-durable managed-integration lifecycle; execution and lifecycle mutations remain
-disabled pending qualification). Earlier sections below that name v15/schema 18
+**Current surface (maintain as you bump):** desktop IPC **v23** rejects epochs
+**0–22** before dispatch. SQLCipher production schema tracks the latest
+forward-only migration (schema **23**: local completed-turn usage-summary
+indexes, after schema 22's atomic scheduler dispatch binding and durable
+managed-integration lifecycle). Scheduler execution and managed-integration
+mutations remain disabled pending qualification. Earlier sections below that name v15/schema 18
 describe contracts still retained under later epochs. Always confirm against
 `grok-protocol` / `grok-sqlcipher` when changing code.
 
@@ -62,6 +63,7 @@ renderer, preload, Electron-main, argv, and environment state. See
 | SuperGrok API Chat rail | IPC v21, schema 20 lineage | [0026](../decisions/0026-daemon-owned-supergrok-api-chat-rail.md) |
 | Atomic scheduled dispatch | schema 21 | [0025](../decisions/0025-daemon-owned-automation-scheduler-journal.md) |
 | Durable signed managed integrations | schema 22 | [0027](../decisions/0027-durable-signed-managed-integration-lifecycle.md) |
+| Local completed-turn usage summary | IPC v23, schema 23 | [0029](../decisions/0029-local-usage-summary-ipc.md) |
 | Privileged guest / channel / journal | platform ADRs | [platform/adr](../platform/adr/) |
 
 ## Narrative detail
