@@ -15,6 +15,7 @@ const environment = (overrides: Partial<Parameters<typeof resolveGraphicsPolicy>
   glxVendor: "mesa",
   gbmBackend: "",
   nvidiaDriverPresent: false,
+  nixGraphicsEnvironment: false,
   ...overrides,
 });
 
@@ -38,6 +39,17 @@ describe("graphicsPolicy", () => {
     expect(resolveGraphicsPolicy(environment())).toMatchObject({ backend: "wayland", reason: "wayland_preferred" });
   });
 
+  it("uses software rendering proactively for NVIDIA inside a Nix graphics environment", () => {
+    expect(resolveGraphicsPolicy(environment({
+      glxVendor: "nvidia",
+      nixGraphicsEnvironment: true,
+    }))).toMatchObject({
+      backend: "software",
+      reason: "nvidia_nix_risk",
+      softwarePlatform: "wayland",
+    });
+  });
+
   it("honors one valid override and fails malformed or conflicting values back to auto policy", () => {
     expect(resolveGraphicsPolicy(environment({ argv: ["--grok-graphics-backend=software"] }))).toMatchObject({ backend: "software", reason: "explicit" });
     expect(resolveGraphicsPolicy(environment({ argv: ["--grok-graphics-backend=broken"] }))).toMatchObject({ backend: "wayland", warning: "invalid_override" });
@@ -51,7 +63,10 @@ describe("graphicsPolicy", () => {
     expect(app.disableHardwareAcceleration).not.toHaveBeenCalled();
 
     applyGraphicsPolicy(resolveGraphicsPolicy(environment({ argv: ["--grok-graphics-backend=software"] })), app);
-    expect(app.disableHardwareAcceleration).toHaveBeenCalledOnce();
+    expect(app.disableHardwareAcceleration).not.toHaveBeenCalled();
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("ozone-platform", "wayland");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "angle");
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith("use-angle", "swiftshader");
   });
 
   it("constructs one sanitized software fallback argument set", () => {

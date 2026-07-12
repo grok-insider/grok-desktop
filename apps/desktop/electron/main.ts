@@ -33,6 +33,7 @@ import { resolveDevelopmentServerUrl } from "./developmentServer.js";
 import { resolveTrayIconPath } from "./trayIcon.js";
 import { isTrustedTopLevelAppSender } from "./trustedSenderPolicy.js";
 import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy.js";
+import { withStartupDeadline } from "./startupDeadline.js";
 import {
   applyGraphicsPolicy,
   DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE,
@@ -83,6 +84,7 @@ const TERMINAL_CONVERSATION_STATES = new Set([
 ]);
 const MAX_RENDERER_DELIVERY_RETRIES = 2;
 const MAX_CONVERSATION_SETUP_RETRY_MS = 2_000;
+const STARTUP_PREFERENCES_DEADLINE_MS = 2_500;
 
 protocol.registerSchemesAsPrivileged([{
   scheme: "grok-desktop",
@@ -97,6 +99,7 @@ const graphicsPolicy = resolveGraphicsPolicy({
   glxVendor: process.env["__GLX_VENDOR_LIBRARY_NAME"],
   gbmBackend: process.env.GBM_BACKEND,
   nvidiaDriverPresent: process.platform === "linux" && existsSync("/proc/driver/nvidia/version"),
+  nixGraphicsEnvironment: Boolean(process.env.IN_NIX_SHELL || process.env.NIX_LD),
 });
 applyGraphicsPolicy(graphicsPolicy, app);
 if (graphicsPolicy.warning) {
@@ -122,6 +125,12 @@ async function restartWithSoftwareGraphics(): Promise<void> {
   app.exit(app.isPackaged ? 0 : DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE);
 }
 
+async function initialDesktopPreferences(
+  daemon: DaemonSupervisor,
+): Promise<Awaited<ReturnType<DaemonSupervisor["getDesktopPreferences"]>>> {
+  return withStartupDeadline(daemon.getDesktopPreferences(), STARTUP_PREFERENCES_DEADLINE_MS);
+}
+
 app.on("child-process-gone", (_event, details) => {
   if (
     details.type === "GPU"
@@ -139,7 +148,9 @@ function createWindow(applicationDocument: string): BrowserWindow {
     height: 920,
     minWidth: 860,
     minHeight: 640,
-    show: false,
+    // Software compositors need a mapped native surface before their first
+    // frame; the neutral background prevents an unstyled flash.
+    show: graphicsPolicy.backend === "software",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: "#f5f5f2",
     webPreferences: {
@@ -178,7 +189,9 @@ function createWindow(applicationDocument: string): BrowserWindow {
     window.show();
   });
 
-  void window.loadURL(applicationDocument);
+  void window.loadURL(applicationDocument).catch(() => {
+    console.warn("desktop renderer document failed to load");
+  });
   primaryWindow = window;
   return window;
 }
@@ -910,10 +923,11 @@ if (primaryInstance) app.whenReady().then(async () => {
   });
   registerBridge(supervisor, applicationDocument);
   try {
-    const preferences = await supervisor.getDesktopPreferences();
+    const preferences = await initialDesktopPreferences(supervisor);
     keepRunningInNotificationArea = preferences.keepRunningInNotificationArea;
   } catch {
     // The product default remains active while the daemon reports Limited Mode.
+    console.warn("desktop preferences were unavailable during bounded startup; using the product default");
   }
   // Window creation is enabled only after IPC handlers and daemon-owned close
   // behavior are ready, so an activation cannot outrun the preload handshake.

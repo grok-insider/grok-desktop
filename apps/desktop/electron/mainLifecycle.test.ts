@@ -143,6 +143,8 @@ const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, "resour
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  vi.stubEnv("IN_NIX_SHELL", "");
+  vi.stubEnv("NIX_LD", "");
   mocks.appEvents.clear();
   mocks.trayEvents.clear();
   mocks.windowEvents.clear();
@@ -160,6 +162,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     for (const listener of process.listeners(signal)) {
       if (!originalSignalListeners[signal].has(listener)) process.removeListener(signal, listener);

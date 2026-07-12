@@ -67,7 +67,9 @@ pnpm test:e2e:electron -- --port 9250
 Electron selects its startup backend before creating a window. Pure Wayland and
 pure X11 sessions use their available backend. When both Wayland and XWayland
 are present, Mesa-class systems prefer native Wayland while detected NVIDIA
-systems prefer XWayland to avoid incompatible DMA-BUF/EGL imports. A GPU crash
+systems prefer XWayland. NVIDIA sessions running inside a Nix development
+graphics environment use native-Wayland SwiftShader rendering because host-
+driver EGL cannot be assumed ABI-compatible with Electron's Nix closure. A GPU crash
 before the first usable window causes one software-rendered restart; it never
 loops or changes the renderer sandbox, context isolation, CSP, or web security.
 

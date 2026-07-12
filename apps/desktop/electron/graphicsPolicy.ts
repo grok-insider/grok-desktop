@@ -8,12 +8,14 @@ export interface GraphicsEnvironment {
   glxVendor?: string;
   gbmBackend?: string;
   nvidiaDriverPresent: boolean;
+  nixGraphicsEnvironment: boolean;
 }
 
 export interface GraphicsPolicy {
   backend: GraphicsBackend;
-  reason: "platform_default" | "explicit" | "wayland_only" | "x11_only" | "nvidia_risk" | "wayland_preferred" | "headless";
+  reason: "platform_default" | "explicit" | "wayland_only" | "x11_only" | "nvidia_risk" | "nvidia_nix_risk" | "wayland_preferred" | "headless";
   fallbackAttempted: boolean;
+  softwarePlatform?: "wayland" | "x11";
   warning?: "invalid_override" | "conflicting_overrides";
 }
 
@@ -37,10 +39,28 @@ export function resolveGraphicsPolicy(environment: GraphicsEnvironment): Graphic
       : undefined;
 
   if (validOverride && validOverride !== "auto") {
-    return { backend: validOverride, reason: "explicit", fallbackAttempted };
+    return {
+      backend: validOverride,
+      reason: "explicit",
+      fallbackAttempted,
+      softwarePlatform: validOverride === "software" ? availableSoftwarePlatform(environment) : undefined,
+    };
   }
   if (environment.platform !== "linux") {
     return { backend: "auto", reason: "platform_default", fallbackAttempted, warning };
+  }
+
+  const nvidiaRisk = environment.nvidiaDriverPresent
+    || normalized(environment.glxVendor) === "nvidia"
+    || normalized(environment.gbmBackend).startsWith("nvidia");
+  if (nvidiaRisk && environment.nixGraphicsEnvironment) {
+    return {
+      backend: "software",
+      reason: "nvidia_nix_risk",
+      fallbackAttempted,
+      warning,
+      softwarePlatform: availableSoftwarePlatform(environment),
+    };
   }
 
   const wayland = nonempty(environment.waylandDisplay);
@@ -49,9 +69,6 @@ export function resolveGraphicsPolicy(environment: GraphicsEnvironment): Graphic
   if (x11 && !wayland) return { backend: "x11", reason: "x11_only", fallbackAttempted, warning };
   if (!wayland && !x11) return { backend: "auto", reason: "headless", fallbackAttempted, warning };
 
-  const nvidiaRisk = environment.nvidiaDriverPresent
-    || normalized(environment.glxVendor) === "nvidia"
-    || normalized(environment.gbmBackend).startsWith("nvidia");
   return nvidiaRisk
     ? { backend: "x11", reason: "nvidia_risk", fallbackAttempted, warning }
     : { backend: "wayland", reason: "wayland_preferred", fallbackAttempted, warning };
@@ -65,7 +82,11 @@ export function applyGraphicsPolicy(
   },
 ): void {
   if (policy.backend === "software") {
-    electronApp.disableHardwareAcceleration();
+    if (policy.softwarePlatform) {
+      electronApp.commandLine.appendSwitch("ozone-platform", policy.softwarePlatform);
+    }
+    electronApp.commandLine.appendSwitch("use-gl", "angle");
+    electronApp.commandLine.appendSwitch("use-angle", "swiftshader");
   } else if (policy.backend === "wayland" || policy.backend === "x11") {
     electronApp.commandLine.appendSwitch("ozone-platform", policy.backend);
   }
@@ -88,4 +109,10 @@ function normalized(value: string | undefined): string {
 
 function nonempty(value: string | undefined): boolean {
   return normalized(value).length > 0;
+}
+
+function availableSoftwarePlatform(environment: GraphicsEnvironment): "wayland" | "x11" | undefined {
+  if (nonempty(environment.waylandDisplay)) return "wayland";
+  if (nonempty(environment.x11Display)) return "x11";
+  return undefined;
 }
