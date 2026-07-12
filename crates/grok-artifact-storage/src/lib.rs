@@ -15,6 +15,9 @@ use grok_domain::{ArtifactId, ArtifactVersion, UnixMillis};
 #[cfg(target_os = "linux")]
 mod linux;
 
+#[cfg(all(test, target_os = "linux"))]
+mod linux_ga_qualification;
+
 #[cfg(target_os = "linux")]
 pub use linux::LinuxArtifactContent;
 

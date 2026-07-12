@@ -24,9 +24,24 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
     exactKeys(input, ["kind", "url"], "external URL request");
     return { kind, url: parseExternalHttpsUrl(input.url) };
   }
-  if (kind === "runtime.info" || kind === "window.minimize" || kind === "window.maximize" || kind === "window.close" || kind === "daemon.bootstrap" || kind === "daemon.getAccountState") {
+  if (
+    kind === "runtime.info"
+    || kind === "window.minimize"
+    || kind === "window.maximize"
+    || kind === "window.close"
+    || kind === "daemon.bootstrap"
+    || kind === "daemon.getAccountState"
+    || kind === "daemon.getGrokBuildAuthStatus"
+  ) {
     exactKeys(input, ["kind"], `${kind} request`);
     return { kind };
+  }
+  if (kind === "daemon.startGrokBuildAuth") {
+    exactKeys(input, ["kind", "idempotencyKey"], "grok build auth request");
+    return {
+      kind,
+      idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
+    };
   }
   if (kind === "daemon.updateDesktopPreferences") {
     exactKeys(input, ["kind", "expectedRevision", "keepRunningInNotificationArea", "idempotencyKey"], "desktop preference request");

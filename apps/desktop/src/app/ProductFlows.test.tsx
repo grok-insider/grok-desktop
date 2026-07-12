@@ -26,10 +26,12 @@ describe("complete product workflows", () => {
     expect(screen.getByRole("button", { name: "Branch from this response" })).toBeEnabled();
   });
 
-  it("keeps subscription unavailable while enrolling BYOK through native entry", async () => {
+  it("connects Grok Build host auth and keeps BYOK enrollment secret-free", async () => {
     renderRoute("/setup", new MockDesktopClient({ firstRun: true }));
-    expect(await screen.findByRole("button", { name: "Connection unavailable" })).toBeDisabled();
-    expect(screen.getByText(/Subscription status cannot be verified/)).toBeInTheDocument();
+    const connect = await screen.findByRole("button", { name: "Connect Grok Build" });
+    expect(connect).toBeEnabled();
+    fireEvent.click(connect);
+    expect(await screen.findByText("Grok account connected")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /xAI API key/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Add xAI API key" }));
     expect(await screen.findByText("xAI API key stored in the operating system vault.")).toBeInTheDocument();

@@ -46,6 +46,9 @@ pub struct AccountState {
     /// Official discovery found at least one text-capable conversation model for this key.
     /// Current selected-model readiness is resolved separately from a live catalog.
     pub xai_capabilities_resolved: bool,
+    /// Host ACP Grok Build authenticate succeeded (non-secret). Does not unlock
+    /// Work without strong isolation facts.
+    pub grok_build_authenticated: bool,
 }
 
 /// Non-secret result of validating a key against official xAI contracts.
@@ -172,6 +175,7 @@ impl CredentialService {
                             self.vault.get(&self.xai_capabilities_resolved_name),
                             Ok(value) if value.expose_secret() == [1]
                         ),
+                    grok_build_authenticated: false,
                 })
             }
             Err(VaultError::NotFound) => Ok(AccountState::default()),
@@ -279,6 +283,7 @@ impl CredentialService {
             Ok(_) => Ok(AccountState {
                 xai_api_key_configured: true,
                 xai_capabilities_resolved: resolved,
+                grok_build_authenticated: false,
             }),
             Err(error) => Err(map_validation_error(error)),
         }
@@ -401,6 +406,7 @@ impl CredentialService {
         Ok(AccountState {
             xai_api_key_configured: true,
             xai_capabilities_resolved: capabilities_resolved,
+                grok_build_authenticated: false,
         })
     }
 

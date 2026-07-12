@@ -3683,6 +3683,52 @@ impl PrivilegedOperationStore for InMemoryExecutionStore {
             .insert(operation.id.clone(), operation.clone());
         Ok(operation)
     }
+
+    async fn complete_dispatch_outcome(
+        &self,
+        operation: PrivilegedOperation,
+        expected_revision: u64,
+        attempt_sequence: u32,
+        completed_at: UnixMillis,
+    ) -> Result<PrivilegedOperation, StoreError> {
+        let operation = validate_privileged_operation(operation)?;
+        match operation.state {
+            PrivilegedOperationState::Succeeded
+            | PrivilegedOperationState::Failed
+            | PrivilegedOperationState::RetryPending
+            | PrivilegedOperationState::InterruptedNeedsReview => {}
+            _ => return Err(invalid_privileged_journal()),
+        }
+        let mut state = self.state.lock().await;
+        let current = state
+            .privileged_operations
+            .get(&operation.id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        let current = validate_privileged_operation(current)?;
+        if current.revision != expected_revision
+            || current.attempt_count != attempt_sequence
+            || current.state != PrivilegedOperationState::Dispatching
+        {
+            return Err(StoreError::Conflict);
+        }
+        let attempt = state
+            .privileged_operation_attempts
+            .get_mut(&operation.id)
+            .and_then(|attempts| attempts.last_mut())
+            .ok_or_else(invalid_privileged_journal)?;
+        if attempt.attempt.sequence != attempt_sequence
+            || attempt.completed_at.is_some()
+            || completed_at < attempt.attempt.started_at
+        {
+            return Err(StoreError::Conflict);
+        }
+        attempt.completed_at = Some(completed_at);
+        state
+            .privileged_operations
+            .insert(operation.id.clone(), operation.clone());
+        Ok(operation)
+    }
 }
 
 fn validate_privileged_operation(
@@ -7089,6 +7135,23 @@ mod tests {
                 )
                 .await
         }
+
+        async fn complete_dispatch_outcome(
+            &self,
+            operation: PrivilegedOperation,
+            expected_revision: u64,
+            attempt_sequence: u32,
+            completed_at: UnixMillis,
+        ) -> Result<PrivilegedOperation, StoreError> {
+            self.inner
+                .complete_dispatch_outcome(
+                    operation,
+                    expected_revision,
+                    attempt_sequence,
+                    completed_at,
+                )
+                .await
+        }
     }
 
     async fn assert_invalid_dispatch_evidence_is_rejected(
@@ -7590,6 +7653,7 @@ mod tests {
             AccountState {
                 xai_api_key_configured: true,
                 xai_capabilities_resolved: true,
+                grok_build_authenticated: false,
             }
         );
         let conflicting = SecretValue::new(b"xai-different-key".to_vec()).expect("different key");
@@ -7681,6 +7745,7 @@ mod tests {
             AccountState {
                 xai_api_key_configured: true,
                 xai_capabilities_resolved: false,
+                grok_build_authenticated: false,
             }
         );
         assert!(matches!(

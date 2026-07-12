@@ -462,18 +462,31 @@ export class ElectronDesktopClient implements DesktopClient {
     const apiKeyConfigured = this.accountState.xaiApiKeyConfigured;
     const apiReady = apiKeyConfigured && capability("chat")?.available === true;
     const runtime = this.snapshot.connection.agentRuntime;
-    const runtimeDetail = runtime?.healthy
-      ? `${runtime.name} ${runtime.version} is installed, but subscription sign-in status is not exposed`
-      : runtime?.reasonCode || "Grok Build runtime is not connected";
+    const grokConnected = this.accountState.grokBuildAuthenticated === true;
+    const runtimeDetail = grokConnected
+      ? "Official Grok Build host authentication is active"
+      : runtime?.healthy
+        ? `${runtime.name} ${runtime.version} is ready for host authentication`
+        : runtime?.reasonCode || "Grok Build runtime is not connected";
+    const workAvailable = work?.available === true;
     return {
-      grokBuild: "not_connected",
+      grokBuild: grokConnected ? "connected" : "not_connected",
       xaiApiKey: apiKeyConfigured ? "configured" : "not_configured",
-      limitedMode: true,
+      limitedMode: !workAvailable,
       checks: [
         { id: "daemon", label: "Local daemon", state: this.snapshot.connection.state === "online" ? "ready" : "unavailable", detail: this.snapshot.connection.reason ?? `Protocol ${this.snapshot.connection.serviceVersion ?? "not connected"}` },
-        { id: "grok_auth", label: "Grok Build OAuth", state: "action_required", detail: `${runtimeDetail}. ${GROK_BUILD_AUTH_UNAVAILABLE_REASON}` },
+        {
+          id: "grok_auth",
+          label: "Grok Build OAuth",
+          state: grokConnected ? "ready" : runtime?.healthy ? "action_required" : "unavailable",
+          detail: grokConnected
+            ? runtimeDetail
+            : runtime?.healthy
+              ? `${runtimeDetail}. Connect to authenticate through the official component.`
+              : `${runtimeDetail}. ${GROK_BUILD_AUTH_UNAVAILABLE_REASON}`,
+        },
         { id: "xai_api", label: "xAI API key", state: apiReady ? "ready" : apiKeyConfigured ? "action_required" : "optional", detail: capability("chat")?.reason ?? "Optional for direct xAI API capabilities" },
-        { id: "isolation", label: "Protected Work", state: work?.available ? "ready" : "action_required", detail: work?.reason ?? "Protected Work is not ready" },
+        { id: "isolation", label: "Protected Work", state: workAvailable ? "ready" : "action_required", detail: work?.reason ?? "Protected Work is not ready" },
         { id: "browser", label: "Managed browser", state: capability("browser_automation")?.available ? "ready" : "action_required", detail: capability("browser_automation")?.reason ?? "Managed browser is not ready" },
         { id: "computer_use", label: "Computer use", state: capability("computer_use")?.available ? "ready" : "optional", detail: capability("computer_use")?.reason ?? "Optional native broker" },
       ],
@@ -590,11 +603,48 @@ export class ElectronDesktopClient implements DesktopClient {
   }
 
   async beginGrokBuildAuth(): Promise<ClientResult<{ verificationUri: string; userCode?: string; state: "browser_opened" | "device_code" }>> {
-    return unavailable(GROK_BUILD_AUTH_UNAVAILABLE_REASON, "configuration_required");
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.startGrokBuildAuth",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.grokBuildAuthStatus") {
+      throw new Error("invalid grok build auth bridge response");
+    }
+    if (!response.authenticated) {
+      return unavailable(
+        response.state === "failed"
+          ? "Grok Build authentication failed."
+          : GROK_BUILD_AUTH_UNAVAILABLE_REASON,
+        "configuration_required",
+      );
+    }
+    this.accountState = {
+      ...this.accountState,
+      grokBuildAuthenticated: true,
+    };
+    await this.refreshDaemonSnapshot();
+    return {
+      status: "success",
+      value: {
+        verificationUri: "https://accounts.x.ai/",
+        state: "browser_opened",
+      },
+    };
   }
 
   async completeGrokBuildAuth(): Promise<ClientResult<AccountSetupState>> {
-    return unavailable(GROK_BUILD_AUTH_UNAVAILABLE_REASON);
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({ kind: "daemon.getGrokBuildAuthStatus" });
+    if (response.kind !== "daemon.grokBuildAuthStatus") {
+      throw new Error("invalid grok build auth status bridge response");
+    }
+    this.accountState = {
+      ...this.accountState,
+      grokBuildAuthenticated: response.authenticated === true,
+    };
+    await this.refreshDaemonSnapshot();
+    return { status: "success", value: await this.getAccountSetup() };
   }
 
   async enrollXaiApiKey(): Promise<ClientResult<AccountSetupState>> {

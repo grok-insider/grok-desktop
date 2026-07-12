@@ -11,11 +11,13 @@ mod credential_enrollment;
 mod credentials;
 mod effects;
 mod error;
+mod grok_build_auth;
 mod isolation;
 mod models;
 mod mutations;
 mod ports;
 mod preferences;
+mod privileged_gateway;
 mod privileged_operations;
 mod runs;
 mod vault;
@@ -83,6 +85,7 @@ pub use credentials::{
 };
 pub use effects::{PrepareEffect, SideEffectService};
 pub use error::ApplicationError;
+pub use grok_build_auth::{GrokBuildAuthService, GrokBuildAuthStatus};
 pub use grok_domain::DEFAULT_XAI_CHAT_MODEL_ID;
 pub use isolation::{
     IsolationBackend, IsolationBrokerCapabilities, IsolationBrokerOperation,
@@ -101,6 +104,10 @@ pub use ports::{
     WorkspaceStore,
 };
 pub use preferences::{DesktopPreferencesService, UpdateDesktopPreferences};
+pub use privileged_gateway::{
+    PrivilegedGateway, PrivilegedGatewayError, PrivilegedGatewayResult,
+    PrivilegedGuestControlTransport,
+};
 pub use privileged_operations::{
     BeginPrivilegedDispatch, MAX_PRIVILEGED_ATTEMPT_DURATION_MS,
     MAX_PRIVILEGED_OPERATION_PAYLOAD_BYTES, MAX_PRIVILEGED_RECOVERY_BATCH,

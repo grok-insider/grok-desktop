@@ -250,6 +250,7 @@ export interface DaemonAutomationInput {
 export interface DaemonAccountState {
   xaiApiKeyConfigured: boolean;
   xaiCapabilitiesResolved: boolean;
+  grokBuildAuthenticated?: boolean;
 }
 
 export interface DaemonDesktopPreferences {
@@ -402,6 +403,8 @@ export type BridgeRequest =
   | { kind: "window.close" }
   | { kind: "daemon.bootstrap" }
   | { kind: "daemon.getAccountState" }
+  | { kind: "daemon.startGrokBuildAuth"; idempotencyKey: string }
+  | { kind: "daemon.getGrokBuildAuthStatus" }
   | { kind: "daemon.getDesktopPreferences" }
   | { kind: "daemon.updateDesktopPreferences"; expectedRevision: number; keepRunningInNotificationArea: boolean; idempotencyKey: string }
   | { kind: "daemon.getChatModelCatalog" }
@@ -440,6 +443,7 @@ export type BridgeResponse =
   | { kind: "window.action"; accepted: true }
   | { kind: "daemon.bootstrap"; status: DaemonStatus; capabilities: DaemonCapabilityStatus[]; accountState: DaemonAccountState; workspace: DaemonWorkspaceSnapshot }
   | { kind: "daemon.accountState"; accountState: DaemonAccountState }
+  | { kind: "daemon.grokBuildAuthStatus"; state: string; authenticated: boolean }
   | { kind: "daemon.desktopPreferences"; preferences: DaemonDesktopPreferences }
   | { kind: "daemon.chatModelCatalog"; catalog: DaemonChatModelCatalog }
   | { kind: "daemon.chatModelPreference"; preference: DaemonChatModelPreference }

@@ -28,6 +28,9 @@ const MIN_ATTEMPT_INTERVAL: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
 mod unix;
+
+#[cfg(all(test, unix))]
+mod linux_ga_qualification;
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod windows;

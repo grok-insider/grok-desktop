@@ -294,6 +294,84 @@ impl PrivilegedOperationStore for SqlCipherStore {
         })
         .await
     }
+
+    async fn complete_dispatch_outcome(
+        &self,
+        operation: PrivilegedOperation,
+        expected_revision: u64,
+        attempt_sequence: u32,
+        completed_at: UnixMillis,
+    ) -> Result<PrivilegedOperation, StoreError> {
+        let operation = validated_operation(operation)?;
+        match operation.state {
+            PrivilegedOperationState::Succeeded
+            | PrivilegedOperationState::Failed
+            | PrivilegedOperationState::RetryPending
+            | PrivilegedOperationState::InterruptedNeedsReview => {}
+            _ => {
+                return Err(StoreError::Internal(
+                    "complete_dispatch_outcome requires a terminal operation state".into(),
+                ));
+            }
+        }
+        self.with_store(move |connection| {
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite)?;
+            let current = load_operation_by_id(&transaction, &operation.id)?;
+            if current.revision != expected_revision
+                || current.attempt_count != attempt_sequence
+                || current.state != PrivilegedOperationState::Dispatching
+            {
+                return Err(StoreError::Conflict);
+            }
+            let certainty: i64 = match operation.state {
+                PrivilegedOperationState::Succeeded | PrivilegedOperationState::Failed => 1,
+                PrivilegedOperationState::RetryPending
+                | PrivilegedOperationState::InterruptedNeedsReview => 4,
+                _ => 0,
+            };
+            let changed = transaction
+                .execute(
+                    "UPDATE privileged_operations SET
+                         state=?1,last_attempt_certainty=?2,revision=?3,updated_at=?4
+                     WHERE id=?5 AND revision=?6 AND state=1
+                       AND last_attempt_sequence=?7 AND last_attempt_certainty=0",
+                    params![
+                        state_number(operation.state),
+                        certainty,
+                        number(operation.revision)?,
+                        number(operation.updated_at)?,
+                        operation.id.as_str(),
+                        number(expected_revision)?,
+                        i64::from(attempt_sequence),
+                    ],
+                )
+                .map_err(map_sqlite)?;
+            if changed != 1 {
+                return Err(StoreError::Conflict);
+            }
+            let changed = transaction
+                .execute(
+                    "UPDATE privileged_operation_attempts
+                     SET completed_at=?1,outcome_certainty=?2
+                     WHERE operation_id=?3 AND sequence=?4 AND outcome_certainty=0",
+                    params![
+                        number(completed_at)?,
+                        certainty,
+                        operation.id.as_str(),
+                        i64::from(attempt_sequence),
+                    ],
+                )
+                .map_err(map_sqlite)?;
+            if changed != 1 {
+                return Err(StoreError::Conflict);
+            }
+            transaction.commit().map_err(map_sqlite)?;
+            Ok(operation)
+        })
+        .await
+    }
 }
 
 fn insert_operation(

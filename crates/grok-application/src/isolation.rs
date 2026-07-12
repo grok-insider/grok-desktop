@@ -17,6 +17,8 @@ pub struct IsolationContractVersion {
 pub enum IsolationBackend {
     /// Windows Host Compute Service with `VirtualMachinePlatform` utility VMs.
     HcsVirtualMachinePlatform,
+    /// Linux QEMU/KVM utility VMs behind the privileged linux-vm-service broker.
+    QemuKvm,
 }
 
 /// Host-workspace exposure enforced by the isolation broker.
@@ -24,6 +26,8 @@ pub enum IsolationBackend {
 pub enum IsolationWorkspaceMode {
     /// HCS Plan9 sharing configured read-only by the privileged broker.
     ReadOnlyPlan9,
+    /// Linux virtio-9p (or virtio-fs) read-only share from the privileged broker.
+    ReadOnlyVirtio9p,
 }
 
 /// Closed lifecycle surface advertised by a qualified isolation broker.
@@ -55,11 +59,12 @@ pub struct IsolationBrokerCapabilities {
     pub contract_version: IsolationContractVersion,
     /// Qualified platform backend.
     pub backend: IsolationBackend,
-    /// HCS schema version enforced by the broker.
+    /// HCS schema version enforced by the broker (empty for non-HCS backends).
     pub hcs_schema: String,
     /// Enforced host-workspace exposure.
     pub workspace_mode: IsolationWorkspaceMode,
-    /// Sorted closed operation set. Guest control is intentionally absent.
+    /// Sorted closed operation set. Guest control is intentionally absent from
+    /// the static probe document; grants are a separate PoP gate.
     pub operations: Vec<IsolationBrokerOperation>,
 }
 

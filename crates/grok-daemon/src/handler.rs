@@ -15,10 +15,11 @@ use grok_application::{
     ChatModelService, ConversationForkCommandResolution, ConversationForkSnapshot,
     ConversationService, ConversationTurnSnapshot, CreateAutomation, CreateProject, CreateThread,
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
-    DesktopPreferencesService, EditAndBranchConversationTurn, MAX_ARTIFACT_RECOVERY_BATCH,
-    RegenerateConversationTurn, RetryConversationTurn, RunService, SelectChatModel,
-    StartConversationTurn, StartedConversationFork, StartedConversationTurn, UpdateAutomation,
-    UpdateDesktopPreferences, UpdateProject, UpdateThread, WorkspaceService,
+    DesktopPreferencesService, EditAndBranchConversationTurn, GrokBuildAuthService,
+    GrokBuildAuthStatus, MAX_ARTIFACT_RECOVERY_BATCH, RegenerateConversationTurn,
+    RetryConversationTurn, RunService, SelectChatModel, StartConversationTurn,
+    StartedConversationFork, StartedConversationTurn, UpdateAutomation, UpdateDesktopPreferences,
+    UpdateProject, UpdateThread, WorkspaceService,
 };
 use grok_domain::{
     ApprovalId, ArtifactId, AutomationId, ConversationTurnId, ConversationTurnState, MessageId,
@@ -493,6 +494,7 @@ pub struct Daemon {
     desktop_preferences: Option<Arc<DesktopPreferencesService>>,
     chat_models: Option<Arc<ChatModelService>>,
     runtime_capability_facts: CapabilityFacts,
+    grok_build_auth: Option<Arc<GrokBuildAuthService>>,
 }
 
 impl Daemon {
@@ -534,6 +536,7 @@ impl Daemon {
             desktop_preferences: None,
             chat_models: None,
             runtime_capability_facts: CapabilityFacts::default(),
+            grok_build_auth: None,
         }
     }
 
@@ -617,6 +620,10 @@ impl Daemon {
     /// Retains an initialized official Grok runtime for live health probing.
     #[must_use]
     pub fn with_agent_runtime(mut self, runtime: Arc<dyn AgentRuntime>) -> Self {
+        self.grok_build_auth = Some(Arc::new(GrokBuildAuthService::new(
+            Arc::clone(&runtime),
+            Arc::clone(&self.clock),
+        )));
         self.agent_runtime = Some(runtime);
         self.agent_runtime_failure = None;
         self
@@ -627,6 +634,7 @@ impl Daemon {
     pub fn with_unavailable_agent_runtime(mut self, reason: AgentRuntimeUnavailableReason) -> Self {
         self.agent_runtime = None;
         self.agent_runtime_failure = Some(reason);
+        self.grok_build_auth = None;
         self
     }
 
@@ -788,7 +796,7 @@ impl Daemon {
             Some(v1::request::Operation::SearchWorkspace(request)) => {
                 self.search_workspace(request).await
             }
-            Some(v1::request::Operation::GetAccountState(_)) => self.account_state(),
+            Some(v1::request::Operation::GetAccountState(_)) => self.account_state().await,
             Some(v1::request::Operation::EnrollXaiApiKey(request)) => {
                 self.enroll_xai_api_key(request, idempotency_key).await
             }
@@ -848,6 +856,12 @@ impl Daemon {
             }
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
+            }
+            Some(v1::request::Operation::StartGrokBuildAuth(_)) => {
+                self.start_grok_build_auth().await
+            }
+            Some(v1::request::Operation::GetGrokBuildAuthStatus(_)) => {
+                self.get_grok_build_auth_status().await
             }
             None => Err(ApplicationError::InvalidInput(
                 "request operation is required".into(),
@@ -919,6 +933,9 @@ impl Daemon {
         } else {
             false
         };
+        if let Some(auth) = &self.grok_build_auth {
+            facts.subscription_authenticated = auth.is_authenticated().await;
+        }
         Ok(facts)
     }
 
@@ -932,10 +949,41 @@ impl Daemon {
         ))
     }
 
-    fn account_state(&self) -> Result<v1::response::Result, ApplicationError> {
+    async fn account_state(&self) -> Result<v1::response::Result, ApplicationError> {
+        let mut state = self.credentials.account_state()?;
+        if let Some(auth) = &self.grok_build_auth {
+            state.grok_build_authenticated = auth.is_authenticated().await;
+        }
         Ok(v1::response::Result::AccountState(account_state_to_wire(
-            self.credentials.account_state()?,
+            state,
         )))
+    }
+
+    async fn start_grok_build_auth(&self) -> Result<v1::response::Result, ApplicationError> {
+        let Some(auth) = &self.grok_build_auth else {
+            return Err(ApplicationError::Unavailable(
+                "Grok Build runtime is not configured".into(),
+            ));
+        };
+        let status = auth.authenticate().await?;
+        Ok(v1::response::Result::GrokBuildAuthStatus(
+            grok_build_auth_status_to_wire(status, auth.is_authenticated().await),
+        ))
+    }
+
+    async fn get_grok_build_auth_status(&self) -> Result<v1::response::Result, ApplicationError> {
+        let Some(auth) = &self.grok_build_auth else {
+            return Ok(v1::response::Result::GrokBuildAuthStatus(
+                v1::GrokBuildAuthStatus {
+                    state: "not_authenticated".into(),
+                    authenticated: false,
+                },
+            ));
+        };
+        let status = auth.status().await;
+        Ok(v1::response::Result::GrokBuildAuthStatus(
+            grok_build_auth_status_to_wire(status, auth.is_authenticated().await),
+        ))
     }
 
     async fn enroll_xai_api_key(
@@ -2198,6 +2246,22 @@ fn validate_run_event_cursor(after_sequence: u64) -> Result<(), ApplicationError
         ));
     }
     Ok(())
+}
+
+fn grok_build_auth_status_to_wire(
+    status: GrokBuildAuthStatus,
+    authenticated: bool,
+) -> v1::GrokBuildAuthStatus {
+    let state = match status {
+        GrokBuildAuthStatus::NotAuthenticated => "not_authenticated",
+        GrokBuildAuthStatus::InProgress => "in_progress",
+        GrokBuildAuthStatus::Authenticated => "authenticated",
+        GrokBuildAuthStatus::Failed => "failed",
+    };
+    v1::GrokBuildAuthStatus {
+        state: state.into(),
+        authenticated,
+    }
 }
 
 fn runtime_probe_to_wire(probe: AgentRuntimeProbe) -> v1::AgentRuntimeHealth {

@@ -222,11 +222,50 @@ export function SetupView() {
                   />
                 ) : (
                   <>
-                    <Button className="mt-6" variant="primary" disabled title={GROK_BUILD_AUTH_UNAVAILABLE_REASON}>
-                      <ExternalLink size={15} aria-hidden="true" /> Connection unavailable
+                    <Button
+                      className="mt-6"
+                      variant="primary"
+                      disabled={busy || setup?.checks.find((check) => check.id === "grok_auth")?.state === "unavailable"}
+                      title={
+                        setup?.checks.find((check) => check.id === "grok_auth")?.state === "unavailable"
+                          ? GROK_BUILD_AUTH_UNAVAILABLE_REASON
+                          : "Authenticate with the official Grok Build component"
+                      }
+                      onClick={() => {
+                        void (async () => {
+                          setBusy(true);
+                          setNotice("");
+                          try {
+                            const begin = await client.beginGrokBuildAuth();
+                            if (begin.status !== "success") {
+                              setNotice(begin.reason ?? GROK_BUILD_AUTH_UNAVAILABLE_REASON);
+                              return;
+                            }
+                            const complete = await client.completeGrokBuildAuth();
+                            if (complete.status === "success") {
+                              setSetup(complete.value);
+                              setNotice("Grok Build host authentication completed.");
+                            } else {
+                              setNotice(complete.reason ?? GROK_BUILD_AUTH_UNAVAILABLE_REASON);
+                            }
+                          } catch (caught) {
+                            setNotice(
+                              caught instanceof Error ? caught.message : GROK_BUILD_AUTH_UNAVAILABLE_REASON,
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      <ExternalLink size={15} aria-hidden="true" />
+                      {setup?.checks.find((check) => check.id === "grok_auth")?.state === "unavailable"
+                        ? "Connection unavailable"
+                        : "Connect Grok Build"}
                     </Button>
-                    <p className="mt-3 mb-0 text-body-sm text-warning" role="status">
-                      {GROK_BUILD_AUTH_UNAVAILABLE_REASON}
+                    <p className="mt-3 mb-0 text-body-sm text-muted-foreground" role="status">
+                      {setup?.checks.find((check) => check.id === "grok_auth")?.detail
+                        ?? GROK_BUILD_AUTH_UNAVAILABLE_REASON}
                     </p>
                   </>
                 )}

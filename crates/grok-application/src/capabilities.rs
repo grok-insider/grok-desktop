@@ -39,7 +39,7 @@ impl CapabilityResolver {
         let mut statuses = Vec::with_capacity(13);
         statuses.extend(local_definition_capabilities(facts));
         statuses.push(chat_capability(facts));
-        statuses.extend(unavailable_execution_capabilities());
+        statuses.extend(execution_capabilities(facts));
         statuses.extend(unavailable_provider_capabilities(facts));
         statuses
     }
@@ -80,40 +80,60 @@ fn chat_capability(facts: CapabilityFacts) -> CapabilityStatus {
     )
 }
 
-fn unavailable_execution_capabilities() -> [CapabilityStatus; 5] {
+fn execution_capabilities(facts: CapabilityFacts) -> [CapabilityStatus; 5] {
+    let work_ready = facts.subscription_authenticated && facts.strong_isolation_ready;
+    let isolation_ready = facts.strong_isolation_ready;
     [
-        unavailable(
+        status(
             Capability::Work,
             CapabilitySurface::SubscriptionAcp,
             AuthMethod::SubscriptionOAuth,
-            "work_execution_unavailable",
-            "Work requires the qualified guest proxy and subscription session lifecycle.",
+            work_ready,
+            CapabilityAvailability::Unavailable,
+            if facts.strong_isolation_ready {
+                "subscription_session_unavailable"
+            } else {
+                "work_execution_unavailable"
+            },
+            if facts.strong_isolation_ready {
+                "Work requires an authenticated official Grok Build subscription session in the guest."
+            } else {
+                "Work requires the qualified guest proxy and subscription session lifecycle."
+            },
         ),
-        unavailable(
+        status(
             Capability::Shell,
             CapabilitySurface::Desktop,
             AuthMethod::SubscriptionOAuth,
+            work_ready,
+            CapabilityAvailability::Unavailable,
             "strong_isolation_unavailable",
             "Shell tools require the qualified guest execution backend.",
         ),
-        unavailable(
+        status(
             Capability::Mcp,
             CapabilitySurface::Desktop,
             AuthMethod::None,
+            isolation_ready,
+            CapabilityAvailability::Unavailable,
             "mcp_sandbox_unavailable",
             "MCP servers require the qualified guest execution backend.",
         ),
-        unavailable(
+        status(
             Capability::BrowserAutomation,
             CapabilitySurface::ManagedAddon,
             AuthMethod::None,
+            isolation_ready && facts.managed_browser_ready,
+            CapabilityAvailability::Unavailable,
             "managed_browser_unavailable",
             "Browser automation requires the qualified managed browser broker.",
         ),
-        unavailable(
+        status(
             Capability::ComputerUse,
             CapabilitySurface::Desktop,
             AuthMethod::None,
+            isolation_ready && facts.computer_use_ready,
+            CapabilityAvailability::Unavailable,
             "computer_use_broker_unavailable",
             "Computer use requires the qualified native broker and guest proxy.",
         ),
@@ -306,5 +326,74 @@ mod tests {
                 CapabilityAvailability::Unavailable
             );
         }
+    }
+
+    #[test]
+    fn work_requires_subscription_and_strong_isolation_facts() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts {
+            subscription_authenticated: true,
+            strong_isolation_ready: true,
+            isolation_broker_qualified: true,
+            ..CapabilityFacts::default()
+        });
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Work)
+                .expect("work")
+                .availability,
+            CapabilityAvailability::Available
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Shell)
+                .expect("shell")
+                .availability,
+            CapabilityAvailability::Available
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Mcp)
+                .expect("mcp")
+                .availability,
+            CapabilityAvailability::Available
+        );
+        // Computer use still needs computer_use_ready.
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::ComputerUse)
+                .expect("computer use")
+                .availability,
+            CapabilityAvailability::Unavailable
+        );
+    }
+
+    #[test]
+    fn isolation_without_subscription_does_not_enable_work() {
+        let statuses = CapabilityResolver::resolve(CapabilityFacts {
+            strong_isolation_ready: true,
+            isolation_broker_qualified: true,
+            subscription_authenticated: false,
+            ..CapabilityFacts::default()
+        });
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Work)
+                .expect("work")
+                .availability,
+            CapabilityAvailability::Unavailable
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|item| item.capability == Capability::Work)
+                .expect("work")
+                .reason_code,
+            "subscription_session_unavailable"
+        );
     }
 }

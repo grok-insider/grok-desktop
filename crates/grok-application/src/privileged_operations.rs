@@ -149,6 +149,18 @@ pub trait PrivilegedOperationStore: Send + Sync {
         attempt_sequence: u32,
         completed_at: UnixMillis,
     ) -> Result<PrivilegedOperation, StoreError>;
+
+    /// Atomically commits a terminal dispatch outcome (success, failure, or interrupt).
+    ///
+    /// The `operation` must already be transitioned to the terminal state by the
+    /// domain aggregate. This does not perform guest I/O and never auto-replays.
+    async fn complete_dispatch_outcome(
+        &self,
+        operation: PrivilegedOperation,
+        expected_revision: u64,
+        attempt_sequence: u32,
+        completed_at: UnixMillis,
+    ) -> Result<PrivilegedOperation, StoreError>;
 }
 
 /// Internal journal coordinator. It persists state but grants no Work authority.

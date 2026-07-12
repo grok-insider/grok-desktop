@@ -68,6 +68,8 @@ message Request {
     ImportArtifactRequest import_artifact = 55;
     OpenArtifactRequest open_artifact = 56;
     RemoveArtifactRequest remove_artifact = 57;
+    StartGrokBuildAuthRequest start_grok_build_auth = 58;
+    GetGrokBuildAuthStatusRequest get_grok_build_auth_status = 59;
   }
 }
 
@@ -105,7 +107,20 @@ message Response {
     ConversationForkMetadata conversation_fork_metadata = 28;
     ConversationForkDelivery conversation_fork_delivery = 29;
     ArtifactOperationResult artifact_operation = 30;
+    GrokBuildAuthStatus grok_build_auth_status = 31;
   }
+}
+
+message StartGrokBuildAuthRequest {
+  string idempotency_key = 1;
+}
+
+message GetGrokBuildAuthStatusRequest {}
+
+message GrokBuildAuthStatus {
+  // not_authenticated | in_progress | authenticated | failed
+  string state = 1;
+  bool authenticated = 2;
 }
 
 // Reserved for a future unsolicited server-push contract. Epochs 7 through 10 use
@@ -185,6 +200,8 @@ message DeleteXaiApiKeyRequest {}
 message AccountState {
   bool xai_api_key_configured = 1;
   bool xai_capabilities_resolved = 2;
+  // Host ACP authenticate succeeded. Does not unlock Work without isolation facts.
+  bool grok_build_authenticated = 3;
 }
 
 message GetDesktopPreferencesRequest {}

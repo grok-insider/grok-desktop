@@ -2920,7 +2920,7 @@ describe("ElectronDesktopClient", () => {
       if (request.kind === "daemon.bootstrap") {
         return {
           ...bootstrapResponse(),
-          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true },
+          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false },
         };
       }
       throw new Error(`unexpected request ${request.kind}`);
@@ -2938,7 +2938,7 @@ describe("ElectronDesktopClient", () => {
       if (request.kind === "daemon.bootstrap") {
         return {
           ...bootstrapResponse("unavailable"),
-          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true },
+          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false },
         };
       }
       throw new Error(`unexpected request ${request.kind}`);
@@ -2966,7 +2966,7 @@ describe("ElectronDesktopClient", () => {
         expect(Object.keys(request).toSorted()).toEqual(["idempotencyKey", "kind"]);
         expect(request.idempotencyKey).toBeTruthy();
         configured = true;
-        return { kind: "daemon.accountState", accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true } };
+        return { kind: "daemon.accountState", accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false } };
       }
       throw new Error(`unexpected request ${request.kind}`);
     });
@@ -3012,7 +3012,7 @@ describe("ElectronDesktopClient", () => {
         }
         return {
           kind: "daemon.accountState",
-          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true },
+          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false },
         };
       }
       throw new Error(`unexpected request ${request.kind}`);
@@ -3039,7 +3039,7 @@ describe("ElectronDesktopClient", () => {
         if (reason) return { kind: "daemon.credentialEnrollmentFailure", reason };
         return {
           kind: "daemon.accountState",
-          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true },
+          accountState: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false },
         };
       }
       throw new Error(`unexpected request ${request.kind}`);
@@ -3065,7 +3065,7 @@ describe("ElectronDesktopClient", () => {
       if (request.kind === "daemon.deleteXaiApiKey") {
         expect(request.idempotencyKey).toBeTruthy();
         configured = false;
-        return { kind: "daemon.accountState", accountState: { xaiApiKeyConfigured: false, xaiCapabilitiesResolved: false } };
+        return { kind: "daemon.accountState", accountState: { xaiApiKeyConfigured: false, xaiCapabilitiesResolved: false, grokBuildAuthenticated: false } };
       }
       throw new Error(`unexpected request ${request.kind}`);
     });

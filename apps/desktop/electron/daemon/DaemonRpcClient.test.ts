@@ -1005,11 +1005,11 @@ describe("DaemonRpcClient", () => {
       idempotencyKey: request.idempotencyKey,
       payload: {
         $case: "response",
-        value: { result: { $case: "accountState", value: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true } } },
+        value: { result: { $case: "accountState", value: { xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false } } },
       },
     }));
 
-    await expect(enrolled).resolves.toEqual({ xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true });
+    await expect(enrolled).resolves.toEqual({ xaiApiKeyConfigured: true, xaiCapabilitiesResolved: true, grokBuildAuthenticated: false });
     expect(await enrolled).not.toHaveProperty("apiKey");
     protocol.close();
   });

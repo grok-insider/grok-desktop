@@ -479,6 +479,14 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
       const accountState = await daemon.getAccountState();
       return { kind: "daemon.accountState", accountState };
     }
+    if (request.kind === "daemon.startGrokBuildAuth") {
+      const status = await daemon.startGrokBuildAuth(request.idempotencyKey);
+      return { kind: "daemon.grokBuildAuthStatus", ...status };
+    }
+    if (request.kind === "daemon.getGrokBuildAuthStatus") {
+      const status = await daemon.getGrokBuildAuthStatus();
+      return { kind: "daemon.grokBuildAuthStatus", ...status };
+    }
     if (request.kind === "daemon.getDesktopPreferences") {
       const preferences = await daemon.getDesktopPreferences();
       keepRunningInNotificationArea = preferences.keepRunningInNotificationArea;

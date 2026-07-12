@@ -102,6 +102,7 @@ pub const fn account_state_to_wire(value: AccountState) -> v1::AccountState {
     v1::AccountState {
         xai_api_key_configured: value.xai_api_key_configured,
         xai_capabilities_resolved: value.xai_capabilities_resolved,
+        grok_build_authenticated: value.grok_build_authenticated,
     }
 }
 

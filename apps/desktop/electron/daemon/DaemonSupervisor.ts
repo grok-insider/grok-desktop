@@ -247,6 +247,26 @@ export class DaemonSupervisor {
     return mapAccountState(state);
   }
 
+  async startGrokBuildAuth(idempotencyKey: string): Promise<{ state: string; authenticated: boolean }> {
+    await this.start();
+    const status = await this.requireProtocol().startGrokBuildAuth(idempotencyKey);
+    this.setConnected();
+    return {
+      state: String(status.state ?? "not_authenticated"),
+      authenticated: status.authenticated === true,
+    };
+  }
+
+  async getGrokBuildAuthStatus(): Promise<{ state: string; authenticated: boolean }> {
+    await this.start();
+    const status = await this.requireProtocol().getGrokBuildAuthStatus();
+    this.setConnected();
+    return {
+      state: String(status.state ?? "not_authenticated"),
+      authenticated: status.authenticated === true,
+    };
+  }
+
   async getDesktopPreferences(): Promise<DaemonDesktopPreferences> {
     await this.start();
     const preferences = await this.requireProtocol().getDesktopPreferences();
@@ -1944,6 +1964,7 @@ function mapAccountState(
   return {
     xaiApiKeyConfigured: state.xaiApiKeyConfigured,
     xaiCapabilitiesResolved: state.xaiCapabilitiesResolved,
+    grokBuildAuthenticated: state.grokBuildAuthenticated === true,
   };
 }
 

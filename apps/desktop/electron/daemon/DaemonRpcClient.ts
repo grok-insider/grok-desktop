@@ -35,7 +35,7 @@ import {
 } from "../generated/daemon/v1/daemon.js";
 
 // Epoch fifteen adds exact, path-free removal of daemon-owned artifact copies.
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;
@@ -101,6 +101,7 @@ type ResultValueMap = {
   conversationForkMetadata: Extract<ResponseResult, { $case: "conversationForkMetadata" }>["value"];
   conversationForkDelivery: Extract<ResponseResult, { $case: "conversationForkDelivery" }>["value"];
   artifactOperation: Extract<ResponseResult, { $case: "artifactOperation" }>["value"];
+  grokBuildAuthStatus: Extract<ResponseResult, { $case: "grokBuildAuthStatus" }>["value"];
 };
 
 type RequestOperation = NonNullable<Request["operation"]>;
@@ -848,6 +849,23 @@ export class DaemonProtocolClient {
     return expectResult(
       await this.rpc.request({ $case: "getAccountState", value: {} }),
       "accountState",
+    );
+  }
+
+  async startGrokBuildAuth(idempotencyKey: string): Promise<ResultValueMap["grokBuildAuthStatus"]> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "startGrokBuildAuth", value: { idempotencyKey } },
+        idempotencyKey,
+      ),
+      "grokBuildAuthStatus",
+    );
+  }
+
+  async getGrokBuildAuthStatus(): Promise<ResultValueMap["grokBuildAuthStatus"]> {
+    return expectResult(
+      await this.rpc.request({ $case: "getGrokBuildAuthStatus", value: {} }),
+      "grokBuildAuthStatus",
     );
   }
 

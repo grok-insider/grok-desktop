@@ -41,6 +41,7 @@ impl CredentialMutationStore for SqlCipherStore {
                     CredentialMutationReservation::Completed(AccountState {
                         xai_api_key_configured: configured != 0,
                         xai_capabilities_resolved: resolved.is_some_and(|value| value != 0),
+                grok_build_authenticated: false,
                     }),
                 )),
                 Some(_) => Err(StoreError::Internal(
@@ -87,6 +88,7 @@ impl CredentialMutationStore for SqlCipherStore {
                     CredentialMutationReservation::Completed(AccountState {
                         xai_api_key_configured: configured != 0,
                         xai_capabilities_resolved: resolved.is_some_and(|value| value != 0),
+                grok_build_authenticated: false,
                     })
                 }
                 Some(_) => {

@@ -372,6 +372,8 @@ export interface Request {
     | { $case: "importArtifact"; value: ImportArtifactRequest }
     | { $case: "openArtifact"; value: OpenArtifactRequest }
     | { $case: "removeArtifact"; value: RemoveArtifactRequest }
+    | { $case: "startGrokBuildAuth"; value: StartGrokBuildAuthRequest }
+    | { $case: "getGrokBuildAuthStatus"; value: GetGrokBuildAuthStatusRequest }
     | undefined;
 }
 
@@ -406,7 +408,21 @@ export interface Response {
     | { $case: "conversationForkMetadata"; value: ConversationForkMetadata }
     | { $case: "conversationForkDelivery"; value: ConversationForkDelivery }
     | { $case: "artifactOperation"; value: ArtifactOperationResult }
+    | { $case: "grokBuildAuthStatus"; value: GrokBuildAuthStatus }
     | undefined;
+}
+
+export interface StartGrokBuildAuthRequest {
+  idempotencyKey: string;
+}
+
+export interface GetGrokBuildAuthStatusRequest {
+}
+
+export interface GrokBuildAuthStatus {
+  /** not_authenticated | in_progress | authenticated | failed */
+  state: string;
+  authenticated: boolean;
 }
 
 /**
@@ -485,6 +501,8 @@ export interface DeleteXaiApiKeyRequest {
 export interface AccountState {
   xaiApiKeyConfigured: boolean;
   xaiCapabilitiesResolved: boolean;
+  /** Host ACP authenticate succeeded. Does not unlock Work without isolation facts. */
+  grokBuildAuthenticated: boolean;
 }
 
 export interface GetDesktopPreferencesRequest {
@@ -1471,6 +1489,12 @@ export const Request: MessageFns<Request> = {
       case "removeArtifact":
         RemoveArtifactRequest.encode(message.operation.value, writer.uint32(458).fork()).join();
         break;
+      case "startGrokBuildAuth":
+        StartGrokBuildAuthRequest.encode(message.operation.value, writer.uint32(466).fork()).join();
+        break;
+      case "getGrokBuildAuthStatus":
+        GetGrokBuildAuthStatusRequest.encode(message.operation.value, writer.uint32(474).fork()).join();
+        break;
     }
     return writer;
   },
@@ -1922,6 +1946,28 @@ export const Request: MessageFns<Request> = {
           message.operation = { $case: "removeArtifact", value: RemoveArtifactRequest.decode(reader, reader.uint32()) };
           continue;
         }
+        case 58: {
+          if (tag !== 466) {
+            break;
+          }
+
+          message.operation = {
+            $case: "startGrokBuildAuth",
+            value: StartGrokBuildAuthRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 59: {
+          if (tag !== 474) {
+            break;
+          }
+
+          message.operation = {
+            $case: "getGrokBuildAuthStatus",
+            value: GetGrokBuildAuthStatusRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2315,6 +2361,24 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "startGrokBuildAuth": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "startGrokBuildAuth",
+            value: StartGrokBuildAuthRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "getGrokBuildAuthStatus": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "getGrokBuildAuthStatus",
+            value: GetGrokBuildAuthStatusRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2413,6 +2477,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "artifactOperation":
         ArtifactOperationResult.encode(message.result.value, writer.uint32(242).fork()).join();
+        break;
+      case "grokBuildAuthStatus":
+        GrokBuildAuthStatus.encode(message.result.value, writer.uint32(250).fork()).join();
         break;
     }
     return writer;
@@ -2672,6 +2739,14 @@ export const Response: MessageFns<Response> = {
           };
           continue;
         }
+        case 31: {
+          if (tag !== 250) {
+            break;
+          }
+
+          message.result = { $case: "grokBuildAuthStatus", value: GrokBuildAuthStatus.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2888,7 +2963,154 @@ export const Response: MessageFns<Response> = {
         }
         break;
       }
+      case "grokBuildAuthStatus": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = {
+            $case: "grokBuildAuthStatus",
+            value: GrokBuildAuthStatus.fromPartial(object.result.value),
+          };
+        }
+        break;
+      }
     }
+    return message;
+  },
+};
+
+function createBaseStartGrokBuildAuthRequest(): StartGrokBuildAuthRequest {
+  return { idempotencyKey: "" };
+}
+
+export const StartGrokBuildAuthRequest: MessageFns<StartGrokBuildAuthRequest> = {
+  encode(message: StartGrokBuildAuthRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.idempotencyKey !== "") {
+      writer.uint32(10).string(message.idempotencyKey);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): StartGrokBuildAuthRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseStartGrokBuildAuthRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.idempotencyKey = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<StartGrokBuildAuthRequest>): StartGrokBuildAuthRequest {
+    return StartGrokBuildAuthRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<StartGrokBuildAuthRequest>): StartGrokBuildAuthRequest {
+    const message = createBaseStartGrokBuildAuthRequest();
+    message.idempotencyKey = object.idempotencyKey ?? "";
+    return message;
+  },
+};
+
+function createBaseGetGrokBuildAuthStatusRequest(): GetGrokBuildAuthStatusRequest {
+  return {};
+}
+
+export const GetGrokBuildAuthStatusRequest: MessageFns<GetGrokBuildAuthStatusRequest> = {
+  encode(_: GetGrokBuildAuthStatusRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetGrokBuildAuthStatusRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetGrokBuildAuthStatusRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetGrokBuildAuthStatusRequest>): GetGrokBuildAuthStatusRequest {
+    return GetGrokBuildAuthStatusRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<GetGrokBuildAuthStatusRequest>): GetGrokBuildAuthStatusRequest {
+    const message = createBaseGetGrokBuildAuthStatusRequest();
+    return message;
+  },
+};
+
+function createBaseGrokBuildAuthStatus(): GrokBuildAuthStatus {
+  return { state: "", authenticated: false };
+}
+
+export const GrokBuildAuthStatus: MessageFns<GrokBuildAuthStatus> = {
+  encode(message: GrokBuildAuthStatus, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.state !== "") {
+      writer.uint32(10).string(message.state);
+    }
+    if (message.authenticated !== false) {
+      writer.uint32(16).bool(message.authenticated);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GrokBuildAuthStatus {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGrokBuildAuthStatus();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.authenticated = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GrokBuildAuthStatus>): GrokBuildAuthStatus {
+    return GrokBuildAuthStatus.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GrokBuildAuthStatus>): GrokBuildAuthStatus {
+    const message = createBaseGrokBuildAuthStatus();
+    message.state = object.state ?? "";
+    message.authenticated = object.authenticated ?? false;
     return message;
   },
 };
@@ -3722,7 +3944,7 @@ export const DeleteXaiApiKeyRequest: MessageFns<DeleteXaiApiKeyRequest> = {
 };
 
 function createBaseAccountState(): AccountState {
-  return { xaiApiKeyConfigured: false, xaiCapabilitiesResolved: false };
+  return { xaiApiKeyConfigured: false, xaiCapabilitiesResolved: false, grokBuildAuthenticated: false };
 }
 
 export const AccountState: MessageFns<AccountState> = {
@@ -3732,6 +3954,9 @@ export const AccountState: MessageFns<AccountState> = {
     }
     if (message.xaiCapabilitiesResolved !== false) {
       writer.uint32(16).bool(message.xaiCapabilitiesResolved);
+    }
+    if (message.grokBuildAuthenticated !== false) {
+      writer.uint32(24).bool(message.grokBuildAuthenticated);
     }
     return writer;
   },
@@ -3759,6 +3984,14 @@ export const AccountState: MessageFns<AccountState> = {
           message.xaiCapabilitiesResolved = reader.bool();
           continue;
         }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.grokBuildAuthenticated = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3775,6 +4008,7 @@ export const AccountState: MessageFns<AccountState> = {
     const message = createBaseAccountState();
     message.xaiApiKeyConfigured = object.xaiApiKeyConfigured ?? false;
     message.xaiCapabilitiesResolved = object.xaiCapabilitiesResolved ?? false;
+    message.grokBuildAuthenticated = object.grokBuildAuthenticated ?? false;
     return message;
   },
 };
