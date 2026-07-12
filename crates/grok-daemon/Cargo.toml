@@ -35,6 +35,8 @@ zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

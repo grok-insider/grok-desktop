@@ -1128,6 +1128,7 @@ dependencies = [
  "hex",
  "prost",
  "rustix",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
