@@ -14,12 +14,14 @@
 
 ## Security risks requiring forward fixes
 
-- Scheduler partial persistence can duplicate durable runs after crash.
-- Wisp signatures may not bind the manifest fields later trusted.
-- Wisp JSON state is not transactional, encrypted canonical daemon state.
-- Dirty ACP credential copying crosses the official-client secret boundary.
-- Dirty recursive cleanup can delete identity-swapped or unexpected trees.
-- Linux socket/package work needs peer, identity, framing, and signed-staging
+- Scheduler crash boundaries are now atomic locally; production execution still
+  requires signed broker/guest qualification and suspend/reboot/clock soak.
+- Wisp manifests and full file inventories are canonically bound and lifecycle
+  state is journaled in SQLCipher; production publisher roots and Windows-safe
+  publication remain external gates.
+- ACP credential copying and recursive cleanup were removed. Linux socket and
+  package boundaries now enforce peer, identity, framing, and signed staging,
+  but real signed artifacts and supported KVM hardware still require release
   qualification before Work can be available.
 
 ## Defaults while gates remain open

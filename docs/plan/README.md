@@ -3,7 +3,7 @@
 - Snapshot: 2026-07-12
 - Reviewed baseline: `66787d5ef3fe4bd23aadb49951b8d347ab32e8b6`
 - Review range: `226484610d5ea4ecbb1c614cc7a741a2d054fc65..HEAD`
-- Wire/schema implemented at tip: IPC epoch 21, SQLCipher schema 20
+- Wire/schema implemented in the current tree: IPC epoch 21, SQLCipher schema 22
 - Release status: not qualified for distribution
 
 This directory is the canonical handoff for continuing the current work. It
@@ -64,6 +64,23 @@ adapter uses bearer authorization only. New turns persist either the
 Successful enrollment selects SuperGrok for new conversations at runtime;
 disconnect selects the user-owned API-key rail. Grok Build ACP authentication
 and usage remain a separate product rail.
+
+The completion pass now adds the locally implementable portions of phases 2–4:
+schema 21 atomically claims and binds each scheduled occurrence to its dedicated
+thread, immutable prompt, queued run, and dispatch identity; the daemon can
+resume only exact bound queued work and atomically marks ambiguous in-flight
+work `interrupted_needs_review`. The closed Linux `scheduled.run` contract
+carries no workspace, tools, shell, MCP, host path, or credential authority and
+remains unavailable without signed broker/guest qualification and a daemon-
+owned proof.
+
+Schema 22 replaces Wisp's JSON lifecycle authority with a SQLCipher journal.
+Canonical parsed manifests, a complete signed file inventory, independent
+catalog trust, retained file identity, private staging, exact idempotency, and
+acknowledged-only projection now cover install, update, recovery, and rollback.
+IPC mutations remain unavailable until production release roots and platform
+publication qualification exist. These are intentional external gates, not
+mockable completion work.
 
 The Electron bridge and Setup view expose only bounded non-secret status,
 verification URI, and user code. Wisp headless verified the Setup landmarks,

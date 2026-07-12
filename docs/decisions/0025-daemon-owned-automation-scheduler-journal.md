@@ -1,6 +1,6 @@
 # ADR 0025: Daemon-owned automation scheduler journal
 
-- Status: Accepted, journal kernel and lifecycle health implemented; execution disabled
+- Status: Accepted, atomic dispatch/recovery implemented; product execution disabled pending qualification
 - Date: 2026-07-12
 
 ## Context
@@ -99,6 +99,28 @@ recovery controls remain daemon-private. Enabling schedules requires a new
 qualified command and cannot reuse the removed definition boolean once
 isolated execution, atomic run binding, restart recovery, and soak
 qualification exist.
+
+Schema 21 completes the atomic production boundary without changing that public
+availability decision. One transaction validates the occurrence and lease
+fence, claims it, creates the dedicated conversation thread, freezes the prompt,
+creates the queued Run and initial event, binds the dispatch identity, and
+completes the claim. Exact replay returns the same binding; injected failure at
+any write rolls the entire transaction back.
+
+Before guest I/O, a second transaction moves the bound Run through Planning to
+Running and appends both events. Terminal Run state, terminal event, and
+occurrence state commit together. Restart resumes only an exact bound queued
+Run. A stranded Planning or Running Run is atomically reconciled with its
+occurrence as `interrupted_needs_review`; it is never replayed automatically.
+
+The inward-facing dispatcher accepts only occurrence ID, run ID, and the frozen
+prompt. The Linux broker method `scheduled.run` uses a bounded closed binary
+contract and requires live VM/process evidence, proof of possession, release
+qualification, and a configured guest dial. It cannot carry workspace roots,
+tools, shell, MCP, host paths, or credentials. Cancellation shuts down and joins
+the worker, and every ambiguous post-write outcome is interrupted. The handler
+continues to advertise execution disabled until production qualification and a
+new public enablement decision are complete.
 
 ## Consequences
 

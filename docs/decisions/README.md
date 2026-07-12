@@ -64,6 +64,8 @@ when it defines an IPC or schema epoch.
 | [0023](0023-linux-private-artifact-content-and-fd-open.md) | Linux private artifact content and descriptor-based local open |
 | [0024](0024-daemon-owned-artifact-removal-and-retention.md) | Daemon-owned artifact removal and retention |
 | [0025](0025-daemon-owned-automation-scheduler-journal.md) | Daemon-owned automation scheduler journal |
+| [0026](0026-daemon-owned-supergrok-api-chat-rail.md) | Daemon-owned SuperGrok API Chat rail |
+| [0027](0027-durable-signed-managed-integration-lifecycle.md) | Durable signed managed-integration lifecycle |
 
 ## Platform ADRs
 

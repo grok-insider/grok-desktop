@@ -7,8 +7,9 @@ Decision detail lives in the linked ADRs.
 
 **Current surface (maintain as you bump):** desktop IPC **v21** rejects epochs
 **0–20** before dispatch. SQLCipher production schema tracks the latest
-forward-only migration (schema **20**: immutable conversation credential rails;
-automation execution remains disabled). Earlier sections below that name v15/schema 18
+forward-only migration (schema **22**: atomic scheduler dispatch binding and
+durable managed-integration lifecycle; execution and lifecycle mutations remain
+disabled pending qualification). Earlier sections below that name v15/schema 18
 describe contracts still retained under later epochs. Always confirm against
 `grok-protocol` / `grok-sqlcipher` when changing code.
 
@@ -59,6 +60,8 @@ renderer, preload, Electron-main, argv, and environment state. See
 | Artifact removal + retention | IPC v15, schema 18 | [0024](../decisions/0024-daemon-owned-artifact-removal-and-retention.md) |
 | Automation scheduler journal | — | [0025](../decisions/0025-daemon-owned-automation-scheduler-journal.md) |
 | SuperGrok API Chat rail | IPC v21, schema 20 lineage | [0026](../decisions/0026-daemon-owned-supergrok-api-chat-rail.md) |
+| Atomic scheduled dispatch | schema 21 | [0025](../decisions/0025-daemon-owned-automation-scheduler-journal.md) |
+| Durable signed managed integrations | schema 22 | [0027](../decisions/0027-durable-signed-managed-integration-lifecycle.md) |
 | Privileged guest / channel / journal | platform ADRs | [platform/adr](../platform/adr/) |
 
 ## Narrative detail
