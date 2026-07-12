@@ -12,7 +12,8 @@ use grok_application::{
     MAX_CONVERSATION_FORK_DIRECT_CHILDREN, MAX_CONVERSATION_FORK_FAMILY_THREADS,
     MAX_CONVERSATION_FORK_INHERITED_OUTCOMES, MAX_CONVERSATION_FORK_METADATA_BYTES,
     MutationCommand, NewRunEvent, ProviderStartCommit, StoreError, TerminalTurnCommit,
-    conversation_fork_metadata_is_within_bounds,
+    UsageScope, UsageSummary, UsageWindow, conversation_fork_metadata_is_within_bounds,
+    window_lower_bound,
 };
 use grok_domain::{
     ChatRail, ConversationCitation, ConversationFailure, ConversationFailureKind,
@@ -22,7 +23,7 @@ use grok_domain::{
     ConversationTurnState, ConversationUsage, EffectId, EffectKind, EffectState, Idempotency,
     MAX_CONVERSATION_TEXT_CHUNK_BYTES, MAX_CONVERSATION_TEXT_EVENTS, MAX_MESSAGE_BYTES, Message,
     MessageId, MessageRole, MessageState, ProjectId, ProjectState, Run, RunEventKind, RunId,
-    RunState, SideEffect, Thread, ThreadId,
+    RunState, SideEffect, Thread, ThreadId, UnixMillis,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -470,6 +471,16 @@ impl ConversationTurnStore for SqlCipherStore {
                 .collect()
         })
         .await
+    }
+
+    async fn summarize_usage(
+        &self,
+        scope: UsageScope,
+        window: UsageWindow,
+        as_of: UnixMillis,
+    ) -> Result<UsageSummary, StoreError> {
+        self.with_store(move |connection| summarize_usage_rows(connection, scope, window, as_of))
+            .await
     }
 
     async fn retry_source_is_latest(&self, id: &ConversationTurnId) -> Result<bool, StoreError> {
@@ -4653,6 +4664,133 @@ fn failure_parts(
             Some(i64::from(failure.retryable)),
         )
     })
+}
+
+fn summarize_usage_rows(
+    connection: &Connection,
+    scope: UsageScope,
+    window: UsageWindow,
+    as_of: UnixMillis,
+) -> Result<UsageSummary, StoreError> {
+    let completed = turn_state_to_i64(ConversationTurnState::Completed);
+    let lower = window_lower_bound(window, as_of).map(|value| i64::try_from(value).unwrap_or(0));
+    let as_of_i64 = i64::try_from(as_of).unwrap_or(i64::MAX);
+
+    // Scope existence fails closed for project/thread so callers cannot invent IDs.
+    match &scope {
+        UsageScope::Workspace => {}
+        UsageScope::Project(project_id) => {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM projects WHERE id=?1)",
+                    [project_id.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(map_sqlite)?;
+            if !exists {
+                return Err(StoreError::NotFound);
+            }
+        }
+        UsageScope::Thread(thread_id) => {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1)",
+                    [thread_id.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(map_sqlite)?;
+            if !exists {
+                return Err(StoreError::NotFound);
+            }
+        }
+    }
+
+    let (input_tokens, output_tokens, cost_in_usd_ticks, turn_count) = match (&scope, lower) {
+        (UsageScope::Workspace, None) => connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(cost_in_usd_ticks),0), COUNT(*)
+                 FROM conversation_turns
+                 WHERE state=?1 AND created_at<=?2",
+                params![completed, as_of_i64],
+                sum_usage_row,
+            )
+            .map_err(map_sqlite)?,
+        (UsageScope::Workspace, Some(since)) => connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(cost_in_usd_ticks),0), COUNT(*)
+                 FROM conversation_turns
+                 WHERE state=?1 AND created_at>=?2 AND created_at<=?3",
+                params![completed, since, as_of_i64],
+                sum_usage_row,
+            )
+            .map_err(map_sqlite)?,
+        (UsageScope::Project(project_id), None) => connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(cost_in_usd_ticks),0), COUNT(*)
+                 FROM conversation_turns
+                 WHERE state=?1 AND project_id=?2 AND created_at<=?3",
+                params![completed, project_id.as_str(), as_of_i64],
+                sum_usage_row,
+            )
+            .map_err(map_sqlite)?,
+        (UsageScope::Project(project_id), Some(since)) => connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(cost_in_usd_ticks),0), COUNT(*)
+                 FROM conversation_turns
+                 WHERE state=?1 AND project_id=?2 AND created_at>=?3 AND created_at<=?4",
+                params![completed, project_id.as_str(), since, as_of_i64],
+                sum_usage_row,
+            )
+            .map_err(map_sqlite)?,
+        (UsageScope::Thread(thread_id), None) => connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(cost_in_usd_ticks),0), COUNT(*)
+                 FROM conversation_turns
+                 WHERE state=?1 AND thread_id=?2 AND created_at<=?3",
+                params![completed, thread_id.as_str(), as_of_i64],
+                sum_usage_row,
+            )
+            .map_err(map_sqlite)?,
+        (UsageScope::Thread(thread_id), Some(since)) => connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(cost_in_usd_ticks),0), COUNT(*)
+                 FROM conversation_turns
+                 WHERE state=?1 AND thread_id=?2 AND created_at>=?3 AND created_at<=?4",
+                params![completed, thread_id.as_str(), since, as_of_i64],
+                sum_usage_row,
+            )
+            .map_err(map_sqlite)?,
+    };
+
+    Ok(UsageSummary {
+        input_tokens,
+        output_tokens,
+        cost_in_usd_ticks,
+        turn_count,
+        scope,
+        window,
+        as_of,
+    })
+}
+
+fn sum_usage_row(row: &Row<'_>) -> rusqlite::Result<(u64, u64, u64, u64)> {
+    let read = |index: usize| -> rusqlite::Result<u64> {
+        let value: i64 = row.get(index)?;
+        u64::try_from(value).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Integer,
+                Box::new(error),
+            )
+        })
+    };
+    Ok((read(0)?, read(1)?, read(2)?, read(3)?))
 }
 
 const fn turn_state_to_i64(value: ConversationTurnState) -> i64 {

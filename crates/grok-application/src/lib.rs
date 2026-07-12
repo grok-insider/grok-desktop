@@ -24,6 +24,7 @@ mod privileged_gateway;
 mod privileged_operations;
 mod runs;
 mod supergrok_oauth;
+mod usage_summary;
 mod vault;
 mod workspace;
 
@@ -136,6 +137,9 @@ pub use supergrok_oauth::{
     DeviceAuthorization, OAuthCancellation, OAuthFailure, OAuthTokenGrant,
     SUPERGROK_OAUTH_VAULT_NAME, SuperGrokCredential, SuperGrokEnrollmentService,
     SuperGrokEnrollmentStatus, SuperGrokOAuth,
+};
+pub use usage_summary::{
+    GetUsageSummary, UsageScope, UsageSummary, UsageSummaryService, UsageWindow, window_lower_bound,
 };
 pub use vault::{SecretName, SecretValue, SecretVault, VaultError};
 pub use workspace::{

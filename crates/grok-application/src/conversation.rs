@@ -16,9 +16,10 @@ use sha2::{Digest, Sha256};
 use crate::{
     ApplicationError, ChatModelPreferenceStore, Citation, Clock, ContentPart, ConversationEvent,
     ConversationMessage, ConversationModelFactory, ConversationRequest, ConversationRole,
-    CredentialService, IdGenerator, ModelError, ModelErrorKind, ModelFailureCertainty,
-    MutationCommand, NewRunEvent, Page, StoreError, SuperGrokEnrollmentService, Usage,
-    WorkspaceService, mutations::mutation_command,
+    CredentialService, GetUsageSummary, IdGenerator, ModelError, ModelErrorKind,
+    ModelFailureCertainty, MutationCommand, NewRunEvent, Page, StoreError,
+    SuperGrokEnrollmentService, Usage, UsageScope, UsageSummary, UsageWindow, WorkspaceService,
+    mutations::mutation_command,
 };
 
 /// Maximum canonical messages copied into one immutable provider request.
@@ -725,6 +726,22 @@ pub trait ConversationTurnStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<ConversationTurnSnapshot>, StoreError>;
 
+    /// Aggregates official provider usage for completed turns in one scope/window.
+    ///
+    /// Implementations include only [`ConversationTurnState::Completed`] rows and
+    /// apply the rolling lower bound derived from `as_of` for non-all-time windows.
+    async fn summarize_usage(
+        &self,
+        scope: UsageScope,
+        window: UsageWindow,
+        as_of: UnixMillis,
+    ) -> Result<UsageSummary, StoreError> {
+        let _ = (scope, window, as_of);
+        Err(StoreError::Internal(
+            "conversation usage summary is not implemented".into(),
+        ))
+    }
+
     /// Checks the dynamic structural precondition for offering Retry.
     ///
     /// Implementations require the source user message to be the latest
@@ -890,6 +907,28 @@ impl ConversationService {
             ids,
             model_preferences,
         }
+    }
+
+    /// Aggregates official completed-turn usage for one scope and rolling window.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplicationError::NotFound`] when a project/thread scope does not
+    /// exist, or a storage failure when persistence cannot answer.
+    pub async fn usage_summary(
+        &self,
+        input: GetUsageSummary,
+    ) -> Result<UsageSummary, ApplicationError> {
+        let as_of = self.clock.now();
+        self.store
+            .summarize_usage(input.scope, input.window, as_of)
+            .await
+            .map_err(|error| match error {
+                StoreError::NotFound => ApplicationError::NotFound,
+                StoreError::Conflict => ApplicationError::Conflict,
+                StoreError::Unavailable(message) => ApplicationError::Unavailable(message),
+                StoreError::Internal(message) => ApplicationError::Storage(message),
+            })
     }
 
     /// Durably starts or exactly replays one direct xAI conversation command.

@@ -42,9 +42,10 @@ use grok_application::{
     MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_COUNT, MutationCommand, NewRunEvent,
     PrivilegedDispatchAttempt, PrivilegedOperationStore, PrivilegedPreparation,
     PrivilegedRecoveryCandidate, ProviderStartCommit, SecretName, SecretValue, SecretVault,
-    SecureKeyProvider, StoreError, TerminalTurnCommit, VaultError, WorkspaceSearchHit,
-    WorkspaceSearchKind, WorkspaceStore, automation_occurrence_is_active,
-    conversation_fork_metadata_is_within_bounds,
+    SecureKeyProvider, StoreError, TerminalTurnCommit, UsageScope, UsageSummary, UsageWindow,
+    VaultError, WorkspaceSearchHit, WorkspaceSearchKind, WorkspaceStore,
+    automation_occurrence_is_active, conversation_fork_metadata_is_within_bounds,
+    window_lower_bound,
 };
 use grok_domain::{
     Approval, ApprovalId, Artifact, ArtifactId, ArtifactState, ArtifactVersion, Automation,
@@ -1075,6 +1076,64 @@ impl ConversationTurnStore for InMemoryExecutionStore {
             .take(limit)
             .map(|turn| conversation_snapshot(&state, turn))
             .collect()
+    }
+
+    async fn summarize_usage(
+        &self,
+        scope: UsageScope,
+        window: UsageWindow,
+        as_of: UnixMillis,
+    ) -> Result<UsageSummary, StoreError> {
+        let state = self.state.lock().await;
+        match &scope {
+            UsageScope::Workspace => {}
+            UsageScope::Project(project_id) => {
+                if !state.projects.contains_key(project_id) {
+                    return Err(StoreError::NotFound);
+                }
+            }
+            UsageScope::Thread(thread_id) => {
+                if !state.threads.contains_key(thread_id) {
+                    return Err(StoreError::NotFound);
+                }
+            }
+        }
+        let lower = window_lower_bound(window, as_of);
+        let mut input_tokens = 0_u64;
+        let mut output_tokens = 0_u64;
+        let mut cost_in_usd_ticks = 0_u64;
+        let mut turn_count = 0_u64;
+        for turn in state.conversation_turns.values() {
+            if turn.state != ConversationTurnState::Completed || turn.created_at > as_of {
+                continue;
+            }
+            if let Some(since) = lower {
+                if turn.created_at < since {
+                    continue;
+                }
+            }
+            let in_scope = match &scope {
+                UsageScope::Workspace => true,
+                UsageScope::Project(project_id) => &turn.project_id == project_id,
+                UsageScope::Thread(thread_id) => &turn.thread_id == thread_id,
+            };
+            if !in_scope {
+                continue;
+            }
+            input_tokens = input_tokens.saturating_add(turn.usage.input_tokens);
+            output_tokens = output_tokens.saturating_add(turn.usage.output_tokens);
+            cost_in_usd_ticks = cost_in_usd_ticks.saturating_add(turn.usage.cost_in_usd_ticks);
+            turn_count = turn_count.saturating_add(1);
+        }
+        Ok(UsageSummary {
+            input_tokens,
+            output_tokens,
+            cost_in_usd_ticks,
+            turn_count,
+            scope,
+            window,
+            as_of,
+        })
     }
 
     async fn retry_source_is_latest(&self, id: &ConversationTurnId) -> Result<bool, StoreError> {
