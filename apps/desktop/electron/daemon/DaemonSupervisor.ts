@@ -77,6 +77,10 @@ import {
   PROTOCOL_VERSION,
   type RpcConnectionState,
 } from "./DaemonRpcClient.js";
+import {
+  applyDevelopmentAcpDescriptor,
+  resolveDevelopmentAcpDescriptor,
+} from "./developmentAcpDescriptor.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
 const CONNECT_ATTEMPT_TIMEOUT_MS = 500;
@@ -1004,6 +1008,17 @@ export function daemonEnvironment(
     && validDevelopmentExecutableOverride(pinentryOverride, platform)
   ) {
     environment.GROK_PINENTRY = pinentryOverride;
+  }
+  // Development-only official Grok Build ACP descriptor. Packaged launches
+  // never receive these variables; release daemons reject them without the
+  // debug-acp-descriptor feature and signed catalog path remains required for
+  // production components.
+  if (allowDevelopmentOverrides) {
+    const acp = resolveDevelopmentAcpDescriptor({
+      platform,
+      env: process.env,
+    });
+    if (acp) applyDevelopmentAcpDescriptor(environment, acp);
   }
   environment.GROK_DAEMON_STARTUP_NONCE_STDIN = "1";
   if (platform === "win32") environment.GROK_DAEMON_PIPE = endpoint;

@@ -1424,6 +1424,9 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
     vi.stubEnv("OPENAI_API_KEY", "secret-other-provider");
     vi.stubEnv("GROK_OAUTH_REFRESH_TOKEN", "secret-oauth");
     vi.stubEnv("GROK_PINENTRY", "/operator/pinentry");
+    vi.stubEnv("GROK_ACP_EXECUTABLE", "/opt/xai/bin/grok");
+    vi.stubEnv("GROK_ACP_VERSION", "0.2.97");
+    vi.stubEnv("GROK_ACP_SHA256", "a".repeat(64));
     vi.stubEnv("PATH", "/safe/bin");
     vi.stubEnv("WAYLAND_DISPLAY", "wayland-7");
 
@@ -1438,6 +1441,9 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
     expect(environment).not.toHaveProperty("OPENAI_API_KEY");
     expect(environment).not.toHaveProperty("GROK_OAUTH_REFRESH_TOKEN");
     expect(environment).not.toHaveProperty("GROK_PINENTRY");
+    expect(environment).not.toHaveProperty("GROK_ACP_EXECUTABLE");
+    expect(environment).not.toHaveProperty("GROK_ACP_VERSION");
+    expect(environment).not.toHaveProperty("GROK_ACP_SHA256");
   });
 
   it("forwards an absolute pinentry override only for an explicit unix development launch", () => {
@@ -1462,6 +1468,39 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
     expect(development.GROK_PINENTRY).toBe("/nix/store/pinentry-qt/bin/pinentry-qt");
     expect(packaged).not.toHaveProperty("GROK_PINENTRY");
     expect(windows).not.toHaveProperty("GROK_PINENTRY");
+  });
+
+  it("forwards a complete official Grok Build ACP descriptor only for development launches", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "grok-acp-descriptor-"));
+    const executable = path.join(directory, "grok");
+    try {
+      writeFileSync(executable, "test executable");
+      vi.stubEnv("GROK_ACP_EXECUTABLE", executable);
+      vi.stubEnv("GROK_ACP_VERSION", "0.2.97");
+      vi.stubEnv("GROK_ACP_SHA256", "B".repeat(64));
+      vi.stubEnv("PATH", "/safe/bin");
+
+      const development = daemonEnvironment(
+        "/tmp/development-daemon.sock",
+        "linux",
+        true,
+      );
+      const packaged = daemonEnvironment(
+        "/tmp/packaged-daemon.sock",
+        "linux",
+        false,
+      );
+
+      expect(development.GROK_ACP_EXECUTABLE).toBe(executable);
+      expect(development.GROK_ACP_VERSION).toBe("0.2.97");
+      expect(development.GROK_ACP_SHA256).toBe("b".repeat(64));
+      expect(development).not.toHaveProperty("GROK_ACP_WORKSPACE_ROOTS");
+      expect(packaged).not.toHaveProperty("GROK_ACP_EXECUTABLE");
+      expect(packaged).not.toHaveProperty("GROK_ACP_VERSION");
+      expect(packaged).not.toHaveProperty("GROK_ACP_SHA256");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

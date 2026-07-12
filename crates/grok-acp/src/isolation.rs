@@ -275,7 +275,7 @@ impl ProvisionedGrokHome {
 
 fn ensure_base_directory(path: &Path) -> Result<(), GrokHomeError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) => verify_directory(path, &metadata),
+        Ok(metadata) => ensure_existing_private_directory(path, &metadata),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = path.parent().ok_or(GrokHomeError::InvalidLocation)?;
             let metadata = fs::symlink_metadata(parent).map_err(GrokHomeError::Io)?;
@@ -293,7 +293,7 @@ fn ensure_base_directory(path: &Path) -> Result<(), GrokHomeError> {
 
 fn ensure_private_directory(path: &Path) -> Result<(), GrokHomeError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) => verify_directory(path, &metadata),
+        Ok(metadata) => ensure_existing_private_directory(path, &metadata),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             create_private_directory(path)?;
             set_private_directory_permissions(path)?;
@@ -304,6 +304,27 @@ fn ensure_private_directory(path: &Path) -> Result<(), GrokHomeError> {
         }
         Err(error) => Err(GrokHomeError::Io(error)),
     }
+}
+
+/// Reuses an existing directory after confirming it is a normal directory,
+/// tightening mode bits to the private policy when needed.
+///
+/// The application data root may already exist at `0755` from earlier
+/// `create_dir_all` database layout work; fail closed when type/link checks
+/// fail or when chmod cannot restore the private mode (e.g. foreign owner).
+fn ensure_existing_private_directory(
+    path: &Path,
+    metadata: &Metadata,
+) -> Result<(), GrokHomeError> {
+    verify_directory_type(metadata)?;
+    if verify_directory_permissions(path, metadata).is_ok() {
+        return Ok(());
+    }
+    set_private_directory_permissions(path)?;
+    verify_directory(
+        path,
+        &fs::symlink_metadata(path).map_err(GrokHomeError::Io)?,
+    )
 }
 
 fn verify_directory(path: &Path, metadata: &Metadata) -> Result<(), GrokHomeError> {
@@ -613,6 +634,30 @@ mod tests {
             GrokHomeSpec::new(base, "../other"),
             Err(GrokHomeError::InvalidInstallationId)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tightens_existing_world_readable_base_directory_to_private_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let base = directory.path().join("app-data");
+        fs::create_dir(&base).expect("create base");
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o755)).expect("mode 755");
+        assert_eq!(
+            fs::metadata(&base).expect("metadata").permissions().mode() & 0o777,
+            0o755
+        );
+        let specification = GrokHomeSpec::new(&base, "installation-tighten").expect("spec");
+        let provisioned = specification
+            .provision()
+            .expect("provision despite prior 0755");
+        drop(provisioned);
+        assert_eq!(
+            fs::metadata(&base).expect("metadata").permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[test]
