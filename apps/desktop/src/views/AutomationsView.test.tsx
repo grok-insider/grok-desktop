@@ -52,19 +52,31 @@ function completeRequiredEditorFields(dialog: HTMLElement) {
 describe("AutomationsView", () => {
   it.each([
     ["kernel_initialized_execution_disabled", "Kernel initialized"],
+    ["kernel_initialized_execution_enabled", "Execution enabled"],
     ["recovery_pending_execution_disabled", "Recovering"],
     ["degraded_execution_disabled", "Unavailable"],
-  ] as const)("keeps definitions inactive for scheduler health %s", async (state, label) => {
+  ] as const)("maps scheduler health %s", async (state, label) => {
     const snapshot = structuredClone(initialSnapshot);
     snapshot.connection.automationScheduler = { state };
+    if (state === "kernel_initialized_execution_enabled") {
+      snapshot.capabilities = snapshot.capabilities.map((capability) =>
+        capability.id === "automations"
+          ? { ...capability, available: true, availability: "available" as const, reason: "Available." }
+          : capability,
+      );
+    }
     renderAutomations(new SnapshotClient(snapshot));
 
     const metric = (await screen.findByText("Scheduler status")).closest("div");
     expect(metric).toHaveTextContent(label);
-    expect(screen.getByText("Definitions are inactive")).toBeInTheDocument();
-    for (const toggle of screen.getAllByRole("switch")) {
-      expect(toggle).toBeDisabled();
-      expect(toggle).not.toBeChecked();
+    if (state === "kernel_initialized_execution_enabled") {
+      expect(screen.getByText("Scheduler armed")).toBeInTheDocument();
+    } else {
+      expect(screen.getByText("Definitions are inactive")).toBeInTheDocument();
+      for (const toggle of screen.getAllByRole("switch")) {
+        expect(toggle).toBeDisabled();
+        expect(toggle).not.toBeChecked();
+      }
     }
   });
 
@@ -91,28 +103,33 @@ describe("AutomationsView", () => {
     );
   });
 
-  it("renders saved definitions as inactive and never presents a scheduled next run", async () => {
+  it("renders daemon-reported schedule state without inventing local next runs", async () => {
     const snapshot = structuredClone(initialSnapshot);
     snapshot.automations[0] = {
       ...snapshot.automations[0],
       enabled: true,
-      nextRun: "Tomorrow at 4:00 PM",
+      nextRun: "Scheduled by daemon",
     };
+    snapshot.connection.automationScheduler = {
+      state: "kernel_initialized_execution_enabled",
+    };
+    snapshot.capabilities = snapshot.capabilities.map((capability) =>
+      capability.id === "automations"
+        ? { ...capability, available: true, availability: "available" as const, reason: "Available." }
+        : capability,
+    );
     renderAutomations(new SnapshotClient(snapshot));
 
     expect(await screen.findByRole("button", { name: "View Friday operations brief" })).toBeInTheDocument();
     expect(screen.getByText("Fri at 4:00 PM")).toBeInTheDocument();
-    expect(screen.getAllByText("Not scheduled")).toHaveLength(3);
-    expect(screen.queryByText("Tomorrow at 4:00 PM")).not.toBeInTheDocument();
-    for (const toggle of screen.getAllByRole("switch")) {
-      expect(toggle).toBeDisabled();
-      expect(toggle).not.toBeChecked();
-    }
+    expect(screen.getByText("Scheduled by daemon")).toBeInTheDocument();
+    expect(screen.getAllByText("Not scheduled").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Scheduler armed")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Friday operations brief is enabled" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Friday operations brief is enabled" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "View Friday operations brief" }));
     const detail = await screen.findByRole("dialog", { name: "Friday operations brief" });
-    expect(within(detail).getByText("Not scheduled")).toBeInTheDocument();
-    expect(within(detail).getByText(AUTOMATION_DEFINITION_ONLY_REASON)).toBeInTheDocument();
     expect(within(detail).getByRole("button", { name: "Run unavailable" })).toBeDisabled();
   });
 

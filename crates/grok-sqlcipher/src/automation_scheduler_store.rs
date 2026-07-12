@@ -112,6 +112,22 @@ impl AutomationSchedulerStore for SqlCipherStore {
     ) -> Result<AutomationSchedulerJournalStatus, StoreError> {
         self.with_store(journal_status).await
     }
+
+    async fn link_automation_occurrence_run(
+        &self,
+        lease: &AutomationSchedulerLeaseToken,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_revision: u64,
+        run_id: RunId,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrence, StoreError> {
+        let lease = lease.clone();
+        let occurrence_id = occurrence_id.clone();
+        self.with_store(move |connection| {
+            link_occurrence_run(connection, &lease, &occurrence_id, expected_revision, run_id, now)
+        })
+        .await
+    }
 }
 
 fn acquire_lease(
@@ -1135,6 +1151,43 @@ fn promote_queued(
         update_occurrence(transaction, &queued)?;
     }
     Ok(())
+}
+
+fn link_occurrence_run(
+    connection: &mut Connection,
+    lease: &AutomationSchedulerLeaseToken,
+    occurrence_id: &AutomationOccurrenceId,
+    expected_revision: u64,
+    run_id: RunId,
+    now: UnixMillis,
+) -> Result<AutomationOccurrence, StoreError> {
+    let transaction = begin(connection)?;
+    ensure_live_lease(&transaction, lease, now, None)?;
+    let mut occurrence = query_occurrence(&transaction, occurrence_id.as_str())?;
+    if occurrence.revision != expected_revision {
+        return Err(StoreError::Conflict);
+    }
+    // A durable run must already exist; the FK on automation_occurrences.run_id
+    // rejects inventing identifiers that never entered the run journal.
+    let run_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE id=?1)",
+            [run_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(map_sqlite)?;
+    if !run_exists {
+        return Err(StoreError::Conflict);
+    }
+    occurrence
+        .link_run(lease, run_id, now)
+        .map_err(|_| StoreError::Conflict)?;
+    update_occurrence(&transaction, &occurrence)?;
+    // Immutable claim evidence must record the link (outcome=1) while state is
+    // RunLinked, matching automation_occurrence_claim_attempts completion rules.
+    complete_open_attempt(&transaction, &occurrence, now, 1)?;
+    transaction.commit().map_err(map_sqlite)?;
+    Ok(occurrence)
 }
 
 fn journal_status(

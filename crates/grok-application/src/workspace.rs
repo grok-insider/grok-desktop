@@ -13,8 +13,6 @@ use grok_domain::{
 const MAX_PAGE_SIZE: usize = 200;
 const MAX_SEARCH_PAGE_SIZE: usize = 100;
 const MAX_SEARCH_OFFSET: usize = 10_000;
-const AUTOMATION_SCHEDULER_UNAVAILABLE: &str =
-    "automation scheduling is unavailable until a qualified scheduler is configured";
 
 /// One bounded keyset page of canonical entities.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +104,8 @@ pub struct CreateAutomation {
     pub missed_run_policy: MissedRunPolicy,
     /// Overlap behavior.
     pub overlap_policy: OverlapPolicy,
-    /// Requested enabled state. `true` is rejected until a scheduler is configured.
+    /// Requested enabled state. The daemon arms this only when the scheduler
+    /// kernel is live (`schedule_active` + execution-enabled health).
     pub enabled: bool,
 }
 
@@ -129,7 +128,8 @@ pub struct UpdateAutomation {
     pub missed_run_policy: MissedRunPolicy,
     /// Overlap behavior.
     pub overlap_policy: OverlapPolicy,
-    /// Requested enabled state. `true` is rejected until a scheduler is configured.
+    /// Requested enabled state. The daemon arms this only when the scheduler
+    /// kernel is live (`schedule_active` + execution-enabled health).
     pub enabled: bool,
 }
 
@@ -515,11 +515,6 @@ impl WorkspaceService {
         {
             return self.get_automation(&AutomationId::new(id)?).await;
         }
-        if input.enabled {
-            return Err(ApplicationError::Unavailable(
-                AUTOMATION_SCHEDULER_UNAVAILABLE.into(),
-            ));
-        }
         let project_id = ProjectId::new(input.project_id)?;
         ensure_project_active(&self.store.get_project(&project_id).await?)?;
         let automation = Automation::new(
@@ -569,11 +564,6 @@ impl WorkspaceService {
             .await?
         {
             return self.get_automation(&AutomationId::new(id)?).await;
-        }
-        if input.enabled {
-            return Err(ApplicationError::Unavailable(
-                AUTOMATION_SCHEDULER_UNAVAILABLE.into(),
-            ));
         }
         let id = AutomationId::new(input.id)?;
         let mut automation = self.store.get_automation(&id).await?;

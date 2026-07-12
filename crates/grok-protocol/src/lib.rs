@@ -5,15 +5,12 @@ mod validation;
 
 /// Current compatibility epoch accepted by the daemon.
 ///
-/// Epoch seventeen exposes daemon-owned Grok Build host authentication status
-/// over public IPC while Work remains gated on isolation facts. Epoch sixteen
-/// exposes only the daemon scheduler kernel lifecycle while scheduled execution
-/// remains disabled, and removes renderer authority to request an enabled
-/// automation definition. Epoch fifteen added daemon-owned artifact removal
-/// with durable private-namespace retention recovery. The Protobuf package
-/// remains the canonical v1 schema family, while the envelope version prevents
-/// either side from silently accepting a different operation set.
-pub const PROTOCOL_VERSION: u32 = 17;
+/// Epoch eighteen re-arms automation `schedule_active` and advertises scheduler
+/// execution-enabled health when the journal kernel is live. Epoch seventeen
+/// exposes daemon-owned Grok Build host authentication status. The Protobuf
+/// package remains the canonical v1 schema family, while the envelope version
+/// prevents either side from silently accepting a different operation set.
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Generated messages for the canonical daemon schema family.
 #[allow(clippy::all, clippy::pedantic, missing_docs)]

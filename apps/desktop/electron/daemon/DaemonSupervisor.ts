@@ -2396,6 +2396,7 @@ function automationToWire(input: DaemonAutomationInput) {
     overlapPolicy: input.overlapPolicy === "queue_one"
       ? OverlapPolicy.OVERLAP_POLICY_QUEUE_ONE
       : OverlapPolicy.OVERLAP_POLICY_SKIP,
+    scheduleActive: input.scheduleActive === true,
   };
 }
 
@@ -2566,6 +2567,9 @@ function mapAgentRuntime(runtime: import("../generated/daemon/v1/daemon.js").Age
 export function mapAutomationSchedulerHealth(value: AutomationSchedulerHealth): NonNullable<DaemonStatus["automationScheduler"]> {
   if (value === AutomationSchedulerHealth.AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_DISABLED) {
     return { state: "kernel_initialized_execution_disabled" };
+  }
+  if (value === AutomationSchedulerHealth.AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED) {
+    return { state: "kernel_initialized_execution_enabled" };
   }
   if (value === AutomationSchedulerHealth.AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED) {
     return { state: "recovery_pending_execution_disabled" };

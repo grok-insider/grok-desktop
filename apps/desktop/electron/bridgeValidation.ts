@@ -262,7 +262,7 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
   if (kind === "daemon.createAutomation" || kind === "daemon.updateAutomation") {
     const automationKeys = [
       "kind", "projectId", "title", "prompt", "schedule", "timezone", "missedRunPolicy",
-      "overlapPolicy", "idempotencyKey",
+      "overlapPolicy", "idempotencyKey", "scheduleActive",
     ];
     if (kind === "daemon.updateAutomation") automationKeys.push("automationId", "expectedRevision");
     exactKeys(input, automationKeys, "automation request");
@@ -298,6 +298,9 @@ function parseAutomationInput(input: Record<string, unknown>): DaemonAutomationI
   const overlapPolicy = string(input.overlapPolicy, "overlap policy", 32) as DaemonAutomationInput["overlapPolicy"];
   if (!missedRunPolicies.has(missedRunPolicy)) throw new TypeError("invalid missed-run policy");
   if (!overlapPolicies.has(overlapPolicy)) throw new TypeError("invalid overlap policy");
+  if (input.scheduleActive !== undefined && typeof input.scheduleActive !== "boolean") {
+    throw new TypeError("scheduleActive must be a boolean");
+  }
   return {
     projectId: identifier(input.projectId, "project id"),
     title: string(input.title, "automation title", 200),
@@ -306,6 +309,7 @@ function parseAutomationInput(input: Record<string, unknown>): DaemonAutomationI
     timezone: string(input.timezone, "automation timezone", 128),
     missedRunPolicy,
     overlapPolicy,
+    ...(input.scheduleActive === true ? { scheduleActive: true } : {}),
   };
 }
 

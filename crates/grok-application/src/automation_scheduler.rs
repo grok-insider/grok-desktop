@@ -276,6 +276,16 @@ pub trait AutomationSchedulerStore: Send + Sync {
     async fn automation_scheduler_journal_status(
         &self,
     ) -> Result<AutomationSchedulerJournalStatus, StoreError>;
+
+    /// Links a durable run to a claimed occurrence under the exact lease fence.
+    async fn link_automation_occurrence_run(
+        &self,
+        lease: &AutomationSchedulerLeaseToken,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_revision: u64,
+        run_id: grok_domain::RunId,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrence, StoreError>;
 }
 
 /// Journal-only scheduler calculator. It has deliberately no execution dependency.
@@ -308,13 +318,143 @@ impl AutomationSchedulerService {
         AutomationOccurrenceId::new(self.ids.generate("automation-occurrence"))
     }
 
-    /// Returns the read-only journal projection. Execution remains disabled.
+    /// Returns the read-only journal projection.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the durable journal cannot be read.
     pub async fn journal_status(&self) -> Result<AutomationSchedulerJournalStatus, StoreError> {
         self.store.automation_scheduler_journal_status().await
+    }
+
+    /// Materializes due occurrences, claims pending ones, and links durable runs.
+    ///
+    /// Each successful dispatch creates a project thread, queues a durable run,
+    /// and links that run under the exact fenced claim. Interrupted linked runs
+    /// are never automatically replayed.
+    ///
+    /// # Errors
+    ///
+    /// Returns application errors for lease/storage/run failures.
+    pub async fn execute_due(
+        &self,
+        owner_id: &AutomationSchedulerOwnerId,
+        runs: &crate::RunService,
+        workspace: &crate::WorkspaceService,
+        limit: usize,
+    ) -> Result<usize, ApplicationError> {
+        // A brand-new definition spends its first completed tick initializing a
+        // cursor only. Advance once more in the same dispatch pass so due slots
+        // can materialize before claim/link.
+        let mut tick = self.tick(owner_id, None, limit).await?;
+        if matches!(tick.status, AutomationSchedulerTickStatus::Completed)
+            && tick.cursors_initialized > 0
+            && tick.occurrences_materialized == 0
+        {
+            tick = self.tick(owner_id, None, limit).await?;
+        }
+        if !matches!(tick.status, AutomationSchedulerTickStatus::Completed) {
+            return Ok(0);
+        }
+        let observed_at = self.clock.now();
+        let acquisition = self
+            .store
+            .acquire_automation_scheduler_lease(
+                owner_id,
+                observed_at,
+                AUTOMATION_SCHEDULER_LEASE_TTL_MS,
+            )
+            .await?;
+        let AutomationSchedulerLeaseAcquisition::Acquired { lease, .. } = acquisition else {
+            return Ok(0);
+        };
+        let lease_token = lease.token();
+        let candidates = self
+            .store
+            .list_automation_schedule_candidates(None, limit)
+            .await?;
+        let mut dispatched = 0usize;
+        for candidate in candidates {
+            let occurrences = self
+                .store
+                .list_automation_occurrences(&candidate.automation.id, None, 16)
+                .await?;
+            for occurrence in occurrences {
+                if occurrence.state != AutomationOccurrenceState::Pending {
+                    continue;
+                }
+                let claim_command = crate::mutations::mutation_command(
+                    "automation_scheduler_claim_v1",
+                    &self.ids.generate("automation-claim"),
+                    &[
+                        occurrence.id.as_str().to_owned(),
+                        lease_token.fence.to_string(),
+                    ],
+                )?;
+                let claimed = match self
+                    .store
+                    .claim_automation_occurrence(ClaimAutomationOccurrence {
+                        lease: lease_token.clone(),
+                        occurrence_id: occurrence.id.clone(),
+                        expected_revision: occurrence.revision,
+                        claimed_at: observed_at,
+                        expires_at: observed_at.saturating_add(AUTOMATION_SCHEDULER_LEASE_TTL_MS),
+                        command: claim_command,
+                    })
+                    .await
+                {
+                    Ok(claimed) => claimed,
+                    Err(StoreError::Conflict | StoreError::NotFound) => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                let thread = match workspace
+                    .create_thread(
+                        crate::CreateThread {
+                            project_id: claimed.snapshot.project_id.as_str().to_owned(),
+                            title: format!("Automation · {}", claimed.snapshot.title),
+                        },
+                        &self.ids.generate("automation-thread-cmd"),
+                    )
+                    .await
+                {
+                    Ok(thread) => thread,
+                    Err(ApplicationError::Conflict | ApplicationError::NotFound) => continue,
+                    Err(error) => return Err(error),
+                };
+                let run = match runs
+                    .create(
+                        crate::CreateRun {
+                            project_id: claimed.snapshot.project_id.as_str().to_owned(),
+                            thread_id: thread.id.as_str().to_owned(),
+                        },
+                        &self.ids.generate("automation-run"),
+                    )
+                    .await
+                {
+                    Ok(run) => run,
+                    Err(ApplicationError::Conflict | ApplicationError::NotFound) => continue,
+                    Err(error) => return Err(error),
+                };
+                match self
+                    .store
+                    .link_automation_occurrence_run(
+                        &lease_token,
+                        &claimed.id,
+                        claimed.revision,
+                        run.id.clone(),
+                        self.clock.now(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        dispatched = dispatched.saturating_add(1);
+                    }
+                    Err(StoreError::Conflict | StoreError::NotFound) => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(dispatched)
     }
 
     /// Evaluates one bounded page of internally enabled definitions and writes

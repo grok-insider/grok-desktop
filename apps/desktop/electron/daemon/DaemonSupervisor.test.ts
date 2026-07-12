@@ -92,6 +92,10 @@ describe("automation scheduler lifecycle validation", () => {
       "kernel_initialized_execution_disabled",
     ],
     [
+      AutomationSchedulerHealth.AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED,
+      "kernel_initialized_execution_enabled",
+    ],
+    [
       AutomationSchedulerHealth.AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED,
       "recovery_pending_execution_disabled",
     ],
@@ -99,7 +103,7 @@ describe("automation scheduler lifecycle validation", () => {
       AutomationSchedulerHealth.AUTOMATION_SCHEDULER_HEALTH_DEGRADED_EXECUTION_DISABLED,
       "degraded_execution_disabled",
     ],
-  ] as const)("maps closed health %s without enabling execution", (wire, state) => {
+  ] as const)("maps closed health %s", (wire, state) => {
     expect(mapAutomationSchedulerHealth(wire)).toEqual({ state });
   });
 

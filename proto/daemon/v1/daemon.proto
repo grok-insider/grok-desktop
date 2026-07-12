@@ -144,6 +144,8 @@ enum AutomationSchedulerHealth {
   AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_DISABLED = 1;
   AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED = 2;
   AUTOMATION_SCHEDULER_HEALTH_DEGRADED_EXECUTION_DISABLED = 3;
+  // Epoch 18: journal kernel is live and occurrence dispatch is armed.
+  AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED = 4;
 }
 
 message AgentRuntimeHealth {
@@ -948,6 +950,8 @@ message CreateAutomationRequest {
   string timezone = 5;
   MissedRunPolicy missed_run_policy = 6;
   OverlapPolicy overlap_policy = 7;
+  // Epoch 18: when true and the scheduler kernel is live, definition is enabled.
+  bool schedule_active = 10;
 }
 
 message UpdateAutomationRequest {
@@ -962,6 +966,8 @@ message UpdateAutomationRequest {
   string timezone = 6;
   MissedRunPolicy missed_run_policy = 7;
   OverlapPolicy overlap_policy = 8;
+  // Epoch 18: when true and the scheduler kernel is live, definition is enabled.
+  bool schedule_active = 10;
 }
 
 message ArchiveAutomationRequest {

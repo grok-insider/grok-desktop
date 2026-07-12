@@ -4321,6 +4321,34 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
                         .interrupt(&run_id, now)
                         .map_err(|_| invalid_automation_scheduler_journal())?;
                     summary.interrupted_linked = summary.interrupted_linked.saturating_add(1);
+                    // Link already records RunLinked claim evidence; recovery
+                    // must not rewrite completed attempt rows.
+                    let attempts = state
+                        .automation_occurrence_claim_attempts
+                        .get(&current.id)
+                        .cloned()
+                        .ok_or_else(invalid_automation_scheduler_journal)?;
+                    if attempts.last().is_some_and(|attempt| {
+                        attempt.completion
+                            == Some(AutomationOccurrenceClaimCompletion::RunLinked)
+                            && attempt.completed_at.is_some()
+                    }) {
+                        if matches!(
+                            occurrence.state,
+                            AutomationOccurrenceState::InterruptedNeedsReview
+                        ) && let Some(queued) =
+                            sole_queued_occurrence(&state, &occurrence.automation_id)?
+                        {
+                            let mut queued = queued;
+                            queued
+                                .promote_queued(now)
+                                .map_err(|_| invalid_automation_scheduler_journal())?;
+                            staged_occurrences.insert(queued.id.clone(), queued);
+                        }
+                        staged_attempts.insert(current.id.clone(), attempts);
+                        staged_occurrences.insert(current.id, occurrence);
+                        continue;
+                    }
                     AutomationOccurrenceClaimCompletion::RunLinked
                 }
                 _ => return Err(invalid_automation_scheduler_journal()),
@@ -4411,6 +4439,48 @@ impl AutomationSchedulerStore for InMemoryExecutionStore {
             }
         }
         Ok(status)
+    }
+
+    async fn link_automation_occurrence_run(
+        &self,
+        lease: &AutomationSchedulerLeaseToken,
+        occurrence_id: &AutomationOccurrenceId,
+        expected_revision: u64,
+        run_id: RunId,
+        now: UnixMillis,
+    ) -> Result<AutomationOccurrence, StoreError> {
+        let mut state = self.state.lock().await;
+        require_automation_scheduler_lease(&state, lease, now)?;
+        let current = state
+            .automation_occurrences
+            .get(occurrence_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        if current.revision != expected_revision {
+            return Err(StoreError::Conflict);
+        }
+        let mut occurrence = current.clone();
+        occurrence
+            .link_run(lease, run_id, now)
+            .map_err(|_| StoreError::Conflict)?;
+        let attempts = state
+            .automation_occurrence_claim_attempts
+            .get(occurrence_id)
+            .cloned()
+            .ok_or(StoreError::Conflict)?;
+        let attempts = complete_claim_attempt(
+            &current,
+            attempts,
+            AutomationOccurrenceClaimCompletion::RunLinked,
+            now,
+        )?;
+        state
+            .automation_occurrences
+            .insert(occurrence_id.clone(), occurrence.clone());
+        state
+            .automation_occurrence_claim_attempts
+            .insert(occurrence_id.clone(), attempts);
+        Ok(occurrence)
     }
 }
 
@@ -4694,11 +4764,25 @@ fn validate_claim_attempt_sequence(
             }
         }
     }
+    // Claimed must keep exactly one open attempt. RunLinked may either still be
+    // live (open) or already sealed with immutable RunLinked evidence after link.
+    let run_linked_sealed = matches!(
+        occurrence.state,
+        AutomationOccurrenceState::RunLinked
+    ) && open_count == 0
+        && attempts.last().is_some_and(|attempt| {
+            attempt.completion == Some(AutomationOccurrenceClaimCompletion::RunLinked)
+                && attempt.completed_at.is_some()
+        });
     if open_count > 1
-        || (matches!(
-            occurrence.state,
-            AutomationOccurrenceState::Claimed | AutomationOccurrenceState::RunLinked
-        ) != (open_count == 1))
+        || (matches!(occurrence.state, AutomationOccurrenceState::Claimed) != (open_count == 1)
+            && !(matches!(occurrence.state, AutomationOccurrenceState::RunLinked)
+                && (open_count == 1 || run_linked_sealed))
+            && (open_count == 1
+                && !matches!(
+                    occurrence.state,
+                    AutomationOccurrenceState::Claimed | AutomationOccurrenceState::RunLinked
+                )))
     {
         return Err(invalid_automation_scheduler_journal());
     }
@@ -8971,7 +9055,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn automation_definitions_cannot_be_enabled_without_a_scheduler() {
+    async fn automation_definitions_can_be_enabled_when_the_daemon_arms_schedule_active() {
+        // Workspace stores the requested enabled bit. The daemon is the only
+        // authority that sets `enabled` from `schedule_active && scheduler armed`.
         let store = Arc::new(InMemoryExecutionStore::new());
         let repository: Arc<dyn WorkspaceStore> = store;
         let service = WorkspaceService::new(
@@ -8990,7 +9076,7 @@ mod tests {
             .await
             .expect("project");
 
-        let result = service
+        let enabled = service
             .create_automation(
                 CreateAutomation {
                     project_id: project.id.to_string(),
@@ -9004,25 +9090,17 @@ mod tests {
                 },
                 "enabled-automation",
             )
-            .await;
-
-        assert!(matches!(result, Err(ApplicationError::Unavailable(_))));
-        assert!(
-            service
-                .list_automations(&project.id, None, 10)
-                .await
-                .expect("automations")
-                .items
-                .is_empty()
-        );
+            .await
+            .expect("enabled definition");
+        assert_eq!(enabled.state, AutomationState::Enabled);
 
         let disabled = service
             .create_automation(
                 CreateAutomation {
                     project_id: project.id.to_string(),
-                    title: "Daily brief".into(),
+                    title: "Weekly brief".into(),
                     prompt: "Summarize readiness".into(),
-                    schedule: "0 9 * * *".into(),
+                    schedule: "0 9 * * 1".into(),
                     timezone: "UTC".into(),
                     missed_run_policy: MissedRunPolicy::Skip,
                     overlap_policy: OverlapPolicy::Skip,
@@ -9032,7 +9110,8 @@ mod tests {
             )
             .await
             .expect("disabled definition");
-        let result = service
+        assert_eq!(disabled.state, AutomationState::Disabled);
+        let promoted = service
             .update_automation(
                 UpdateAutomation {
                     id: disabled.id.to_string(),
@@ -9047,16 +9126,9 @@ mod tests {
                 },
                 "enable-automation",
             )
-            .await;
-        assert!(matches!(result, Err(ApplicationError::Unavailable(_))));
-        assert_eq!(
-            service
-                .get_automation(&disabled.id)
-                .await
-                .expect("unchanged definition")
-                .state,
-            AutomationState::Disabled
-        );
+            .await
+            .expect("promote definition");
+        assert_eq!(promoted.state, AutomationState::Enabled);
     }
 
     const SCHEDULER_TEST_DAY_MS: UnixMillis = 86_400_000;
@@ -13940,5 +14012,66 @@ mod tests {
             })
             .await?
             .ok_or(StoreError::NotFound)
+    }
+
+    #[tokio::test]
+    async fn automation_scheduler_execute_due_claims_and_links_a_run() {
+        use grok_application::{CreateProject, RunService, WorkspaceService};
+
+        let store = Arc::new(InMemoryExecutionStore::new());
+        let clock = Arc::new(FixedClock::new(0));
+        let ids = Arc::new(SequentialIdGenerator::new());
+        let workspace = WorkspaceService::new(store.clone(), clock.clone(), ids.clone());
+        let project = workspace
+            .create_project(
+                CreateProject {
+                    name: "Execute due".into(),
+                    description: String::new(),
+                },
+                "execute-due-project",
+            )
+            .await
+            .expect("project");
+        let automation = workspace
+            .create_automation(
+                CreateAutomation {
+                    project_id: project.id.to_string(),
+                    title: "Due brief".into(),
+                    prompt: "Run the brief".into(),
+                    schedule: "v1;daily;00:00".into(),
+                    timezone: "UTC".into(),
+                    missed_run_policy: MissedRunPolicy::RunOnce,
+                    overlap_policy: OverlapPolicy::Skip,
+                    enabled: true,
+                },
+                "execute-due-automation",
+            )
+            .await
+            .expect("automation");
+        // Advance wall clock past the first daily slot after creation.
+        let due_at = 86_400_000u64 + 60_000;
+        let due_clock = Arc::new(FixedClock::new(due_at));
+        let scheduler =
+            AutomationSchedulerService::new(store.clone(), due_clock.clone(), ids.clone());
+        let workspace = WorkspaceService::new(store.clone(), due_clock.clone(), ids.clone());
+        let runs = RunService::new(store.clone(), due_clock.clone(), ids.clone());
+        let owner = AutomationSchedulerOwnerId::new("execute-due-owner").expect("owner");
+        let dispatched = scheduler
+            .execute_due(&owner, &runs, &workspace, 10)
+            .await
+            .expect("execute due");
+        assert!(dispatched >= 1, "expected at least one linked occurrence");
+        let status = store
+            .automation_scheduler_journal_status()
+            .await
+            .expect("status");
+        assert!(status.run_linked_count >= 1);
+        let occurrences = store
+            .list_automation_occurrences(&automation.id, None, 16)
+            .await
+            .expect("occurrences");
+        assert!(occurrences.iter().any(|occurrence| {
+            occurrence.state == AutomationOccurrenceState::RunLinked && occurrence.run_id.is_some()
+        }));
     }
 }

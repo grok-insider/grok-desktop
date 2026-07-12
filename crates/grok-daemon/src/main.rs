@@ -1,5 +1,8 @@
 //! Grok Desktop trusted per-user daemon entry point.
 
+#[cfg(target_os = "linux")]
+mod linux_guest_transport;
+
 use std::{
     collections::HashSet,
     error::Error,
@@ -209,6 +212,16 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     let mut runtime_capability_facts = provider_network_policy(isolation_broker_qualified);
     runtime_capability_facts.artifact_content_ready =
         artifact_content_available && artifact_open_available;
+    // Background occurrence dispatch uses the same services as IPC; clone before
+    // moving into Daemon so the loop can outlive composition.
+    let scheduler_for_loop = Arc::clone(&automation_scheduler);
+    let runs_for_loop = Arc::clone(&runs);
+    let workspace_for_loop = Arc::clone(&workspace);
+    let scheduler_owner_for_loop = automation_scheduler_owner.clone();
+    let scheduler_loop_armed = matches!(
+        automation_scheduler_lifecycle,
+        AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
+    );
     let mut daemon = Daemon::new(
         runs,
         approvals,
@@ -247,6 +260,36 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
             daemon.with_unavailable_agent_runtime(reason)
         }
     });
+
+    if scheduler_loop_armed {
+        tokio::spawn(async move {
+            // Bounded, non-replaying dispatch. Failures stay in the journal;
+            // interrupted non-idempotent runs are never auto-replayed.
+            loop {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                match scheduler_for_loop
+                    .execute_due(
+                        &scheduler_owner_for_loop,
+                        runs_for_loop.as_ref(),
+                        workspace_for_loop.as_ref(),
+                        MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
+                    )
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(dispatched) => {
+                        tracing::info!(dispatched, "automation scheduler dispatched occurrences");
+                    }
+                    Err(error) => {
+                        warn!(
+                            reason_code = automation_scheduler_recovery_reason(&error),
+                            "automation scheduler execute_due failed closed for this tick"
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     if let Ok(address) = std::env::var("GROK_DAEMON_DEV_TCP_ADDR") {
         return serve_tcp(&address, daemon).await;
@@ -303,12 +346,28 @@ fn configured_isolation_runtime(
     clock: Arc<dyn grok_application::Clock>,
     ids: Arc<dyn IdGenerator>,
 ) -> Arc<IsolationRuntime> {
-    let transport: Arc<dyn PrivilegedGuestControlTransport> =
-        if std::env::var("GROK_ISOLATION_FAKE_GUEST_HEALTH").is_ok() {
-            Arc::new(EnvGuestHealthTransport)
-        } else {
-            Arc::new(FailClosedGuestHealthTransport)
-        };
+    let transport: Arc<dyn PrivilegedGuestControlTransport> = {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(socket_transport) =
+                linux_guest_transport::LinuxVmServiceGuestTransport::from_env()
+            {
+                Arc::new(socket_transport)
+            } else if std::env::var("GROK_ISOLATION_FAKE_GUEST_HEALTH").is_ok() {
+                Arc::new(EnvGuestHealthTransport)
+            } else {
+                Arc::new(FailClosedGuestHealthTransport)
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if std::env::var("GROK_ISOLATION_FAKE_GUEST_HEALTH").is_ok() {
+                Arc::new(EnvGuestHealthTransport)
+            } else {
+                Arc::new(FailClosedGuestHealthTransport)
+            }
+        }
+    };
     Arc::new(IsolationRuntime::new(
         probe,
         privileged_operations,
@@ -337,7 +396,7 @@ async fn recover_automation_scheduler(
         Ok(summary) if summary.truncated => {
             AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled
         }
-        Ok(_) => AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
+        Ok(_) => AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled,
         Err(error @ ApplicationError::Unavailable(_)) => {
             warn!(
                 reason_code = automation_scheduler_recovery_reason(&error),
@@ -1396,6 +1455,17 @@ mod tests {
         ) -> Result<AutomationSchedulerJournalStatus, StoreError> {
             panic!("startup recovery must not need a second journal query")
         }
+
+        async fn link_automation_occurrence_run(
+            &self,
+            _lease: &grok_domain::AutomationSchedulerLeaseToken,
+            _occurrence_id: &AutomationOccurrenceId,
+            _expected_revision: u64,
+            _run_id: grok_domain::RunId,
+            _now: UnixMillis,
+        ) -> Result<grok_domain::AutomationOccurrence, StoreError> {
+            panic!("startup recovery must not link runs")
+        }
     }
 
     #[derive(Debug)]
@@ -1519,7 +1589,7 @@ mod tests {
 
         assert_eq!(
             recover_automation_scheduler(&scheduler, &owner).await,
-            AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled
+            AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
         );
         assert_eq!(store.acquire_calls.load(Ordering::SeqCst), 1);
         assert_eq!(store.recovery_calls.load(Ordering::SeqCst), 1);

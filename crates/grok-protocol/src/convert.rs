@@ -80,6 +80,8 @@ pub fn capability_facts_from_wire(value: Option<v1::CapabilityFacts>) -> Capabil
         // The deprecated caller-facts message can never self-qualify a local
         // filesystem/platform adapter. Only daemon composition sets this.
         artifact_content_ready: false,
+        // Scheduler readiness is daemon-owned lifecycle state, never client facts.
+        automation_scheduler_ready: false,
     }
 }
 

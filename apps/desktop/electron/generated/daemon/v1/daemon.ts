@@ -14,6 +14,8 @@ export enum AutomationSchedulerHealth {
   AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_DISABLED = 1,
   AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED = 2,
   AUTOMATION_SCHEDULER_HEALTH_DEGRADED_EXECUTION_DISABLED = 3,
+  /** AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED - Epoch 18: journal kernel is live and occurrence dispatch is armed. */
+  AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED = 4,
   UNRECOGNIZED = -1,
 }
 
@@ -1086,6 +1088,8 @@ export interface CreateAutomationRequest {
   timezone: string;
   missedRunPolicy: MissedRunPolicy;
   overlapPolicy: OverlapPolicy;
+  /** Epoch 18: when true and the scheduler kernel is live, definition is enabled. */
+  scheduleActive: boolean;
 }
 
 export interface UpdateAutomationRequest {
@@ -1097,6 +1101,8 @@ export interface UpdateAutomationRequest {
   timezone: string;
   missedRunPolicy: MissedRunPolicy;
   overlapPolicy: OverlapPolicy;
+  /** Epoch 18: when true and the scheduler kernel is live, definition is enabled. */
+  scheduleActive: boolean;
 }
 
 export interface ArchiveAutomationRequest {
@@ -9971,7 +9977,16 @@ export const ArtifactList: MessageFns<ArtifactList> = {
 };
 
 function createBaseCreateAutomationRequest(): CreateAutomationRequest {
-  return { projectId: "", title: "", prompt: "", schedule: "", timezone: "", missedRunPolicy: 0, overlapPolicy: 0 };
+  return {
+    projectId: "",
+    title: "",
+    prompt: "",
+    schedule: "",
+    timezone: "",
+    missedRunPolicy: 0,
+    overlapPolicy: 0,
+    scheduleActive: false,
+  };
 }
 
 export const CreateAutomationRequest: MessageFns<CreateAutomationRequest> = {
@@ -9996,6 +10011,9 @@ export const CreateAutomationRequest: MessageFns<CreateAutomationRequest> = {
     }
     if (message.overlapPolicy !== 0) {
       writer.uint32(56).int32(message.overlapPolicy);
+    }
+    if (message.scheduleActive !== false) {
+      writer.uint32(80).bool(message.scheduleActive);
     }
     return writer;
   },
@@ -10063,6 +10081,14 @@ export const CreateAutomationRequest: MessageFns<CreateAutomationRequest> = {
           message.overlapPolicy = reader.int32() as any;
           continue;
         }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.scheduleActive = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10084,6 +10110,7 @@ export const CreateAutomationRequest: MessageFns<CreateAutomationRequest> = {
     message.timezone = object.timezone ?? "";
     message.missedRunPolicy = object.missedRunPolicy ?? 0;
     message.overlapPolicy = object.overlapPolicy ?? 0;
+    message.scheduleActive = object.scheduleActive ?? false;
     return message;
   },
 };
@@ -10098,6 +10125,7 @@ function createBaseUpdateAutomationRequest(): UpdateAutomationRequest {
     timezone: "",
     missedRunPolicy: 0,
     overlapPolicy: 0,
+    scheduleActive: false,
   };
 }
 
@@ -10129,6 +10157,9 @@ export const UpdateAutomationRequest: MessageFns<UpdateAutomationRequest> = {
     }
     if (message.overlapPolicy !== 0) {
       writer.uint32(64).int32(message.overlapPolicy);
+    }
+    if (message.scheduleActive !== false) {
+      writer.uint32(80).bool(message.scheduleActive);
     }
     return writer;
   },
@@ -10204,6 +10235,14 @@ export const UpdateAutomationRequest: MessageFns<UpdateAutomationRequest> = {
           message.overlapPolicy = reader.int32() as any;
           continue;
         }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.scheduleActive = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -10228,6 +10267,7 @@ export const UpdateAutomationRequest: MessageFns<UpdateAutomationRequest> = {
     message.timezone = object.timezone ?? "";
     message.missedRunPolicy = object.missedRunPolicy ?? 0;
     message.overlapPolicy = object.overlapPolicy ?? 0;
+    message.scheduleActive = object.scheduleActive ?? false;
     return message;
   },
 };

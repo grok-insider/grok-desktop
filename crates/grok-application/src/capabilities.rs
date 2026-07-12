@@ -26,6 +26,8 @@ pub struct CapabilityFacts {
     pub computer_use_ready: bool,
     /// Private immutable artifact storage and native exact-version open are qualified.
     pub artifact_content_ready: bool,
+    /// Automation scheduler journal is live and occurrence dispatch is armed.
+    pub automation_scheduler_ready: bool,
 }
 
 /// Deterministic product capability policy shared by UI and daemon workflows.
@@ -60,7 +62,7 @@ fn local_definition_capabilities(facts: CapabilityFacts) -> [CapabilityStatus; 2
             Capability::Automations,
             CapabilitySurface::Desktop,
             AuthMethod::None,
-            false,
+            facts.automation_scheduler_ready,
             CapabilityAvailability::Limited,
             "automation_scheduler_unavailable",
             "Automation definitions are available, but scheduled execution is not yet qualified.",

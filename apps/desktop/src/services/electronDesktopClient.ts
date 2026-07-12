@@ -1161,6 +1161,7 @@ export class ElectronDesktopClient implements DesktopClient {
       timezone: draft.schedule.timeZoneIana,
       missedRunPolicy: draft.missedRunPolicy,
       overlapPolicy: draft.overlapPolicy,
+      scheduleActive: draft.enabled === true,
       idempotencyKey: crypto.randomUUID(),
     } as const;
     const current = draft.id ? this.automations.get(draft.id) : undefined;
@@ -1800,6 +1801,18 @@ function mapCapability(
   schedulerState?: NonNullable<DaemonStatus["automationScheduler"]>["state"],
 ): CapabilityStatus {
   if (value.id === "automations") {
+    if (schedulerState === "kernel_initialized_execution_enabled" && value.available) {
+      return {
+        id: value.id,
+        label: value.label,
+        source: value.source,
+        available: true,
+        availability: "available",
+        authentication: value.authentication,
+        reasonCode: "ready",
+        reason: "Available.",
+      };
+    }
     const scheduler = schedulerState === "kernel_initialized_execution_disabled"
       ? {
           reasonCode: "automation_execution_unqualified",
@@ -1929,9 +1942,9 @@ function automationSummary(automation: DaemonAutomation, projectName: string): A
     projectId: automation.projectId,
     projectName,
     schedule: scheduleConfig ? scheduleLabel(scheduleConfig) : "Schedule unavailable",
-    nextRun: "Not scheduled",
+    nextRun: automation.state === "enabled" ? "Scheduled by daemon" : "Not scheduled",
     lastResult: "never",
-    enabled: false,
+    enabled: automation.state === "enabled",
     scheduleConfig,
     prompt: automation.prompt,
     missedRunPolicy: automation.missedRunPolicy,

@@ -26,6 +26,7 @@ export interface DaemonStatus {
   automationScheduler?: {
     state:
       | "kernel_initialized_execution_disabled"
+      | "kernel_initialized_execution_enabled"
       | "recovery_pending_execution_disabled"
       | "degraded_execution_disabled";
   };
@@ -245,6 +246,8 @@ export interface DaemonAutomationInput {
   timezone: string;
   missedRunPolicy: DaemonAutomation["missedRunPolicy"];
   overlapPolicy: DaemonAutomation["overlapPolicy"];
+  /** Epoch 18: request enabled scheduling when the daemon kernel is live. */
+  scheduleActive?: boolean;
 }
 
 export interface DaemonAccountState {

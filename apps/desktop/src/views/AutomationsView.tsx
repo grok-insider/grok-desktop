@@ -51,12 +51,15 @@ export function AutomationsView() {
   const automation = snapshot?.automations.find((item) => item.id === selected) ?? null;
   const projects = snapshot?.projects.map((project) => ({ id: project.id, name: project.name })) ?? [];
   const canCreate = Boolean(snapshot?.projects.length);
-  const schedulerStatus = automationSchedulerStatus(snapshot?.connection.automationScheduler?.state);
+  const schedulerState = snapshot?.connection.automationScheduler?.state;
+  const schedulerStatus = automationSchedulerStatus(schedulerState);
+  const schedulerArmed = schedulerState === "kernel_initialized_execution_enabled"
+    || snapshot?.capabilities.find((capability) => capability.id === "automations")?.available === true;
 
   const openNewDefinition = () => {
     if (!snapshot?.projects[0]) return;
     editorReturnFocusRef.current = newButtonRef.current;
-    setEditor(emptyDraft(snapshot.projects[0].id));
+    setEditor(emptyDraft(snapshot.projects[0].id, schedulerArmed));
   };
 
   const saveDefinition = async (draft: AutomationDraft) => {
@@ -64,17 +67,27 @@ export function AutomationsView() {
       ...draft,
       name: draft.name.trim(),
       prompt: draft.prompt.trim(),
+      enabled: draft.enabled ?? schedulerArmed,
     });
     if (result.status !== "success") throw new Error(result.reason);
     setEditor(null);
-    setNotice(draft.id ? "Definition updated." : "Definition saved inactive.");
+    const active = result.value.enabled;
+    setNotice(
+      draft.id
+        ? (active ? "Definition updated and scheduled." : "Definition updated.")
+        : (active ? "Definition saved and scheduled." : "Definition saved inactive."),
+    );
   };
 
   return (
     <div className="h-full min-h-0 overflow-y-auto px-[clamp(24px,3.2vw,48px)] pt-8 pb-10 max-[680px]:px-4 max-[680px]:pt-6">
       <PageHeader
         title="Automation definitions"
-        description="Save recurring task definitions. Scheduling and execution are not connected."
+        description={
+          schedulerArmed
+            ? "Save recurring task definitions. The daemon scheduler claims due occurrences and links durable runs."
+            : "Save recurring task definitions. Scheduling and execution stay inactive until the daemon scheduler is armed."
+        }
         actions={
           <Button
             ref={newButtonRef}
@@ -88,11 +101,22 @@ export function AutomationsView() {
       />
 
       <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4">
-        <div className="flex min-h-16 items-start gap-3 rounded-lg border border-warning/25 bg-warning-soft p-3 text-warning">
+        <div className={cn(
+          "flex min-h-16 items-start gap-3 rounded-lg border p-3",
+          schedulerArmed
+            ? "border-success/25 bg-success-soft text-success"
+            : "border-warning/25 bg-warning-soft text-warning",
+        )}>
           <Clock3 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
           <div className="min-w-0">
-            <strong className="text-body font-semibold text-foreground">Definitions are inactive</strong>
-            <p className="m-0 mt-0.5 text-body-sm text-muted-foreground">{AUTOMATION_DEFINITION_ONLY_REASON}</p>
+            <strong className="text-body font-semibold text-foreground">
+              {schedulerArmed ? "Scheduler armed" : "Definitions are inactive"}
+            </strong>
+            <p className="m-0 mt-0.5 text-body-sm text-muted-foreground">
+              {schedulerArmed
+                ? "Enabled definitions are claimed by the daemon. Interrupted non-idempotent runs require review and are never auto-replayed."
+                : AUTOMATION_DEFINITION_ONLY_REASON}
+            </p>
           </div>
         </div>
 
@@ -110,9 +134,15 @@ export function AutomationsView() {
           <header className="flex min-h-12 items-center justify-between gap-3 border-b border-border bg-muted px-4 py-2">
             <div>
               <h2 id="saved-definitions-title" className="m-0 text-title-sm font-semibold text-foreground">Saved definitions</h2>
-              <p className="m-0 text-body-sm text-muted-foreground">Timing and policy only; no runs are scheduled.</p>
+              <p className="m-0 text-body-sm text-muted-foreground">
+                {schedulerArmed
+                  ? "Enabled definitions are scheduled by the daemon journal."
+                  : "Timing and policy only; no runs are scheduled."}
+              </p>
             </div>
-            <Badge variant="neutral">Inactive</Badge>
+            <Badge variant={schedulerArmed ? "success" : "neutral"}>
+              {schedulerArmed ? "Scheduler live" : "Inactive"}
+            </Badge>
           </header>
 
           {loading ? (
@@ -209,8 +239,14 @@ export function AutomationsView() {
 }
 
 function automationSchedulerStatus(
-  state: "kernel_initialized_execution_disabled" | "recovery_pending_execution_disabled" | "degraded_execution_disabled" | undefined,
+  state:
+    | "kernel_initialized_execution_disabled"
+    | "kernel_initialized_execution_enabled"
+    | "recovery_pending_execution_disabled"
+    | "degraded_execution_disabled"
+    | undefined,
 ): string {
+  if (state === "kernel_initialized_execution_enabled") return "Execution enabled";
   if (state === "kernel_initialized_execution_disabled") return "Kernel initialized";
   if (state === "recovery_pending_execution_disabled") return "Recovering";
   return "Unavailable";
@@ -273,7 +309,7 @@ function DefinitionRow({ automation, onOpen }: { automation: AutomationSummary; 
 
       <dl className="m-0 grid min-w-0 grid-cols-3 gap-4 max-[900px]:col-span-2 max-[560px]:col-span-1 max-[480px]:grid-cols-1">
         <DefinitionValue label="Schedule" value={automation.schedule} />
-        <DefinitionValue label="Next run" value="Not scheduled" mono />
+        <DefinitionValue label="Next run" value={automation.nextRun} mono />
         <div className="min-w-0">
           <dt className="text-label text-subtle-foreground">Last result</dt>
           <dd className="m-0 mt-1"><Badge variant="neutral"><Clock3 size={12} aria-hidden="true" /> Not run</Badge></dd>
@@ -281,8 +317,14 @@ function DefinitionRow({ automation, onOpen }: { automation: AutomationSummary; 
       </dl>
 
       <div className="flex items-center justify-end gap-2 max-[900px]:col-start-2 max-[900px]:row-start-1 max-[560px]:col-start-1 max-[560px]:row-start-auto max-[560px]:justify-start">
-        <span className="text-label font-medium text-muted-foreground">Inactive</span>
-        <Switch checked={false} disabled aria-label={`${automation.name} is inactive`} />
+        <span className="text-label font-medium text-muted-foreground">
+          {automation.enabled ? "Enabled" : "Inactive"}
+        </span>
+        <Switch
+          checked={automation.enabled}
+          disabled
+          aria-label={`${automation.name} is ${automation.enabled ? "enabled" : "inactive"}`}
+        />
         <Button
           type="button"
           variant="ghost"
@@ -665,7 +707,7 @@ function EditorSelect({
   );
 }
 
-function emptyDraft(projectId = ""): AutomationDraft {
+function emptyDraft(projectId = "", enabled = false): AutomationDraft {
   return {
     name: "",
     projectId,
@@ -673,6 +715,7 @@ function emptyDraft(projectId = ""): AutomationDraft {
     schedule: defaultAutomationSchedule(),
     missedRunPolicy: "run_once",
     overlapPolicy: "queue_one",
+    enabled,
   };
 }
 
@@ -685,5 +728,6 @@ function draftFrom(value: AutomationSummary, schedule: AutomationSchedule): Auto
     schedule: structuredClone(schedule),
     missedRunPolicy: value.missedRunPolicy ?? "run_once",
     overlapPolicy: value.overlapPolicy ?? "queue_one",
+    enabled: value.enabled,
   };
 }

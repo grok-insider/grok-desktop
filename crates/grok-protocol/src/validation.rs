@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 17);
+        assert_eq!(PROTOCOL_VERSION, 18);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -249,6 +249,10 @@ mod tests {
             v1::AutomationSchedulerHealth::DegradedExecutionDisabled as i32,
             3
         );
+        assert_eq!(
+            v1::AutomationSchedulerHealth::KernelInitializedExecutionEnabled as i32,
+            4
+        );
 
         let health = v1::HealthResponse {
             service_version: "0.1.0".into(),
@@ -277,6 +281,7 @@ mod tests {
             timezone: "UTC".into(),
             missed_run_policy: v1::MissedRunPolicy::Skip as i32,
             overlap_policy: v1::OverlapPolicy::Skip as i32,
+            schedule_active: false,
         };
         let mut legacy_create = create.encode_to_vec();
         // Removed CreateAutomationRequest.enabled field 8, varint true.
@@ -296,6 +301,7 @@ mod tests {
             timezone: "UTC".into(),
             missed_run_policy: v1::MissedRunPolicy::RunOnce as i32,
             overlap_policy: v1::OverlapPolicy::QueueOne as i32,
+            schedule_active: false,
         };
         let mut legacy_update = update.encode_to_vec();
         // Removed UpdateAutomationRequest.enabled field 9, varint true.

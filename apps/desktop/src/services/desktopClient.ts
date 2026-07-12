@@ -317,6 +317,8 @@ export interface AutomationDraft {
   schedule: AutomationSchedule;
   missedRunPolicy: "run_once" | "skip";
   overlapPolicy: "queue_one" | "skip";
+  /** When true and the daemon scheduler is armed, request an enabled definition. */
+  enabled?: boolean;
 }
 
 export interface ManagedIntegrationDetail {

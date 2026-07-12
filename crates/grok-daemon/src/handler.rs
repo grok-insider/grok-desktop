@@ -452,6 +452,8 @@ pub enum AgentRuntimeUnavailableReason {
 pub enum AutomationSchedulerLifecycle {
     /// The durable journal service exists and no startup recovery is outstanding.
     KernelInitializedExecutionDisabled,
+    /// Journal is live and occurrence dispatch / enabled definitions are armed.
+    KernelInitializedExecutionEnabled,
     /// The durable journal exists but bounded recovery must finish before kernel use.
     RecoveryPendingExecutionDisabled,
     /// The journal service is absent or failed closed.
@@ -918,6 +920,9 @@ impl Daemon {
             AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled => {
                 v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled
             }
+            AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled => {
+                v1::AutomationSchedulerHealth::KernelInitializedExecutionEnabled
+            }
             AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled => {
                 v1::AutomationSchedulerHealth::RecoveryPendingExecutionDisabled
             }
@@ -925,6 +930,13 @@ impl Daemon {
                 v1::AutomationSchedulerHealth::DegradedExecutionDisabled
             }
         }
+    }
+
+    const fn automation_execution_armed(&self) -> bool {
+        matches!(
+            self.automation_scheduler_lifecycle,
+            AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
+        )
     }
 
     async fn capability_facts(&self) -> Result<CapabilityFacts, ApplicationError> {
@@ -959,6 +971,7 @@ impl Daemon {
                 facts.strong_isolation_ready = false;
             }
         }
+        facts.automation_scheduler_ready = self.automation_execution_armed();
         Ok(facts)
     }
 
@@ -2052,7 +2065,7 @@ impl Daemon {
                     timezone: request.timezone,
                     missed_run_policy: policies.0,
                     overlap_policy: policies.1,
-                    enabled: false,
+                    enabled: request.schedule_active && self.automation_execution_armed(),
                 },
                 mutation_key(key)?,
             )
@@ -2080,7 +2093,7 @@ impl Daemon {
                     timezone: request.timezone,
                     missed_run_policy: policies.0,
                     overlap_policy: policies.1,
-                    enabled: false,
+                    enabled: request.schedule_active && self.automation_execution_armed(),
                 },
                 mutation_key(key)?,
             )
@@ -3813,7 +3826,7 @@ mod tests {
         let Some(response::Result::Health(health)) = response.result else {
             panic!("health response")
         };
-        assert_eq!(health.protocol_version, 17);
+        assert_eq!(health.protocol_version, 18);
         assert_eq!(
             health.automation_scheduler,
             v1::AutomationSchedulerHealth::DegradedExecutionDisabled as i32
@@ -3825,11 +3838,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_health_states_never_start_execution_or_enable_the_capability() {
+    async fn scheduler_health_states_map_exactly_and_only_enabled_arms_execution() {
         for (lifecycle, expected) in [
             (
                 AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
                 v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled,
+            ),
+            (
+                AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled,
+                v1::AutomationSchedulerHealth::KernelInitializedExecutionEnabled,
             ),
             (
                 AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled,
@@ -3867,9 +3884,17 @@ mod tests {
                 )))
                 .await
                 .expect("capabilities");
+            let expected_automations = if matches!(
+                lifecycle,
+                AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
+            ) {
+                v1::CapabilityAvailability::Available as i32
+            } else {
+                v1::CapabilityAvailability::Limited as i32
+            };
             assert_eq!(
                 capability_availability(&capabilities, v1::Capability::Automations),
-                v1::CapabilityAvailability::Limited as i32
+                expected_automations
             );
             assert_eq!(
                 capability_availability(&capabilities, v1::Capability::Chat),
@@ -3913,6 +3938,7 @@ mod tests {
             timezone: "UTC".into(),
             missed_run_policy: v1::MissedRunPolicy::Skip as i32,
             overlap_policy: v1::OverlapPolicy::Skip as i32,
+            schedule_active: false,
         };
         // Request field 28, with removed CreateAutomationRequest field 8.
         let create = legacy_automation_request([0xe2, 0x01], create.encode_to_vec(), 0x40);
@@ -3937,6 +3963,7 @@ mod tests {
             timezone: created.timezone.clone(),
             missed_run_policy: created.missed_run_policy,
             overlap_policy: created.overlap_policy,
+            schedule_active: false,
         };
         // Request field 29, with removed UpdateAutomationRequest field 9.
         let update = legacy_automation_request([0xea, 0x01], update.encode_to_vec(), 0x48);
