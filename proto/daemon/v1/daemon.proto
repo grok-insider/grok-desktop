@@ -70,7 +70,7 @@ message Request {
     RemoveArtifactRequest remove_artifact = 57;
     StartGrokBuildAuthRequest start_grok_build_auth = 58;
     GetGrokBuildAuthStatusRequest get_grok_build_auth_status = 59;
-    // Epoch 19: daemon-owned signed managed integration lifecycle (Wisp).
+    // Epoch 20: status remains readable; lifecycle mutation fails unavailable.
     GetManagedIntegrationRequest get_managed_integration = 60;
     ChangeManagedIntegrationRequest change_managed_integration = 61;
   }
@@ -115,7 +115,8 @@ message Response {
   }
 }
 
-// Epoch 19: signed managed integration status and lifecycle.
+// Epoch 20: persisted managed integration status remains readable while
+// lifecycle mutation is withdrawn pending durable trust qualification.
 message GetManagedIntegrationRequest {
   string integration_id = 1;
 }
@@ -171,7 +172,7 @@ enum AutomationSchedulerHealth {
   AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_DISABLED = 1;
   AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED = 2;
   AUTOMATION_SCHEDULER_HEALTH_DEGRADED_EXECUTION_DISABLED = 3;
-  // Epoch 18: journal kernel is live and occurrence dispatch is armed.
+  // Historical epoch 18 value. Epoch 20 never emits execution enabled.
   AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED = 4;
 }
 
@@ -977,7 +978,7 @@ message CreateAutomationRequest {
   string timezone = 5;
   MissedRunPolicy missed_run_policy = 6;
   OverlapPolicy overlap_policy = 7;
-  // Epoch 18: when true and the scheduler kernel is live, definition is enabled.
+  // Historical epoch 18 input. Epoch 20 always persists the definition inactive.
   bool schedule_active = 10;
 }
 
@@ -993,7 +994,7 @@ message UpdateAutomationRequest {
   string timezone = 6;
   MissedRunPolicy missed_run_policy = 7;
   OverlapPolicy overlap_policy = 8;
-  // Epoch 18: when true and the scheduler kernel is live, definition is enabled.
+  // Historical epoch 18 input. Epoch 20 always persists the definition inactive.
   bool schedule_active = 10;
 }
 

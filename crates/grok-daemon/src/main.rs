@@ -212,16 +212,6 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     let mut runtime_capability_facts = provider_network_policy(isolation_broker_qualified);
     runtime_capability_facts.artifact_content_ready =
         artifact_content_available && artifact_open_available;
-    // Background occurrence dispatch uses the same services as IPC; clone before
-    // moving into Daemon so the loop can outlive composition.
-    let scheduler_for_loop = Arc::clone(&automation_scheduler);
-    let runs_for_loop = Arc::clone(&runs);
-    let workspace_for_loop = Arc::clone(&workspace);
-    let scheduler_owner_for_loop = automation_scheduler_owner.clone();
-    let scheduler_loop_armed = matches!(
-        automation_scheduler_lifecycle,
-        AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
-    );
     let mut daemon = Daemon::new(
         runs,
         approvals,
@@ -263,36 +253,6 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
             daemon.with_unavailable_agent_runtime(reason)
         }
     });
-
-    if scheduler_loop_armed {
-        tokio::spawn(async move {
-            // Bounded, non-replaying dispatch. Failures stay in the journal;
-            // interrupted non-idempotent runs are never auto-replayed.
-            loop {
-                tokio::time::sleep(Duration::from_secs(15)).await;
-                match scheduler_for_loop
-                    .execute_due(
-                        &scheduler_owner_for_loop,
-                        runs_for_loop.as_ref(),
-                        workspace_for_loop.as_ref(),
-                        MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
-                    )
-                    .await
-                {
-                    Ok(0) => {}
-                    Ok(dispatched) => {
-                        tracing::info!(dispatched, "automation scheduler dispatched occurrences");
-                    }
-                    Err(error) => {
-                        warn!(
-                            reason_code = automation_scheduler_recovery_reason(&error),
-                            "automation scheduler execute_due failed closed for this tick"
-                        );
-                    }
-                }
-            }
-        });
-    }
 
     if let Ok(address) = std::env::var("GROK_DAEMON_DEV_TCP_ADDR") {
         return serve_tcp(&address, daemon).await;
@@ -431,7 +391,7 @@ async fn recover_automation_scheduler(
         Ok(summary) if summary.truncated => {
             AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled
         }
-        Ok(_) => AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled,
+        Ok(_) => AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
         Err(error @ ApplicationError::Unavailable(_)) => {
             warn!(
                 reason_code = automation_scheduler_recovery_reason(&error),
@@ -1624,7 +1584,7 @@ mod tests {
 
         assert_eq!(
             recover_automation_scheduler(&scheduler, &owner).await,
-            AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
+            AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled
         );
         assert_eq!(store.acquire_calls.load(Ordering::SeqCst), 1);
         assert_eq!(store.recovery_calls.load(Ordering::SeqCst), 1);
@@ -2287,4 +2247,5 @@ mod tests {
             "x86_64"
         }
     }
+
 }

@@ -34,8 +34,8 @@ import {
   type WorkspaceSearchResults,
 } from "../generated/daemon/v1/daemon.js";
 
-// Epoch fifteen adds exact, path-free removal of daemon-owned artifact copies.
-export const PROTOCOL_VERSION = 19;
+// Epoch twenty withdraws unsafe scheduler execution and managed-integration mutations.
+export const PROTOCOL_VERSION = 20;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;

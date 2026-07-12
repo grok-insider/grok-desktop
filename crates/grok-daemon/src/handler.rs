@@ -938,8 +938,10 @@ impl Daemon {
             AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled => {
                 v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled
             }
+            // Epoch 20 preserves the historical lifecycle variant for internal
+            // compatibility, but never advertises execution readiness.
             AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled => {
-                v1::AutomationSchedulerHealth::KernelInitializedExecutionEnabled
+                v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled
             }
             AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled => {
                 v1::AutomationSchedulerHealth::RecoveryPendingExecutionDisabled
@@ -951,10 +953,7 @@ impl Daemon {
     }
 
     const fn automation_execution_armed(&self) -> bool {
-        matches!(
-            self.automation_scheduler_lifecycle,
-            AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
-        )
+        false
     }
 
     async fn capability_facts(&self) -> Result<CapabilityFacts, ApplicationError> {
@@ -1054,11 +1053,10 @@ impl Daemon {
         }
         let id = "desktop.grok.wisp";
         let record = service.get(id);
-        let signature_verified = service
-            .verify_registered_signature(id)
-            .unwrap_or(false);
         Ok(v1::response::Result::ManagedIntegration(
-            managed_integration_to_wire(&record, signature_verified),
+            // Epoch 20 preserves the record projection but does not attest the
+            // legacy bundle verifier's result as trusted lifecycle readiness.
+            managed_integration_to_wire(&record, false),
         ))
     }
 
@@ -1066,26 +1064,12 @@ impl Daemon {
         &self,
         request: v1::ChangeManagedIntegrationRequest,
     ) -> Result<v1::response::Result, ApplicationError> {
-        let Some(service) = &self.managed_integrations else {
-            return Err(ApplicationError::Unavailable(
-                "managed integration lifecycle is not configured".into(),
-            ));
-        };
         if request.integration_id != "desktop.grok.wisp" && request.integration_id != "wisp" {
             return Err(ApplicationError::NotFound);
         }
-        let action = crate::ManagedIntegrationAction::parse(&request.action).ok_or_else(|| {
-            ApplicationError::InvalidInput("managed integration action is invalid".into())
-        })?;
-        let record = service
-            .stage_install("desktop.grok.wisp", action, request.expected_revision)
-            .map_err(map_managed_integration_error)?;
-        // When isolation is live, journal intent for catalog.apply without auto-replay.
-        if let Some(runtime) = &self.isolation_runtime {
-            let _ = runtime.facts().await;
-        }
-        Ok(v1::response::Result::ManagedIntegration(
-            managed_integration_to_wire(&record, true),
+        Err(ApplicationError::Unavailable(
+            "managed integration changes are unavailable until durable trust verification is qualified"
+                .into(),
         ))
     }
 
@@ -2369,21 +2353,6 @@ fn managed_integration_to_wire(
         rollback_version: record.rollback_version.clone().unwrap_or_default(),
         revision: record.revision,
         signature_verified,
-    }
-}
-
-fn map_managed_integration_error(error: crate::ManagedIntegrationError) -> ApplicationError {
-    match error {
-        crate::ManagedIntegrationError::Unavailable(message) => {
-            ApplicationError::Unavailable(message)
-        }
-        crate::ManagedIntegrationError::Unauthorized(message) => {
-            ApplicationError::Unauthorized(message)
-        }
-        crate::ManagedIntegrationError::Conflict(_) => ApplicationError::Conflict,
-        crate::ManagedIntegrationError::Invalid(message) => {
-            ApplicationError::InvalidInput(message)
-        }
     }
 }
 
@@ -3929,7 +3898,7 @@ mod tests {
         let Some(response::Result::Health(health)) = response.result else {
             panic!("health response")
         };
-        assert_eq!(health.protocol_version, 19);
+        assert_eq!(health.protocol_version, 20);
         assert_eq!(
             health.automation_scheduler,
             v1::AutomationSchedulerHealth::DegradedExecutionDisabled as i32
@@ -3941,7 +3910,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_health_states_map_exactly_and_only_enabled_arms_execution() {
+    async fn scheduler_health_states_never_arm_execution_in_epoch_twenty() {
         for (lifecycle, expected) in [
             (
                 AutomationSchedulerLifecycle::KernelInitializedExecutionDisabled,
@@ -3949,7 +3918,7 @@ mod tests {
             ),
             (
                 AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled,
-                v1::AutomationSchedulerHealth::KernelInitializedExecutionEnabled,
+                v1::AutomationSchedulerHealth::KernelInitializedExecutionDisabled,
             ),
             (
                 AutomationSchedulerLifecycle::RecoveryPendingExecutionDisabled,
@@ -3987,17 +3956,9 @@ mod tests {
                 )))
                 .await
                 .expect("capabilities");
-            let expected_automations = if matches!(
-                lifecycle,
-                AutomationSchedulerLifecycle::KernelInitializedExecutionEnabled
-            ) {
-                v1::CapabilityAvailability::Available as i32
-            } else {
-                v1::CapabilityAvailability::Limited as i32
-            };
             assert_eq!(
                 capability_availability(&capabilities, v1::Capability::Automations),
-                expected_automations
+                v1::CapabilityAvailability::Limited as i32
             );
             assert_eq!(
                 capability_availability(&capabilities, v1::Capability::Chat),
@@ -4016,6 +3977,21 @@ mod tests {
             assert_eq!(journal.claimed_count, 0);
             assert_eq!(journal.run_linked_count, 0);
         }
+    }
+
+    #[tokio::test]
+    async fn epoch_twenty_managed_integration_mutations_fail_closed() {
+        let (daemon, _) = daemon();
+        let error = daemon
+            .change_managed_integration(v1::ChangeManagedIntegrationRequest {
+                integration_id: "desktop.grok.wisp".into(),
+                action: "install".into(),
+                expected_revision: 0,
+            })
+            .await
+            .expect_err("managed lifecycle mutation must remain unavailable");
+
+        assert!(matches!(error, ApplicationError::Unavailable(_)));
     }
 
     #[tokio::test]

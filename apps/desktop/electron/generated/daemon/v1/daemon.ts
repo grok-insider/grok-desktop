@@ -14,7 +14,7 @@ export enum AutomationSchedulerHealth {
   AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_DISABLED = 1,
   AUTOMATION_SCHEDULER_HEALTH_RECOVERY_PENDING_EXECUTION_DISABLED = 2,
   AUTOMATION_SCHEDULER_HEALTH_DEGRADED_EXECUTION_DISABLED = 3,
-  /** AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED - Epoch 18: journal kernel is live and occurrence dispatch is armed. */
+  /** AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED - Historical epoch 18 value. Epoch 20 never emits execution enabled. */
   AUTOMATION_SCHEDULER_HEALTH_KERNEL_INITIALIZED_EXECUTION_ENABLED = 4,
   UNRECOGNIZED = -1,
 }
@@ -377,7 +377,7 @@ export interface Request {
     | { $case: "startGrokBuildAuth"; value: StartGrokBuildAuthRequest }
     | { $case: "getGrokBuildAuthStatus"; value: GetGrokBuildAuthStatusRequest }
     | //
-    /** Epoch 19: daemon-owned signed managed integration lifecycle (Wisp). */
+    /** Epoch 20: status remains readable; lifecycle mutation fails unavailable. */
     { $case: "getManagedIntegration"; value: GetManagedIntegrationRequest }
     | { $case: "changeManagedIntegration"; value: ChangeManagedIntegrationRequest }
     | undefined;
@@ -419,7 +419,10 @@ export interface Response {
     | undefined;
 }
 
-/** Epoch 19: signed managed integration status and lifecycle. */
+/**
+ * Epoch 20: persisted managed integration status remains readable while
+ * lifecycle mutation is withdrawn pending durable trust qualification.
+ */
 export interface GetManagedIntegrationRequest {
   integrationId: string;
 }
@@ -1116,7 +1119,7 @@ export interface CreateAutomationRequest {
   timezone: string;
   missedRunPolicy: MissedRunPolicy;
   overlapPolicy: OverlapPolicy;
-  /** Epoch 18: when true and the scheduler kernel is live, definition is enabled. */
+  /** Historical epoch 18 input. Epoch 20 always persists the definition inactive. */
   scheduleActive: boolean;
 }
 
@@ -1129,7 +1132,7 @@ export interface UpdateAutomationRequest {
   timezone: string;
   missedRunPolicy: MissedRunPolicy;
   overlapPolicy: OverlapPolicy;
-  /** Epoch 18: when true and the scheduler kernel is live, definition is enabled. */
+  /** Historical epoch 18 input. Epoch 20 always persists the definition inactive. */
   scheduleActive: boolean;
 }
 
