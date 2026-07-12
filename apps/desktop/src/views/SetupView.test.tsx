@@ -6,10 +6,10 @@ import { DesktopClientProvider } from "../services/DesktopClientContext";
 import type { AccountSetupState } from "../services/desktopClient";
 import { MockDesktopClient } from "../services/mockDesktopClient";
 
-function renderSetup(client: MockDesktopClient = new MockDesktopClient()) {
+function renderSetup(client: MockDesktopClient = new MockDesktopClient(), route = "/setup") {
   render(
     <DesktopClientProvider client={client}>
-      <MemoryRouter initialEntries={["/setup"]}>
+      <MemoryRouter initialEntries={[route]}>
         <App />
       </MemoryRouter>
     </DesktopClientProvider>,
@@ -41,6 +41,13 @@ describe("SetupView", () => {
 
     fireEvent.click(grokStep);
     expect(screen.getByRole("heading", { name: "Connect Grok Build" })).toBeInTheDocument();
+  });
+
+  it("opens the API rail directly from a settings management link", async () => {
+    renderSetup(new MockDesktopClient(), "/setup?step=api");
+
+    expect(await screen.findByRole("heading", { name: "xAI API key" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /xAI API key/ })).toHaveAttribute("aria-current", "step");
   });
 
   it("keeps the configured key when removal is cancelled", async () => {

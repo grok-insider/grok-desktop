@@ -11,7 +11,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button as ButtonPrimitive } from "@/components/ui/button";
 import {
@@ -74,7 +74,10 @@ const READINESS_PRESENTATION = {
 export function SetupView() {
   const client = useDesktopClient();
   const navigate = useNavigate();
-  const [step, setStep] = useState<SetupStep>("grok");
+  const [searchParams] = useSearchParams();
+  const [step, setStep] = useState<SetupStep>(() =>
+    searchParams.get("step") === "api" ? "api" : "grok",
+  );
   const [setup, setSetup] = useState<AccountSetupState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [loading, setLoading] = useState(true);

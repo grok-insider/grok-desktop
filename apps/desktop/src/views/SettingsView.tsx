@@ -250,7 +250,7 @@ function AccountSettings() {
           <Badge variant={superGrok?.state === "connected" ? "success" : "neutral"}>
             {superGrok?.state === "connected" ? "Connected" : "Not connected"}
           </Badge>
-          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup")}>Manage SuperGrok</Button>
+          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup?step=api")}>Manage SuperGrok</Button>
         </div>
 
         <header className="flex min-h-16 items-center justify-between gap-4 border-b border-border px-4 py-3">
@@ -273,7 +273,7 @@ function AccountSettings() {
             </strong>
             <span className="text-body-sm text-subtle-foreground">{keyDetail}</span>
           </span>
-          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup")}>
+          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup?step=api")}>
             {accountError ? "Retry" : keyConfigured ? "Manage" : "Add key"}
           </Button>
         </div>
