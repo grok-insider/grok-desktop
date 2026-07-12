@@ -26,18 +26,13 @@ import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientC
 import type { AccountSetupState, ChatModelCatalog, DesktopPreferences } from "../services/desktopClient";
 import { SETTINGS_PERSISTENCE_UNAVAILABLE_REASON } from "../services/productAvailability";
 
+// Only sections with at least one daemon-backed control are advertised.
+// Unfinished product surfaces (execution tools, browser grants, data export,
+// accessibility prefs, auto-update) are not listed until their backends ship.
 const settingSections = [
   { id: "account", label: "Account", icon: UserRound },
   { id: "general", label: "General", icon: Laptop },
   { id: "models", label: "Models", icon: Bot },
-  { id: "execution", label: "Execution", icon: ShieldCheck },
-  { id: "browser", label: "Browser", icon: Globe2 },
-  { id: "data", label: "Data & privacy", icon: Database },
-  { id: "accessibility", label: "Accessibility", icon: Accessibility },
-  // Updates channel is not a shipped product surface; keep Account/General/Models only
-  // for connected controls. Other sections remain for Limited Mode honesty when opened
-  // via deep links / tests but are not advertised as finished product.
-  { id: "updates", label: "Updates (unavailable)", icon: RefreshCw },
 ] as const;
 
 type SettingsSection = (typeof settingSections)[number]["id"];
@@ -70,7 +65,7 @@ export function SettingsView() {
       <div className="mx-auto max-w-[1440px]">
         <PageHeader
           title="Settings"
-          description="Connected daemon preferences only. Unavailable rows are not product features until their backends ship."
+          description="Daemon-backed account, close-to-tray, and chat model preferences."
         />
 
         <div className="grid min-h-[590px] grid-cols-[12.25rem_minmax(0,1fr)] gap-6 max-[680px]:block">
@@ -110,11 +105,6 @@ export function SettingsView() {
             {section === "account" && <AccountSettings />}
             {section === "general" && <GeneralSettings />}
             {section === "models" && <ModelSettings />}
-            {section === "execution" && <ExecutionSettings />}
-            {section === "browser" && <BrowserSettings />}
-            {section === "data" && <DataSettings />}
-            {section === "accessibility" && <AccessibilitySettings />}
-            {section === "updates" && <UpdateSettings />}
           </section>
         </div>
       </div>
@@ -270,23 +260,11 @@ function AccountSettings() {
         </p>
       </SettingsGroup>
 
-      <SettingsGroup>
-        <SettingRow title="Usage and billing" description="Official account handoff is not connected.">
-          <Button disabled title="Official account handoff is not connected">
-            Open unavailable <ChevronRight size={15} aria-hidden="true" />
-          </Button>
-        </SettingRow>
-      </SettingsGroup>
     </>
   );
 }
 
 function GeneralSettings() {
-  const themes = [
-    ["light", Sun],
-    ["system", Laptop],
-    ["dark", Moon],
-  ] as const;
   const client = useDesktopClient();
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const [preferenceError, setPreferenceError] = useState("");
@@ -331,40 +309,8 @@ function GeneralSettings() {
 
   return (
     <>
-      <SettingsHeading section="general" title="General" description="Application appearance and desktop behavior." />
+      <SettingsHeading section="general" title="General" description="Daemon-owned desktop close behavior." />
       <SettingsGroup className="relative">
-        <SettingRow title="Appearance" description="Theme selection is not persisted yet.">
-          <div
-            className="flex w-fit max-w-full items-center gap-1 rounded-md border border-border bg-muted p-1 max-[680px]:w-full"
-            role="radiogroup"
-            aria-label="Appearance"
-          >
-            {themes.map(([value, Icon]) => {
-              const selected = value === "system";
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  disabled
-                  title="Theme selection is not persisted yet"
-                  className={cn(
-                    "flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-body-sm font-medium text-muted-foreground outline-none",
-                    "focus-visible:ring-[3px] focus-visible:ring-ring disabled:opacity-60 max-[680px]:flex-1",
-                    selected && "bg-card font-semibold text-foreground shadow-raised disabled:opacity-80",
-                  )}
-                >
-                  <Icon size={15} aria-hidden="true" />
-                  {value.charAt(0).toUpperCase() + value.slice(1)}
-                </button>
-              );
-            })}
-          </div>
-        </SettingRow>
-        <SettingRow title="Launch at sign in" description="Startup registration is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Launch at sign in unavailable" />
-        </SettingRow>
         <SettingRow
           title="Keep running in notification area"
           description="When on, closing the window hides Grok Desktop so background work can continue. Use Quit from the tray to stop the app."
@@ -388,9 +334,6 @@ function GeneralSettings() {
             {preferenceError}
           </p>
         )}
-        <SettingRow title="Desktop notifications" description="Notification preferences are not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Desktop notifications unavailable" />
-        </SettingRow>
       </SettingsGroup>
     </>
   );
@@ -520,12 +463,6 @@ function ModelSettings() {
             Validating and saving the Chat model
           </p>
         )}
-        <SettingRow title="Default effort" description="Effort preferences are not connected.">
-          <UnavailableSelect label="Default effort" />
-        </SettingRow>
-        <SettingRow title="Research" description="Research execution is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Research unavailable" />
-        </SettingRow>
       </SettingsGroup>
       <aside className="flex min-h-16 items-start gap-3 rounded-lg border border-border bg-card p-4" aria-label="Model status">
         <Bot className="mt-0.5 shrink-0 text-muted-foreground" size={18} aria-hidden="true" />
@@ -554,232 +491,6 @@ function ModelSettings() {
           </Button>
         )}
       </aside>
-    </>
-  );
-}
-
-function ExecutionSettings() {
-  const { snapshot } = useDesktopSnapshot();
-  const capability = snapshot?.capabilities.find((item) => item.id === "work");
-  const ready = capability?.available === true;
-  const checking = snapshot === null;
-  const detail = checking
-    ? "Checking the local execution boundary."
-    : ready
-      ? "Windows virtualization and the isolated utility environment are available."
-      : capability?.reason ?? "Protected Work is unavailable.";
-
-  return (
-    <>
-      <SettingsHeading
-        section="execution"
-        title="Execution"
-        description="Daemon-owned readiness for isolated Work sessions."
-      />
-      <div
-        className={cn(
-          "mb-4 flex min-h-20 items-center gap-3 rounded-lg border p-4 max-[680px]:flex-wrap",
-          checking && "border-info/25 bg-info-soft",
-          !checking && ready && "border-success/25 bg-success-soft",
-          !checking && !ready && "border-warning/25 bg-warning-soft",
-        )}
-        role="status"
-        aria-live="polite"
-      >
-        {ready ? (
-          <ShieldCheck className="shrink-0 text-success" size={20} aria-hidden="true" />
-        ) : (
-          <CircleAlert className={cn("shrink-0", checking ? "text-info" : "text-warning")} size={20} aria-hidden="true" />
-        )}
-        <div className="min-w-0 flex-1">
-          <h3 className="m-0 text-body font-semibold text-foreground">
-            {checking ? "Checking Protected Work" : ready ? "Protected Work backend reported ready" : "Protected Work is unavailable"}
-          </h3>
-          <p className="m-0 mt-1 text-body-sm text-muted-foreground">{detail}</p>
-        </div>
-        <Button className="max-[680px]:w-full" disabled title="Diagnostic reports require daemon protocol support">
-          View diagnostics
-        </Button>
-      </div>
-      <SettingsUnavailableNotice />
-      <SettingsGroup>
-        <SettingRow title="Review file changes" description="Approval policy persistence is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Review file changes unavailable" />
-        </SettingRow>
-        <SettingRow title="Allow network by default" description="No renderer preference can grant network access.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Network default unavailable" />
-        </SettingRow>
-        <SettingRow title="Workspace deletion policy" description="Deletion policy persistence is not connected.">
-          <UnavailableSelect label="Workspace deletion policy" />
-        </SettingRow>
-        <SettingRow title="Resource limit" description="Resource policy persistence is not connected.">
-          <UnavailableSelect label="Resource limit" />
-        </SettingRow>
-      </SettingsGroup>
-      <SettingsGroup>
-        <SettingRow title="Execution diagnostics" description={detail}>
-          <Button disabled title="Diagnostic reports require daemon protocol support">
-            <HardDrive size={15} aria-hidden="true" /> Open report unavailable
-          </Button>
-        </SettingRow>
-      </SettingsGroup>
-    </>
-  );
-}
-
-function BrowserSettings() {
-  const { snapshot } = useDesktopSnapshot();
-  const capability = snapshot?.capabilities.find((item) => item.id === "browser_automation");
-  const ready = capability?.available === true;
-  const checking = snapshot === null;
-  const detail = checking
-    ? "Checking the managed browser broker."
-    : ready
-      ? "Ready · Dedicated local profile"
-      : capability?.reason ?? "Managed browser automation is unavailable.";
-
-  return (
-    <>
-      <SettingsHeading
-        section="browser"
-        title="Browser"
-        description="Daemon-owned readiness for the managed browser broker."
-      />
-      <div className="mb-4 flex min-h-20 items-center gap-3 rounded-lg border border-border bg-card p-4 max-[680px]:flex-wrap" role="status" aria-live="polite">
-        <Globe2 className={cn("shrink-0", checking ? "text-info" : ready ? "text-success" : "text-warning")} size={22} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <h3 className="m-0 text-body font-semibold text-foreground">Managed browser profile</h3>
-          <p className="m-0 mt-1 text-body-sm text-muted-foreground">{detail}</p>
-        </div>
-        <Badge variant={checking ? "info" : ready ? "success" : "warning"}>
-          {checking ? "Checking" : ready ? "Backend ready" : "Unavailable"}
-        </Badge>
-      </div>
-      <SettingsUnavailableNotice />
-      <SettingsGroup>
-        <SettingRow title="Download files" description="Download policy persistence is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Download files unavailable" />
-        </SettingRow>
-        <SettingRow title="Personal browser access" description="Personal browser grants are not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Personal browser access unavailable" />
-        </SettingRow>
-        <SettingRow title="Domain permissions" description="Domain grant management is not connected.">
-          <Button disabled title="Domain grant management requires daemon protocol support">
-            <Network size={15} aria-hidden="true" /> Manage unavailable
-          </Button>
-        </SettingRow>
-      </SettingsGroup>
-    </>
-  );
-}
-
-function DataSettings() {
-  return (
-    <>
-      <SettingsHeading
-        section="data"
-        title="Data & privacy"
-        description="Daemon-owned local storage and privacy controls."
-      />
-      <SettingsUnavailableNotice />
-      <SettingsGroup>
-        <SettingRow title="Save conversation history" description="History policy persistence is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Conversation history preference unavailable" />
-        </SettingRow>
-        <SettingRow title="Share diagnostics" description="Diagnostics collection and consent are not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Diagnostics sharing unavailable" />
-        </SettingRow>
-        <SettingRow title="Local data" description="Storage usage reporting is not available.">
-          <Button disabled title="Storage management requires daemon protocol support">
-            <HardDrive size={15} aria-hidden="true" /> Manage unavailable
-          </Button>
-        </SettingRow>
-      </SettingsGroup>
-      <SettingsGroup>
-        <SettingRow title="Import data" description="Encrypted archive import is not connected.">
-          <Button disabled title="Encrypted import is unavailable until the daemon exposes archive operations">
-            <Download size={15} aria-hidden="true" /> Import unavailable
-          </Button>
-        </SettingRow>
-        <SettingRow title="Export Grok Desktop data" description="Encrypted archive export is not connected.">
-          <Button disabled title="Encrypted export is unavailable until the daemon exposes archive operations">
-            Export unavailable
-          </Button>
-        </SettingRow>
-      </SettingsGroup>
-      <div className="flex min-h-20 items-center justify-between gap-4 rounded-lg border border-destructive/25 bg-destructive-soft p-4 max-[680px]:flex-col max-[680px]:items-stretch">
-        <div className="min-w-0">
-          <h3 className="m-0 text-body font-semibold text-destructive">Delete local data</h3>
-          <p className="m-0 mt-1 text-body-sm text-muted-foreground">
-            Destructive local-data operations require daemon confirmation.
-          </p>
-        </div>
-        <Button variant="danger" disabled title="Destructive local-data operations require daemon confirmation">
-          Delete unavailable
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function AccessibilitySettings() {
-  return (
-    <>
-      <SettingsHeading
-        section="accessibility"
-        title="Accessibility"
-        description="Accessibility preferences will be persisted by the daemon."
-      />
-      <SettingsUnavailableNotice />
-      <SettingsGroup>
-        <SettingRow title="Reduce motion" description="Motion preference persistence is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Reduce motion unavailable" />
-        </SettingRow>
-        <SettingRow title="Increase contrast" description="Contrast preference persistence is not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Increase contrast unavailable" />
-        </SettingRow>
-        <SettingRow title="Voice captions" description="Voice sessions are not connected.">
-          <Toggle checked={false} disabled onChange={() => undefined} label="Voice captions unavailable" />
-        </SettingRow>
-        <SettingRow title="Interface scale" description="Interface scale persistence is not connected.">
-          <UnavailableSelect label="Interface scale" />
-        </SettingRow>
-      </SettingsGroup>
-    </>
-  );
-}
-
-function UpdateSettings() {
-  const navigate = useNavigate();
-  return (
-    <>
-      <SettingsHeading section="updates" title="Updates" description="Application and managed component status." />
-      <div className="mb-4 flex min-h-20 items-center gap-3 rounded-lg border border-warning/25 bg-warning-soft p-4 max-[680px]:flex-wrap">
-        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-card text-warning" aria-hidden="true">
-          <CircleAlert size={21} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="m-0 text-title-sm font-semibold text-foreground">Update status unavailable</h3>
-          <p className="m-0 mt-1 text-body-sm text-muted-foreground">The signed update service is not connected.</p>
-        </div>
-        <Button className="max-[680px]:w-full" disabled title="Application update checks require the signed update service">
-          <RefreshCw size={15} aria-hidden="true" /> Check unavailable
-        </Button>
-      </div>
-      <SettingsUnavailableNotice />
-      <SettingsGroup>
-        <SettingRow title="Update channel" description="Channel selection is not persisted.">
-          <UnavailableSelect label="Update channel" />
-        </SettingRow>
-        <SettingRow title="Managed components" description="View daemon-reported and planned managed integrations.">
-          <Button onClick={() => navigate("/extensions")}>
-            View components <ChevronRight size={15} aria-hidden="true" />
-          </Button>
-        </SettingRow>
-      </SettingsGroup>
-      <p className="m-0 mt-6 text-center text-label text-subtle-foreground">
-        Grok Desktop is an independent project and is not endorsed by xAI.
-      </p>
     </>
   );
 }

@@ -309,15 +309,15 @@ remain under **Windows qualification blockers**.
 | T0 Architecture + GA contract | **Done** (`linux-ga.md`, platform ADRs 0004–0007) |
 | T1 Linux packaging / updater | **Done entry** (`pnpm package:linux` embeds daemon; no auto-updater) |
 | T2 BYOK / pinentry / Files qualification | **Code + structural tests**; full packaged DE matrix still open |
-| T3 Linux QEMU/KVM broker + virtio image | **Broker contract + lifecycle/PoP gates** (`native/linux-vm-service`); QEMU spawn template still pending |
-| T4 Privileged gateway + PoP + live isolation facts | **Gateway `runner.health`** with no auto-replay; Work Available only with auth+isolation facts |
-| T5 Subscription host auth + guest ACP Work | **Host auth IPC v17 + Setup Connect**; guest sessions still isolation-gated |
+| T3 Linux QEMU/KVM broker + virtio image | **Broker requires Spawn for StartVm**; GuestControl needs live process + health dial (no hardcoded OK) |
+| T4 Privileged gateway + PoP + live isolation facts | **IsolationRuntime in daemon** journals `runner.health`; strong isolation only after success |
+| T5 Subscription host auth + guest ACP Work | **Host auth IPC v17 + Setup Connect**; Work still needs isolation+auth facts |
 | T6 Overlay host commit UX | Specified; not product-wired |
-| T7 Automation execution | Schema 19 journal; execution disabled |
-| T8 Media / voice / search product ops | UI fail-closed / capabilities unavailable |
-| T9 Managed browser + Wisp lifecycle | Contracts; not production install path |
-| T10–T11 Policy settings, export, diagnostics | Mostly stubs |
-| T12 Linux release matrix + evidence | In progress (engineering evidence under goal scratch) |
+| T7 Automation execution | Definitions only; not advertised as live schedules |
+| T8 Media / voice / search product ops | Capabilities unavailable; Library copy de-advertises Imagine |
+| T9 Managed browser + Wisp lifecycle | Removed from primary nav; preview route only |
+| T10–T11 Policy settings, export, diagnostics | Unavailable labels; Settings copy marks unfinished rows |
+| T12 Linux release matrix + evidence | Engineering evidence under goal scratch; full matrix open |
 
 ## Product blockers
 

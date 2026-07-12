@@ -44,7 +44,7 @@ describe("SettingsView", () => {
 
     const navigation = screen.getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = within(navigation).getAllByRole("button");
-    expect(sectionButtons).toHaveLength(8);
+    expect(sectionButtons).toHaveLength(3);
     sectionButtons.forEach((button) => expect(button).toHaveAttribute("aria-controls", "settings-panel"));
 
     const accountButton = within(navigation).getByRole("button", { name: "Account" });
@@ -60,9 +60,9 @@ describe("SettingsView", () => {
     expect(screen.getByRole("region", { name: "General" })).toBeInTheDocument();
 
     fireEvent.keyDown(generalButton, { key: "End" });
-    const updatesButton = within(navigation).getByRole("button", { name: "Updates" });
+    const updatesButton = within(navigation).getByRole("button", { name: "Models" });
     expect(updatesButton).toHaveFocus();
-    expect(screen.getByRole("region", { name: "Updates" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Models" })).toBeInTheDocument();
 
     fireEvent.keyDown(updatesButton, { key: "Home" });
     expect(accountButton).toHaveFocus();
@@ -133,20 +133,15 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
-  it("gives unavailable preferences explicit names and disabled semantics", () => {
+  it("only shows daemon-backed close behavior in General", async () => {
     renderSettings();
     fireEvent.click(screen.getByRole("button", { name: "General" }));
-
-    const appearance = screen.getByRole("radiogroup", { name: "Appearance" });
-    const radios = within(appearance).getAllByRole("radio");
-    expect(radios).toHaveLength(3);
-    radios.forEach((radio) => expect(radio).toBeDisabled());
-    expect(within(appearance).getByRole("radio", { name: "System" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Launch at sign in unavailable" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Desktop notifications unavailable" })).toBeDisabled();
+    expect(await screen.findByRole("switch", { name: "Keep running in notification area" })).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Appearance" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Launch at sign in unavailable" })).not.toBeInTheDocument();
   });
 
-  it("selects only live text-ready daemon models and keeps effort and research disabled", async () => {
+  it("selects only live text-ready daemon models", async () => {
     const client = new MockDesktopClient();
     const selectModel = vi.spyOn(client, "selectChatModel");
     renderSettings(client);
@@ -164,8 +159,6 @@ describe("SettingsView", () => {
       modelId: "grok-4.3-fast",
     }));
     await waitFor(() => expect(modelSelect).toHaveValue("grok-4.3-fast"));
-    expect(screen.getByRole("combobox", { name: "Default effort" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Research unavailable" })).toBeDisabled();
     expect(screen.getByLabelText("Model status")).toHaveTextContent("existing turns never change");
   });
 
@@ -192,7 +185,6 @@ describe("SettingsView", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Model catalog unavailable");
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Research unavailable" })).toBeDisabled();
   });
 
   it("invalidates the catalog when a selection outcome needs reconciliation", async () => {
