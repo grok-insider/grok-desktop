@@ -49,7 +49,10 @@ export function Composer() {
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [duration, setDuration] = useState("6s");
   const [creatingMedia, setCreatingMedia] = useState(false);
-  const models = useChatModelCatalog();
+  const chatAvailable = snapshot?.capabilities.some(
+    (capability) => capability.id === "chat" && capability.available,
+  ) === true;
+  const models = useChatModelCatalog(chatAvailable);
   const toolsRootRef = useRef<HTMLDivElement>(null);
   const modelOverrideRef = useRef(modelOverride);
   modelOverrideRef.current = modelOverride;

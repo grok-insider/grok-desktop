@@ -5,17 +5,24 @@ import { useDesktopClient } from "../services/DesktopClientContext";
 const DISCOVERY_ERROR = "The official xAI model catalog is unavailable. Check the account connection and network, then retry.";
 const SELECTION_ERROR = "The default model could not be reconciled with live daemon readiness. Retry discovery before changing it again.";
 
-export type ChatModelCatalogStatus = "loading" | "ready" | "error";
+export type ChatModelCatalogStatus = "unavailable" | "loading" | "ready" | "error";
 
-export function useChatModelCatalog() {
+export function useChatModelCatalog(enabled = true) {
   const client = useDesktopClient();
   const [catalog, setCatalog] = useState<ChatModelCatalog | null>(null);
-  const [status, setStatus] = useState<ChatModelCatalogStatus>("loading");
+  const [status, setStatus] = useState<ChatModelCatalogStatus>(enabled ? "loading" : "unavailable");
   const [error, setError] = useState("");
   const [savingModelId, setSavingModelId] = useState<string | null>(null);
   const generation = useRef(0);
 
   const discover = useCallback(async () => {
+    if (!enabled) {
+      generation.current += 1;
+      setCatalog(null);
+      setStatus("unavailable");
+      setError("");
+      return;
+    }
     const request = ++generation.current;
     setStatus("loading");
     setError("");
@@ -29,7 +36,7 @@ export function useChatModelCatalog() {
       setStatus("error");
       setError(DISCOVERY_ERROR);
     }
-  }, [client]);
+  }, [client, enabled]);
 
   useEffect(() => {
     setSavingModelId(null);

@@ -438,7 +438,10 @@ function collectUnexpectedConsoleEntry(message, entries) {
     return;
   }
   if (message.method === "Log.entryAdded" && message.params?.entry?.level === "error") {
-    entries.push({ source: "log.error" });
+    const source = typeof message.params.entry.source === "string"
+      ? message.params.entry.source
+      : "unknown";
+    entries.push({ source: `log.error.${source}` });
   }
 }
 

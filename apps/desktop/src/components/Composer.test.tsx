@@ -35,6 +35,26 @@ async function chooseModel(modelId: string) {
 }
 
 describe("Composer Imagine tools", () => {
+  it("does not probe the provider catalog while daemon Chat is unavailable", async () => {
+    class NoChatClient extends CapturingClient {
+      override async getSnapshot() {
+        const snapshot = await super.getSnapshot();
+        return {
+          ...snapshot,
+          capabilities: snapshot.capabilities.map((capability) => capability.id === "chat"
+            ? { ...capability, available: false, reason: "Connect an account first." }
+            : capability),
+        };
+      }
+    }
+    const client = new NoChatClient();
+    const discovery = vi.spyOn(client, "getChatModelCatalog");
+    renderComposer(client);
+
+    expect(await screen.findByRole("button", { name: "Enable Search" })).toBeDisabled();
+    expect(discovery).not.toHaveBeenCalled();
+  });
+
   it("gates Imagine tools when capabilities are unavailable", async () => {
     class NoImagineClient extends CapturingClient {
       override async getSnapshot() {
@@ -122,7 +142,7 @@ describe("Composer model selection", () => {
     const client = renderComposer();
     const select = vi.spyOn(client, "selectChatModel");
     fireEvent.click(await screen.findByRole("button", { name: /Choose model/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Set Grok 4.3 Fast as default" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Set Grok 4.3 Fast as default" }));
 
     await waitFor(() => expect(select).toHaveBeenCalledWith({ expectedRevision: 0, modelId: "grok-4.3-fast" }));
     await screen.findByRole("button", { name: "Choose model, Default · Grok 4.3 Fast" });

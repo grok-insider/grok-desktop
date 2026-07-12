@@ -17,7 +17,7 @@ import { modelDisplayLabel } from "../lib/modelLabels";
 import { formatTokenCount, formatUsageLine } from "../lib/usageFormat";
 import { Button, PageHeader, Toggle } from "../components/ui";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
-import { useDesktopClient } from "../services/DesktopClientContext";
+import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type {
   AccountSetupState,
   DesktopPreferences,
@@ -406,6 +406,10 @@ function updateDescription(update: UpdateState | null): string {
 }
 
 function ModelSettings() {
+  const { snapshot } = useDesktopSnapshot();
+  const chatAvailable = snapshot?.capabilities.some(
+    (capability) => capability.id === "chat" && capability.available,
+  ) === true;
   const {
     catalog,
     status,
@@ -414,7 +418,7 @@ function ModelSettings() {
     setDefaultModel: selectModel,
     savingModelId,
     selectableModels,
-  } = useChatModelCatalog();
+  } = useChatModelCatalog(chatAvailable);
   const loading = status === "loading";
   const saving = savingModelId !== null;
   const selectedInCatalog = selectableModels.some((model) => model.id === catalog?.preference.selectedModelId);
