@@ -315,7 +315,7 @@ remain under **Windows qualification blockers**.
 | T6 Overlay host commit UX | Specified; not product-wired |
 | T7 Automation execution | **Epoch 18** `schedule_active` + `KernelInitializedExecutionEnabled` when journal recovers; `execute_due` claims and links durable runs. Residual: full product schedule UX + occurrence history still thin |
 | T8 Media / voice / search product ops | Capabilities unavailable; **Library files-only** (Imagine create tabs removed) |
-| T9 Managed browser + Wisp lifecycle | Out of primary nav; `/extensions` preview only; install/update **fail-closed** (no daemon lifecycle IPC); first-party signed adapter schema under `integrations/first-party/wisp` |
+| T9 Managed browser + Wisp lifecycle | **Wisp not product-advertised** (catalog + install UI removed; API returns configuration_required). First-party adapter under `integrations/first-party/wisp` is development source (`signature.algorithm: none`) until release packaging signs Ed25519 bundles |
 | T10–T11 Policy settings, export, diagnostics | Unavailable labels; Settings copy marks unfinished rows |
 | T12 Linux release matrix + evidence | Engineering evidence under goal scratch; full matrix open |
 

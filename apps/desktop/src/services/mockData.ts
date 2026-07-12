@@ -170,7 +170,8 @@ export const initialSnapshot: DesktopSnapshot = {
   extensions: [
     { id: "browser", name: "Managed browser", description: "A private browser profile for research and web tasks.", kind: "built-in", status: "connected", permissions: ["Selected domains", "Downloads"] },
     { id: "filesystem", name: "Local files", description: "Review and edit files in folders you approve.", kind: "built-in", status: "connected", permissions: ["3 folders"] },
-    { id: "wisp", name: "Wisp", description: "Managed desktop and virtual-machine automation backend.", kind: "managed", status: "available", permissions: ["Install required"], recommended: true, version: "0.8.2", updateVersion: "0.9.0" },
+    // Wisp is not product-advertised until signed install lifecycle IPC ships
+    // (integrations/first-party/wisp remains development source material only).
     { id: "github", name: "GitHub MCP", description: "Issues, pull requests, repositories, and code search.", kind: "mcp", status: "available", permissions: ["OAuth required"] },
     { id: "linear", name: "Linear MCP", description: "Projects, issues, and team planning context.", kind: "mcp", status: "attention", permissions: ["Reconnect"] },
   ],

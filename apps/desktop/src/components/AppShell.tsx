@@ -33,7 +33,8 @@ const navigation = [
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/library", label: "Library", icon: Library },
   { to: "/automations", label: "Definitions", icon: Clock3 },
-  // Extensions/Wisp install lifecycle is not a shipped product surface yet.
+  // /extensions exists as a daemon-reported honesty surface only; Wisp is not
+  // catalogued or installable until signed lifecycle IPC ships.
 ];
 
 /* Sidebar text collapses at the rail breakpoint or when the user collapses the shell. */

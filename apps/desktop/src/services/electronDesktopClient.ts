@@ -1179,11 +1179,18 @@ export class ElectronDesktopClient implements DesktopClient {
   }
 
   async getManagedIntegration(_integrationId: "wisp"): Promise<ClientResult<ManagedIntegrationDetail>> {
-    return { status: "success", value: productionWispDetail() };
+    // Product does not advertise Wisp install until signed lifecycle IPC ships.
+    return unavailable(
+      "Wisp is not offered as a product install surface in this build. The first-party adapter is development source material only.",
+      "configuration_required",
+    );
   }
 
   async changeManagedIntegration(_integrationId: "wisp", _action: "install" | "update" | "rollback"): Promise<ClientResult<ManagedIntegrationDetail>> {
-    return unavailable("Managed add-on installation is not exposed by the current daemon protocol.", "configuration_required");
+    return unavailable(
+      "Wisp install, update, and rollback are not product surfaces until signed lifecycle IPC ships.",
+      "configuration_required",
+    );
   }
 
   private async startConversationTurn(
@@ -2892,6 +2899,9 @@ function stableAccent(id: string): string {
 
 function extensionCatalog(capabilities: DaemonCapabilityStatus[]): DesktopSnapshot["extensions"] {
   const browser = capabilities.find((item) => item.id === "browser_automation");
+  // Wisp is intentionally absent from the product catalog until signed install
+  // lifecycle IPC ships. Source material under integrations/first-party/wisp is
+  // development-channel unsigned and must not be advertised as installable.
   return [
     {
       id: "browser",
@@ -2908,16 +2918,6 @@ function extensionCatalog(capabilities: DaemonCapabilityStatus[]): DesktopSnapsh
       kind: "built-in",
       status: "attention",
       permissions: ["Folder linking, import, open, and export are not connected"],
-    },
-    {
-      id: "wisp",
-      name: "Wisp",
-      description: "Optional managed desktop and virtual-machine automation backend.",
-      kind: "managed",
-      status: "available",
-      permissions: ["Install required"],
-      recommended: true,
-      version: "Not installed",
     },
   ];
 }
@@ -2969,26 +2969,4 @@ function degradedCapabilities(reason: string): CapabilityStatus[] {
 
 function unavailable<T>(reason: string, status: "configuration_required" | "unavailable" = "unavailable"): ClientResult<T> {
   return { status, reason };
-}
-
-function productionWispDetail(): ManagedIntegrationDetail {
-  // Product surface is honesty-only until signed install lifecycle IPC ships.
-  // Install/update/rollback remain unavailable so Chat is never coupled to Wisp.
-  return {
-    id: "wisp",
-    name: "Wisp",
-    recommended: true,
-    state: "available",
-    availableVersion: "Not installed",
-    checks: [
-      { label: "Managed add-on service", state: "action_required", detail: "Signed out-of-process install lifecycle is not exposed by the current daemon protocol" },
-      { label: "Signed component", state: "ready", detail: "Only signed first-party manifests under integrations/first-party/wisp are accepted when lifecycle ships" },
-      { label: "Chat isolation", state: "ready", detail: "Wisp absence must not block Chat or other unprivileged surfaces" },
-    ],
-    permissions: ["Observe approved applications", "Send input after scoped approval", "Manage isolated VM sessions"],
-    releaseNotes: [
-      "Install, update, and rollback are intentionally unavailable until daemon-owned signed lifecycle IPC is product-wired.",
-      "First-party adapter schema lives under integrations/first-party/wisp (out-of-process; no renderer injection).",
-    ],
-  };
 }

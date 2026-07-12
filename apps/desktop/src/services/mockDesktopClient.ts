@@ -40,7 +40,6 @@ export class MockDesktopClient implements DesktopClient {
   private media = seedMedia();
   private account: AccountSetupState = accountState(true, true);
   private voiceSession: VoiceSession | undefined;
-  private wisp: ManagedIntegrationDetail = seedWisp();
   private desktopPreferences: DesktopPreferences = {
     keepRunningInNotificationArea: true,
     revision: 0,
@@ -626,15 +625,18 @@ export class MockDesktopClient implements DesktopClient {
     return success(structuredClone(automation));
   }
 
-  async getManagedIntegration(integrationId: "wisp"): Promise<ClientResult<ManagedIntegrationDetail>> {
-    return integrationId === "wisp" ? success(structuredClone(this.wisp)) : { status: "unavailable", reason: "Managed integration not found." };
+  async getManagedIntegration(_integrationId: "wisp"): Promise<ClientResult<ManagedIntegrationDetail>> {
+    return {
+      status: "configuration_required",
+      reason: "Wisp is not offered as a product install surface in this build.",
+    };
   }
 
-  async changeManagedIntegration(_integrationId: "wisp", action: "install" | "update" | "rollback"): Promise<ClientResult<ManagedIntegrationDetail>> {
-    if (action === "install") this.wisp = { ...this.wisp, state: "installed", installedVersion: this.wisp.availableVersion };
-    if (action === "update") this.wisp = { ...this.wisp, state: "rollback_available", rollbackVersion: this.wisp.installedVersion, installedVersion: this.wisp.availableVersion };
-    if (action === "rollback" && this.wisp.rollbackVersion) this.wisp = { ...this.wisp, state: "update_available", installedVersion: this.wisp.rollbackVersion };
-    return success(structuredClone(this.wisp));
+  async changeManagedIntegration(_integrationId: "wisp", _action: "install" | "update" | "rollback"): Promise<ClientResult<ManagedIntegrationDetail>> {
+    return {
+      status: "configuration_required",
+      reason: "Wisp install, update, and rollback are not product surfaces until signed lifecycle IPC ships.",
+    };
   }
 
   private emit(): void {
@@ -929,21 +931,4 @@ function seedMedia(): MediaCreation[] {
   ];
 }
 
-function seedWisp(): ManagedIntegrationDetail {
-  return {
-    id: "wisp",
-    name: "Wisp",
-    recommended: true,
-    state: "update_available",
-    installedVersion: "0.8.2",
-    availableVersion: "0.9.0",
-    rollbackVersion: "0.8.1",
-    checks: [
-      { label: "Signed component", state: "ready", detail: "Publisher and manifest verified" },
-      { label: "Protocol compatibility", state: "ready", detail: "Compatible with this Grok Desktop build" },
-      { label: "Windows automation backend", state: "ready", detail: "UI Automation and Windows Graphics Capture available" },
-    ],
-    permissions: ["Observe approved applications", "Send input after scoped approval", "Manage isolated VM sessions"],
-    releaseNotes: ["Adds native Windows application identity grants", "Improves stale-observation rejection", "Adds signed rollback metadata"],
-  };
-}
+
