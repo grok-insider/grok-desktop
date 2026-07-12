@@ -55,6 +55,7 @@ import {
   AUTOMATION_DEFINITION_ONLY_REASON,
   GROK_BUILD_AUTH_UNAVAILABLE_REASON,
   GROK_EXECUTION_UNAVAILABLE_REASON,
+  grokBuildAgentRuntimeDetail,
 } from "./productAvailability";
 
 const initialSnapshot = (): DesktopSnapshot => ({
@@ -465,9 +466,7 @@ export class ElectronDesktopClient implements DesktopClient {
     const grokConnected = this.accountState.grokBuildAuthenticated === true;
     const runtimeDetail = grokConnected
       ? "Official Grok Build host authentication is active"
-      : runtime?.healthy
-        ? `${runtime.name} ${runtime.version} is ready for host authentication`
-        : runtime?.reasonCode || "Grok Build runtime is not connected";
+      : grokBuildAgentRuntimeDetail(runtime);
     const workAvailable = work?.available === true;
     return {
       grokBuild: grokConnected ? "connected" : "not_connected",
@@ -483,7 +482,7 @@ export class ElectronDesktopClient implements DesktopClient {
             ? runtimeDetail
             : runtime?.healthy
               ? `${runtimeDetail}. Connect to authenticate through the official component.`
-              : `${runtimeDetail}. ${GROK_BUILD_AUTH_UNAVAILABLE_REASON}`,
+              : runtimeDetail,
         },
         { id: "xai_api", label: "xAI API key", state: apiReady ? "ready" : apiKeyConfigured ? "action_required" : "optional", detail: capability("chat")?.reason ?? "Optional for direct xAI API capabilities" },
         { id: "isolation", label: "Protected Work", state: workAvailable ? "ready" : "action_required", detail: work?.reason ?? "Protected Work is not ready" },
@@ -612,10 +611,13 @@ export class ElectronDesktopClient implements DesktopClient {
       throw new Error("invalid grok build auth bridge response");
     }
     if (!response.authenticated) {
+      const runtime = this.snapshot.connection.agentRuntime;
       return unavailable(
         response.state === "failed"
           ? "Grok Build authentication failed."
-          : GROK_BUILD_AUTH_UNAVAILABLE_REASON,
+          : runtime?.healthy
+            ? GROK_BUILD_AUTH_UNAVAILABLE_REASON
+            : grokBuildAgentRuntimeDetail(runtime),
         "configuration_required",
       );
     }
@@ -1843,7 +1845,10 @@ function mapCapability(
   schedulerState?: NonNullable<DaemonStatus["automationScheduler"]>["state"],
 ): CapabilityStatus {
   if (value.id === "automations") {
-    if (schedulerState === "kernel_initialized_execution_enabled" && value.available) {
+    if (
+      schedulerState === "kernel_initialized_execution_enabled"
+      && value.availability === "available"
+    ) {
       return {
         id: value.id,
         label: value.label,

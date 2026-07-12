@@ -102,6 +102,7 @@ type ResultValueMap = {
   conversationForkDelivery: Extract<ResponseResult, { $case: "conversationForkDelivery" }>["value"];
   artifactOperation: Extract<ResponseResult, { $case: "artifactOperation" }>["value"];
   grokBuildAuthStatus: Extract<ResponseResult, { $case: "grokBuildAuthStatus" }>["value"];
+  managedIntegration: Extract<ResponseResult, { $case: "managedIntegration" }>["value"];
 };
 
 type RequestOperation = NonNullable<Request["operation"]>;
