@@ -22,7 +22,8 @@
     "build:windows-service": "node scripts/build-windows-service.mjs",
     "build:dev-daemon": "cargo build -p grok-daemon --features debug-acp-descriptor",
     "package:windows": "pnpm build && node scripts/package-windows.mjs",
-    "package:linux": "node scripts/package-linux.mjs"
+    "package:linux": "node scripts/package-linux.mjs",
+    "release:update-manifest": "node scripts/generate-update-manifest.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.12.1",

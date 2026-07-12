@@ -68,6 +68,7 @@ when it defines an IPC or schema epoch.
 | [0027](0027-durable-signed-managed-integration-lifecycle.md) | Durable signed managed-integration lifecycle |
 | [0028](0028-durable-conversation-model-binding.md) | Durable per-conversation model binding |
 | [0029](0029-local-usage-summary-ipc.md) | Local usage summary IPC |
+| [0030](0030-signed-public-update-channels.md) | Signed public update channels |
 
 ## Platform ADRs
 
