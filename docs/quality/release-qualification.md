@@ -134,6 +134,14 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 ## Release evidence
 
+Stable publication is tag-only through `.github/workflows/release.yml`. Linux
+is built on a clean hosted worker; Windows x64 and ARM64 require the protected
+qualified self-hosted signing environment and pre-staged signed release inputs.
+The final protected job runs only after every platform build, receives the
+offline update key, generates and independently verifies target-bound update
+manifests, and creates the GitHub Release. Missing workers, inputs, public trust,
+signing material, or either architecture fail the workflow before publication.
+
 The release record contains artifact hashes, workflow and source revisions,
 test matrix results, Windows App Certification Kit output, security scan and
 dependency audit results, migration fixtures, performance comparison, known

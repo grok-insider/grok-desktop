@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import {
   canonicalUpdateManifestBytes,
@@ -27,6 +32,7 @@ const baseManifest = () => ({
   },
   releaseNotesUrl: "https://github.com/grok-insider/grok-desktop/releases/download/v1.2.3/release-notes.md",
 });
+const execFileAsync = promisify(execFile);
 
 test("canonical update manifests are signed and verified with pinned Ed25519 keys", () => {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -55,4 +61,29 @@ test("update signatures fail closed for tamper and unknown keys", () => {
     () => verifySignedUpdateManifest(signed, new Map([["release-2026", publicKey]])),
     /signature is invalid/,
   );
+});
+
+test("release verifier CLI binds a signed envelope to the requested target", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-update-verify-"));
+  try {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const signed = signUpdateManifest(baseManifest(), privateKey, "release-2026");
+    const manifestPath = path.join(root, "update.json");
+    const trustPath = path.join(root, "trust.json");
+    await writeFile(manifestPath, JSON.stringify(signed));
+    await writeFile(trustPath, JSON.stringify({
+      "release-2026": publicKey.export({ format: "der", type: "spki" }).toString("base64"),
+    }));
+    const { stdout } = await execFileAsync(process.execPath, [
+      new URL("./verify-update-manifest.mjs", import.meta.url).pathname,
+      "--manifest", manifestPath,
+      "--trust-file", trustPath,
+      "--platform", "win32",
+      "--architecture", "x64",
+      "--version", "1.2.3",
+    ]);
+    assert.deepEqual(JSON.parse(stdout), { ok: true, version: "1.2.3", platform: "win32", architecture: "x64" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

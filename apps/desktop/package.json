@@ -23,7 +23,8 @@
     "build:dev-daemon": "cargo build -p grok-daemon --features debug-acp-descriptor",
     "package:windows": "pnpm build && node scripts/package-windows.mjs",
     "package:linux": "node scripts/package-linux.mjs",
-    "release:update-manifest": "node scripts/generate-update-manifest.mjs"
+    "release:update-manifest": "node scripts/generate-update-manifest.mjs",
+    "release:verify-update-manifest": "node scripts/verify-update-manifest.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.12.1",

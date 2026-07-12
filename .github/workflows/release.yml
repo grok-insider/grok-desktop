@@ -1,0 +1,178 @@
+name: Stable release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+      APPIMAGETOOL_SHA256: b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2
+      APPIMAGEUPDATETOOL_SHA256: d976cdac667b03dee8cb23fb95ef74b042c406c5cbab3ff294d2b16efeaff84f
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: cachix/install-nix-action@v31
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Verify tag matches package version
+        shell: bash
+        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+      - run: pnpm build
+      - run: nix develop --command cargo build -p grok-daemon --release
+      - name: Acquire pinned AppImage tools
+        shell: bash
+        run: |
+          test -n "$UPDATE_TRUST_JSON"
+          install -m 600 /dev/null "$RUNNER_TEMP/update-trusted-keys.json"
+          printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/appimagetool.AppImage" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/appimageupdatetool.AppImage" \
+            https://github.com/AppImageCommunity/AppImageUpdate/releases/download/2.0.0-alpha-1-20251018/appimageupdatetool-x86_64.AppImage
+          echo "$APPIMAGETOOL_SHA256  $RUNNER_TEMP/appimagetool.AppImage" | sha256sum --check --strict
+          echo "$APPIMAGEUPDATETOOL_SHA256  $RUNNER_TEMP/appimageupdatetool.AppImage" | sha256sum --check --strict
+          chmod 700 "$RUNNER_TEMP/appimagetool.AppImage" "$RUNNER_TEMP/appimageupdatetool.AppImage"
+      - name: Package updateable AppImage
+        run: |
+          pnpm package:linux -- --arch x64 \
+            --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \
+            --appimagetool-sha256 "$APPIMAGETOOL_SHA256" \
+            --appimageupdatetool "$RUNNER_TEMP/appimageupdatetool.AppImage" \
+            --appimageupdatetool-sha256 "$APPIMAGEUPDATETOOL_SHA256" \
+            --update-trust-file "$RUNNER_TEMP/update-trusted-keys.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x64
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            out/release/linux/x64/GrokDesktop-stable-x64.AppImage
+            out/release/linux/x64/GrokDesktop-stable-x64.AppImage.zsync
+            out/release/linux/x64/linux-package.json
+
+  windows:
+    name: Build Windows ${{ matrix.architecture }}
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 90
+    environment: stable-windows-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, arm64]
+    env:
+      GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+      RELEASE_INPUT_ROOT: ${{ vars.GROK_WINDOWS_RELEASE_INPUT_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Verify qualified worker inputs
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -ne "v$((Get-Content package.json | ConvertFrom-Json).version)") { throw "tag/version mismatch" }
+          if (-not $env:RELEASE_INPUT_ROOT) { throw "qualified release input root is unavailable" }
+          if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
+      - run: pnpm build
+      - name: Assemble and sign MSIX
+        shell: pwsh
+        run: |
+          pnpm package:windows -- --arch ${{ matrix.architecture }} --channel stable `
+            --stage (Join-Path $env:RELEASE_INPUT_ROOT ${{ matrix.architecture }})
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-${{ matrix.architecture }}
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            out/release/windows/stable/${{ matrix.architecture }}/GrokDesktop-stable-${{ matrix.architecture }}.msix
+            out/release/windows/stable/${{ matrix.architecture }}/GrokDesktop-stable-${{ matrix.architecture }}.appinstaller
+            out/release/windows/stable/${{ matrix.architecture }}/*.json
+
+  publish:
+    name: Sign metadata and publish
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: stable-release
+    permissions:
+      contents: write
+    env:
+      UPDATE_KEY_ID: ${{ vars.GROK_UPDATE_SIGNING_KEY_ID }}
+      UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Prepare protected signing inputs
+        shell: bash
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.GROK_UPDATE_SIGNING_PRIVATE_KEY_PEM }}
+        run: |
+          test -n "$UPDATE_KEY_ID"
+          test -n "$UPDATE_TRUST_JSON"
+          test -n "$UPDATE_PRIVATE_KEY"
+          install -m 600 /dev/null "$RUNNER_TEMP/update-private-key.pem"
+          install -m 600 /dev/null "$RUNNER_TEMP/update-trusted-keys.json"
+          printf '%s\n' "$UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/update-private-key.pem"
+          printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
+          printf '# Grok Desktop %s\n\nSee the public release notes and verified assets attached to this release.\n' \
+            "$GITHUB_REF_NAME" > release-assets/release-notes.md
+      - name: Generate and verify signed update manifests
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for target in linux:x64:AppImage win32:x64:msix win32:arm64:msix; do
+            IFS=: read -r platform architecture extension <<< "$target"
+            artifact="release-assets/GrokDesktop-stable-$architecture.$extension"
+            manifest="release-assets/GrokDesktop-stable-$platform-$architecture.update.json"
+            pnpm --filter @grok-desktop/desktop release:update-manifest -- \
+              --artifact "$artifact" --architecture "$architecture" --channel stable \
+              --key-id "$UPDATE_KEY_ID" --out "$manifest" --platform "$platform" \
+              --private-key "$RUNNER_TEMP/update-private-key.pem" --version "$version" \
+              --artifact-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/$(basename "$artifact")" \
+              --release-notes-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/release-notes.md"
+            pnpm --filter @grok-desktop/desktop release:verify-update-manifest -- \
+              --manifest "$manifest" --trust-file "$RUNNER_TEMP/update-trusted-keys.json" \
+              --platform "$platform" --architecture "$architecture" --version "$version"
+          done
+          rm -f "$RUNNER_TEMP/update-private-key.pem"
+      - name: Publish immutable tag release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git tag --points-at HEAD)" = "$GITHUB_REF_NAME"
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo grok-insider/grok-desktop --title "Grok Desktop $GITHUB_REF_NAME" \
+            --notes-file release-assets/release-notes.md --verify-tag

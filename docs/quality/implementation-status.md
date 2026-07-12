@@ -305,8 +305,10 @@ Architecture principles:
   through the bounded native URL broker; the renderer has no general external
   anchor, popup, or shell authority.
 
-These workflows are engineering-preview behavior. The repository has no signed
-release artifact and has not passed the release matrix.
+These workflows are engineering-preview behavior. The protected stable tag
+workflow and runtime signed-update authorization are implemented, but no public
+artifact exists until the external Windows signing workers, release inputs,
+channel keys, and full qualification matrix complete successfully.
 
 ## Linux full product GA blockers
 
@@ -316,7 +318,7 @@ remain under **Windows qualification blockers**.
 | Train | Status |
 | --- | --- |
 | T0 Architecture + GA contract | **Done** (`linux-ga.md`, platform ADRs 0004–0007) |
-| T1 Linux packaging / updater | **Done entry** (`pnpm package:linux` embeds daemon; no auto-updater) |
+| T1 Linux packaging / updater | **Implemented, qualification open** (AppImage + zsync, signed-manifest gate, verified helper, rollback recovery) |
 | T2 BYOK / pinentry / Files qualification | **Code + structural tests**; full packaged DE matrix still open |
 | T3 Linux QEMU/KVM broker + virtio image | **Broker + unix socket main** exposes ensure_image/create_vm/start_vm/guest_control; StartVm requires Spawn (lab injects fake process). Wire: Go `[]byte` ↔ base64 JSON fixtures. Residual: production QEMU matrix |
 | T4 Privileged gateway + PoP + live isolation facts | **IsolationRuntime** journals `runner.health`; Linux dialer **orchestrates** EnsureImage→Create/Start→grant→health. Peer: **SO_PEERCRED + /proc/pid/exe** (client peerExe not authoritative). Residual: real KVM+image release matrix |
