@@ -319,10 +319,26 @@ fn require_text_model(model: &ChatModelCatalogEntry) -> Result<String, Applicati
 }
 
 fn supports_text_conversation(model: &ModelDescriptor) -> bool {
+    // Official Imagine media models must never become the durable Chat selection
+    // even when the provider omits modality lists (empty = no text contradiction).
+    if is_imagine_media_model_id(&model.id)
+        || model
+            .aliases
+            .iter()
+            .any(|alias| is_imagine_media_model_id(alias))
+    {
+        return false;
+    }
     (model.input_modalities.is_empty()
         || model.input_modalities.iter().any(|value| value == "text"))
         && (model.output_modalities.is_empty()
             || model.output_modalities.iter().any(|value| value == "text"))
+}
+
+/// Canonical and alias identifiers for official Grok Imagine media models.
+fn is_imagine_media_model_id(id: &str) -> bool {
+    let normalized = id.trim().to_ascii_lowercase();
+    normalized.starts_with("grok-imagine-")
 }
 
 fn validate_identifier(
@@ -396,6 +412,42 @@ mod tests {
         let models = validate_catalog(vec![image]).expect("catalog");
         assert!(!models[0].text_conversation_ready);
         assert!(canonical_text_model_id("grok-image", &models).is_err());
+    }
+
+    #[test]
+    fn official_imagine_media_ids_are_never_text_conversation_ready() {
+        let catalog = validate_catalog(vec![
+            model("grok-4.3", &["grok-latest"]),
+            // Empty modalities would otherwise fail-open as text-ready (ADR 0009).
+            model(
+                "grok-imagine-image",
+                &["grok-imagine-image-2026-03-02"],
+            ),
+            model(
+                "grok-imagine-video-1.5",
+                &["grok-imagine-video-1.5-preview"],
+            ),
+            // Alias-only Imagine identity must also be excluded when used as id.
+            model("other-media", &["grok-imagine-image-quality"]),
+        ])
+        .expect("catalog");
+
+        let by_id: std::collections::HashMap<_, _> = catalog
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.text_conversation_ready))
+            .collect();
+        assert_eq!(by_id.get("grok-4.3"), Some(&true));
+        assert_eq!(by_id.get("grok-imagine-image"), Some(&false));
+        assert_eq!(by_id.get("grok-imagine-video-1.5"), Some(&false));
+        assert_eq!(by_id.get("other-media"), Some(&false));
+
+        assert_eq!(
+            canonical_text_model_id("grok-latest", &catalog).expect("text alias"),
+            "grok-4.3"
+        );
+        assert!(canonical_text_model_id("grok-imagine-image", &catalog).is_err());
+        assert!(canonical_text_model_id("grok-imagine-image-2026-03-02", &catalog).is_err());
+        assert!(canonical_text_model_id("grok-imagine-video-1.5-preview", &catalog).is_err());
     }
 
     #[test]

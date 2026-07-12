@@ -2156,7 +2156,13 @@ export function mapChatModelCatalog(
     const aliases = model.aliases.map((alias) => boundedModelIdentifier(alias, "chat model alias"));
     const inputModalities = model.inputModalities.map((value) => boundedModelModality(value));
     const outputModalities = model.outputModalities.map((value) => boundedModelModality(value));
-    const textConversationReady = (inputModalities.length === 0 || inputModalities.includes("text"))
+    // Must match application `supports_text_conversation`: Imagine media ids
+    // never become the durable Chat selection even with empty modalities.
+    const isImagineMedia = [id, ...aliases].some((value) =>
+      value.trim().toLowerCase().startsWith("grok-imagine-"),
+    );
+    const textConversationReady = !isImagineMedia
+      && (inputModalities.length === 0 || inputModalities.includes("text"))
       && (outputModalities.length === 0 || outputModalities.includes("text"));
     if (textConversationReady !== model.textConversationReady) {
       throw new DaemonProtocolError("daemon chat model descriptor readiness is inconsistent");

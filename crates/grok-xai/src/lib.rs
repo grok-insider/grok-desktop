@@ -164,10 +164,24 @@ impl XaiApiKeyValidator for OfficialXaiApiKeyValidator {
 }
 
 fn supports_text_conversation(model: &ModelDescriptor) -> bool {
+    // Keep credential validation aligned with application catalog policy:
+    // official Imagine media models are never Chat-ready.
+    if is_imagine_media_model_id(&model.id)
+        || model
+            .aliases
+            .iter()
+            .any(|alias| is_imagine_media_model_id(alias))
+    {
+        return false;
+    }
     (model.input_modalities.is_empty()
         || model.input_modalities.iter().any(|value| value == "text"))
         && (model.output_modalities.is_empty()
             || model.output_modalities.iter().any(|value| value == "text"))
+}
+
+fn is_imagine_media_model_id(id: &str) -> bool {
+    id.trim().to_ascii_lowercase().starts_with("grok-imagine-")
 }
 
 impl ConversationModelFactory for OfficialXaiConversationModelFactory {
