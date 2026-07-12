@@ -170,17 +170,16 @@ describe("Grok Desktop shell", () => {
     );
   });
 
-  it("shows daemon-owned Work and browser readiness without optimistic status", async () => {
+  it("does not advertise unfinished Work or browser settings surfaces", async () => {
     const client = new LimitedDesktopClient();
     render(<DesktopClientProvider client={client}><MemoryRouter initialEntries={["/settings"]}><App /></MemoryRouter></DesktopClientProvider>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Execution" }));
-    expect(await screen.findByText("Protected Work is unavailable")).toBeInTheDocument();
-    expect(screen.getAllByText("Signed guest channel is not connected.").length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole("button", { name: "Browser" }));
-    expect(await screen.findByText("Managed browser broker is not ready.")).toBeInTheDocument();
-    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Execution" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open setup" })).toBeInTheDocument();
+    expect(screen.queryByText("Protected Work is available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Managed browser broker is ready.")).not.toBeInTheDocument();
   });
 
   it("counts interrupted runs as needing input in global navigation", async () => {
