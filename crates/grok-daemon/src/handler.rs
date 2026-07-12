@@ -2854,22 +2854,23 @@ mod tests {
         ConversationRole, ConversationStream, ConversationThreadCredentialBinding,
         ConversationThreadModelBinding, ConversationTurnEventPage, ConversationTurnReservation,
         ConversationTurnReservationSource, ConversationTurnSnapshot, ConversationTurnStore,
-        CreateMessage, CreateRun, CredentialEnrollment, CredentialEnrollmentError,
-        CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialMutationStore,
-        CredentialService, DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization, ExecutionStore,
-        IdGenerator, ModelDescriptor, ModelError, ModelErrorKind, ModelFailureCertainty,
-        MutationCommand, NewRunEvent, OAuthFailure, OAuthTokenGrant, PreparedArtifactContent,
-        ProviderStartCommit, RequestApproval, SecretName, SecretValue, SecretVault,
-        SelectedSourcePath, StoreError, SuperGrokOAuth, TerminalTurnCommit, WorkspaceService,
-        WorkspaceStore, XaiApiKeyValidation, XaiApiKeyValidationError, XaiApiKeyValidator,
+        CreateMessage, CreateProject, CreateRun, CreateThread, CredentialEnrollment,
+        CredentialEnrollmentError, CredentialEnrollmentRequest, CredentialEnrollmentService,
+        CredentialMutationStore, CredentialService, DEFAULT_XAI_CHAT_MODEL_ID, DeviceAuthorization,
+        ExecutionStore, IdGenerator, ModelDescriptor, ModelError, ModelErrorKind,
+        ModelFailureCertainty, MutationCommand, NewRunEvent, OAuthFailure, OAuthTokenGrant,
+        PreparedArtifactContent, ProviderStartCommit, RequestApproval, SecretName, SecretValue,
+        SecretVault, SelectedSourcePath, StoreError, SuperGrokOAuth, TerminalTurnCommit,
+        WorkspaceService, WorkspaceStore, XaiApiKeyValidation, XaiApiKeyValidationError,
+        XaiApiKeyValidator,
     };
     use grok_artifact_storage::UnavailableArtifactContent;
     use grok_domain::{
         ApprovalRisk, ApprovalScope, ConversationCitation, ConversationTurn, ConversationTurnEvent,
-        ConversationTurnEventKind, ConversationTurnLineage, ConversationUsage, EffectId,
-        EffectKind, EffectState, Idempotency, MAX_CONVERSATION_CITATION_TOTAL_BYTES,
-        MAX_CONVERSATION_USAGE_VALUE, MAX_MESSAGE_BYTES, Message, MessageRole, RequestedAction,
-        Run, RunEventKind, RunState, SideEffect,
+        ConversationTurnEventKind, ConversationTurnId, ConversationTurnLineage, ConversationUsage,
+        EffectId, EffectKind, EffectState, Idempotency, MAX_CONVERSATION_CITATION_TOTAL_BYTES,
+        MAX_CONVERSATION_USAGE_VALUE, MAX_MESSAGE_BYTES, Message, MessageId, MessageRole, ProjectId,
+        RequestedAction, Run, RunEventKind, RunId, RunState, SideEffect, ThreadId,
     };
     use grok_memory::{
         FixedClock, InMemoryExecutionStore, InMemorySecretVault, SequentialIdGenerator,
@@ -8333,5 +8334,339 @@ mod tests {
             assert!(!error.message.contains("Bearer"));
             assert_eq!(error.message, expected);
         }
+    }
+
+    #[tokio::test]
+    async fn usage_summary_rejects_invalid_scope_and_window_before_store_access() {
+        let (daemon, _) = daemon();
+        for (scope_kind, scope_id, window) in [
+            ("weekly", "", "last_7_days"),
+            ("workspace", "extra-id", "last_7_days"),
+            ("project", "", "last_7_days"),
+            ("thread", "thread-1", "monthly"),
+        ] {
+            let response = daemon
+                .handle(request(request::Operation::GetUsageSummary(
+                    v1::GetUsageSummaryRequest {
+                        scope_kind: scope_kind.into(),
+                        scope_id: scope_id.into(),
+                        window: window.into(),
+                    },
+                )))
+                .await
+                .expect("invalid usage summary is still a framed response");
+            let envelope::Payload::Response(response) = response.payload.expect("payload") else {
+                panic!("response")
+            };
+            assert!(
+                matches!(
+                    response.result,
+                    Some(response::Result::Error(v1::ErrorResponse { code, .. }))
+                        if code == v1::ErrorCode::InvalidArgument as i32
+                ),
+                "expected invalid argument for {scope_kind}/{window}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn usage_summary_returns_workspace_aggregate_over_completed_turns() {
+        let store = Arc::new(InMemoryExecutionStore::new());
+        let vault = Arc::new(InMemorySecretVault::new());
+        seed_test_xai_credential(&vault);
+        let clock = Arc::new(FixedClock::new(10));
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequentialIdGenerator::new());
+        let runs = Arc::new(RunService::new(store.clone(), clock.clone(), ids.clone()));
+        let approvals = Arc::new(ApprovalService::new(
+            store.clone(),
+            clock.clone(),
+            ids.clone(),
+        ));
+        let workspace = Arc::new(WorkspaceService::new(store.clone(), clock.clone(), ids.clone()));
+        let credentials = Arc::new(CredentialService::new(
+            vault,
+            store.clone(),
+            Arc::new(AcceptXaiKey),
+        ));
+        let factory: Arc<dyn ConversationModelFactory> = Arc::new(PendingConversationFactory(
+            Arc::new(PendingConversationModel {
+                stream_calls: Arc::new(AtomicUsize::new(0)),
+            }),
+        ));
+        let conversation = Arc::new(ConversationService::new(
+            store.clone(),
+            workspace.clone(),
+            credentials.clone(),
+            factory,
+            clock.clone(),
+            ids,
+            store.clone(),
+        ));
+        let project = workspace
+            .create_project(
+                CreateProject {
+                    name: "Usage summary".into(),
+                    description: String::new(),
+                },
+                "usage-summary-project",
+            )
+            .await
+            .expect("project");
+        let thread = workspace
+            .create_thread(
+                CreateThread {
+                    project_id: project.id.to_string(),
+                    title: "Usage summary".into(),
+                },
+                "usage-summary-thread",
+            )
+            .await
+            .expect("thread");
+        seed_completed_usage_turn(
+            store.as_ref(),
+            project.id.clone(),
+            thread.id.clone(),
+            ConversationUsage {
+                input_tokens: 11,
+                output_tokens: 5,
+                cost_in_usd_ticks: 17,
+            },
+        )
+        .await;
+
+        let daemon = Daemon::new(
+            runs,
+            approvals,
+            credentials,
+            clock,
+            [7; 32],
+            "instance-usage".into(),
+        )
+        .with_workspace(workspace)
+        .with_conversation(conversation);
+
+        let workspace_summary = daemon
+            .handle(request(request::Operation::GetUsageSummary(
+                v1::GetUsageSummaryRequest {
+                    scope_kind: "workspace".into(),
+                    scope_id: String::new(),
+                    window: "all_time".into(),
+                },
+            )))
+            .await
+            .expect("workspace usage summary");
+        let envelope::Payload::Response(response) = workspace_summary.payload.expect("payload")
+        else {
+            panic!("response")
+        };
+        let Some(response::Result::UsageSummary(summary)) = response.result else {
+            panic!("usage summary result: {response:?}")
+        };
+        assert_eq!(summary.scope_kind, "workspace");
+        assert!(summary.scope_id.is_empty());
+        assert_eq!(summary.window, "all_time");
+        assert_eq!(summary.input_tokens, 11);
+        assert_eq!(summary.output_tokens, 5);
+        assert_eq!(summary.cost_in_usd_ticks, 17);
+        assert_eq!(summary.turn_count, 1);
+        assert_eq!(summary.as_of_unix_ms, 10);
+
+        let project_summary = daemon
+            .handle(request(request::Operation::GetUsageSummary(
+                v1::GetUsageSummaryRequest {
+                    scope_kind: "project".into(),
+                    scope_id: project.id.to_string(),
+                    window: "last_30_days".into(),
+                },
+            )))
+            .await
+            .expect("project usage summary");
+        let envelope::Payload::Response(response) = project_summary.payload.expect("payload")
+        else {
+            panic!("response")
+        };
+        let Some(response::Result::UsageSummary(summary)) = response.result else {
+            panic!("project usage summary")
+        };
+        assert_eq!(summary.scope_kind, "project");
+        assert_eq!(summary.scope_id, project.id.to_string());
+        assert_eq!(summary.input_tokens, 11);
+        assert_eq!(summary.turn_count, 1);
+
+        let thread_summary = daemon
+            .handle(request(request::Operation::GetUsageSummary(
+                v1::GetUsageSummaryRequest {
+                    scope_kind: "thread".into(),
+                    scope_id: thread.id.to_string(),
+                    window: "last_7_days".into(),
+                },
+            )))
+            .await
+            .expect("thread usage summary");
+        let envelope::Payload::Response(response) = thread_summary.payload.expect("payload") else {
+            panic!("response")
+        };
+        let Some(response::Result::UsageSummary(summary)) = response.result else {
+            panic!("thread usage summary")
+        };
+        assert_eq!(summary.scope_kind, "thread");
+        assert_eq!(summary.scope_id, thread.id.to_string());
+        assert_eq!(summary.output_tokens, 5);
+    }
+
+    async fn seed_completed_usage_turn(
+        store: &InMemoryExecutionStore,
+        project_id: ProjectId,
+        thread_id: ThreadId,
+        usage: ConversationUsage,
+    ) {
+        let now = 5_u64;
+        let user = Message::new(
+            MessageId::new("usage-user-1").expect("message id"),
+            thread_id.clone(),
+            MessageRole::User,
+            "Prompt".into(),
+            now,
+        )
+        .expect("user");
+        let run = Run::queued(
+            RunId::new("usage-run-1").expect("run id"),
+            project_id.clone(),
+            thread_id.clone(),
+            now,
+        );
+        let turn = ConversationTurn::reserve(
+            ConversationTurnId::new("usage-turn-1").expect("turn id"),
+            "usage-command-1".into(),
+            [9; 32],
+            project_id,
+            thread_id,
+            user.id.clone(),
+            run.id.clone(),
+            "grok-4.3".into(),
+            now,
+        )
+        .expect("turn");
+        let reserved = store
+            .reserve_turn(
+                turn,
+                ConversationTurnLineage::original("xai-binding-usage".into()).expect("lineage"),
+                ConversationTurnReservationSource::CurrentThread,
+                user,
+                run,
+                NewRunEvent {
+                    occurred_at: now,
+                    kind: RunEventKind::Created,
+                },
+                ConversationTurnEventKind::Created,
+            )
+            .await
+            .expect("reserve");
+        let mut started_turn = reserved.snapshot.turn.clone();
+        let mut started_run = reserved.snapshot.run.clone();
+        let mut effect = SideEffect::prepare(
+            EffectId::new("usage-effect-1").expect("effect id"),
+            started_run.id.clone(),
+            EffectKind::ExternalMutation,
+            "official xAI Responses API model grok-4.3".into(),
+            Idempotency::NonIdempotent,
+            now + 1,
+        );
+        effect.start(now + 1).expect("start effect");
+        started_turn
+            .start_provider(effect.id.clone(), [10; 32], now + 1)
+            .expect("start provider");
+        started_run
+            .transition(RunState::Planning, now + 1)
+            .expect("planning");
+        started_run
+            .transition(RunState::Running, now + 1)
+            .expect("running");
+        let started = store
+            .commit_provider_start(ProviderStartCommit {
+                turn: started_turn,
+                expected_turn_revision: reserved.snapshot.turn.revision,
+                run: started_run,
+                expected_run_revision: reserved.snapshot.run.revision,
+                effect: effect.clone(),
+                events: vec![
+                    NewRunEvent {
+                        occurred_at: now + 1,
+                        kind: RunEventKind::StateChanged {
+                            from: RunState::Queued,
+                            to: RunState::Planning,
+                        },
+                    },
+                    NewRunEvent {
+                        occurred_at: now + 1,
+                        kind: RunEventKind::StateChanged {
+                            from: RunState::Planning,
+                            to: RunState::Running,
+                        },
+                    },
+                    NewRunEvent {
+                        occurred_at: now + 1,
+                        kind: RunEventKind::EffectPrepared {
+                            effect_id: effect.id.clone(),
+                        },
+                    },
+                ],
+                turn_event: ConversationTurnEventKind::StateChanged {
+                    from: ConversationTurnState::Reserved,
+                    to: ConversationTurnState::ProviderStarted,
+                },
+            })
+            .await
+            .expect("provider start");
+        store
+            .append_turn_text(&started.turn.id, started.turn.revision, 0, "Answer".into())
+            .await
+            .expect("append text");
+        let mut turn = started.turn.clone();
+        let mut run = started.run.clone();
+        let mut effect = started.effect.clone().expect("effect");
+        let assistant = Message::new(
+            MessageId::new("usage-assistant-1").expect("assistant id"),
+            turn.thread_id.clone(),
+            MessageRole::Assistant,
+            "Answer".into(),
+            now + 2,
+        )
+        .expect("assistant");
+        turn.complete(
+            assistant.id.clone(),
+            Some("response-1".into()),
+            Vec::new(),
+            usage,
+            Some(true),
+            now + 2,
+        )
+        .expect("complete");
+        effect.finish(true, now + 2).expect("finish effect");
+        run.transition(RunState::Completed, now + 2)
+            .expect("complete run");
+        store
+            .commit_terminal(TerminalTurnCommit {
+                turn,
+                expected_turn_revision: started.turn.revision,
+                run,
+                expected_run_revision: started.run.revision,
+                expected_effect_revision: started.effect.as_ref().map(|value| value.revision),
+                effect: Some(effect),
+                assistant_message: Some(assistant),
+                events: vec![NewRunEvent {
+                    occurred_at: now + 2,
+                    kind: RunEventKind::StateChanged {
+                        from: RunState::Running,
+                        to: RunState::Completed,
+                    },
+                }],
+                turn_event: ConversationTurnEventKind::StateChanged {
+                    from: ConversationTurnState::ProviderStarted,
+                    to: ConversationTurnState::Completed,
+                },
+            })
+            .await
+            .expect("terminal");
     }
 }

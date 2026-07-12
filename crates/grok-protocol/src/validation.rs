@@ -1044,4 +1044,64 @@ mod tests {
             message
         );
     }
+
+    #[test]
+    fn epoch_twenty_three_usage_summary_request_and_result_round_trip() {
+        let usage_request = v1::GetUsageSummaryRequest {
+            scope_kind: "project".into(),
+            scope_id: "project-1".into(),
+            window: "last_30_days".into(),
+        };
+        let decoded_request =
+            v1::GetUsageSummaryRequest::decode(usage_request.encode_to_vec().as_slice())
+                .expect("decode usage summary request");
+        assert_eq!(decoded_request, usage_request);
+
+        let mut envelope = request();
+        envelope.payload = Some(v1::envelope::Payload::Request(v1::Request {
+            operation: Some(v1::request::Operation::GetUsageSummary(
+                usage_request.clone(),
+            )),
+        }));
+        let round_tripped = v1::Envelope::decode(envelope.encode_to_vec().as_slice())
+            .expect("decode envelope with usage summary request");
+        let Some(v1::envelope::Payload::Request(inner)) = round_tripped.payload else {
+            panic!("request payload");
+        };
+        assert!(matches!(
+            inner.operation,
+            Some(v1::request::Operation::GetUsageSummary(value))
+                if value == usage_request
+        ));
+
+        let summary = v1::UsageSummary {
+            input_tokens: 12,
+            output_tokens: 4,
+            cost_in_usd_ticks: 9,
+            turn_count: 1,
+            scope_kind: "workspace".into(),
+            scope_id: String::new(),
+            window: "last_7_days".into(),
+            as_of_unix_ms: 1_234,
+        };
+        let response = v1::Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: "request-1".into(),
+            startup_nonce: vec![7; 32],
+            deadline_unix_ms: 100,
+            idempotency_key: String::new(),
+            payload: Some(v1::envelope::Payload::Response(v1::Response {
+                result: Some(v1::response::Result::UsageSummary(summary.clone())),
+            })),
+        };
+        let decoded_response = v1::Envelope::decode(response.encode_to_vec().as_slice())
+            .expect("decode usage summary response");
+        let Some(v1::envelope::Payload::Response(inner)) = decoded_response.payload else {
+            panic!("response payload");
+        };
+        assert!(matches!(
+            inner.result,
+            Some(v1::response::Result::UsageSummary(value)) if value == summary
+        ));
+    }
 }

@@ -1710,4 +1710,57 @@ mod tests {
         );
         assert_eq!(text.to_state, v1::ConversationTurnState::Unspecified as i32);
     }
+
+    #[test]
+    fn usage_summary_to_wire_preserves_scope_window_and_totals() {
+        let project = usage_summary_to_wire(UsageSummary {
+            input_tokens: 11,
+            output_tokens: 7,
+            cost_in_usd_ticks: 19,
+            turn_count: 2,
+            scope: UsageScope::Project(
+                grok_domain::ProjectId::new("project-usage").expect("project id"),
+            ),
+            window: UsageWindow::Last7Days,
+            as_of: 1_700_000_000_000,
+        });
+        assert_eq!(project.scope_kind, "project");
+        assert_eq!(project.scope_id, "project-usage");
+        assert_eq!(project.window, "last_7_days");
+        assert_eq!(project.input_tokens, 11);
+        assert_eq!(project.output_tokens, 7);
+        assert_eq!(project.cost_in_usd_ticks, 19);
+        assert_eq!(project.turn_count, 2);
+        assert_eq!(project.as_of_unix_ms, 1_700_000_000_000);
+
+        let workspace = usage_summary_to_wire(UsageSummary {
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_in_usd_ticks: 0,
+            turn_count: 0,
+            scope: UsageScope::Workspace,
+            window: UsageWindow::AllTime,
+            as_of: 42,
+        });
+        assert_eq!(workspace.scope_kind, "workspace");
+        assert!(workspace.scope_id.is_empty());
+        assert_eq!(workspace.window, "all_time");
+
+        let thread = usage_summary_to_wire(UsageSummary {
+            input_tokens: 3,
+            output_tokens: 1,
+            cost_in_usd_ticks: 0,
+            turn_count: 1,
+            scope: UsageScope::Thread(ThreadId::new("thread-usage").expect("thread id")),
+            window: UsageWindow::Last30Days,
+            as_of: 99,
+        });
+        assert_eq!(thread.scope_kind, "thread");
+        assert_eq!(thread.scope_id, "thread-usage");
+        assert_eq!(thread.window, "last_30_days");
+
+        let decoded =
+            v1::UsageSummary::decode(project.encode_to_vec().as_slice()).expect("decode summary");
+        assert_eq!(decoded, project);
+    }
 }
