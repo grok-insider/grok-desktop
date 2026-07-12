@@ -15,6 +15,7 @@
     "build:windows-daemon": "corepack pnpm --filter @grok-desktop/desktop build:windows-daemon",
     "build:windows-service": "corepack pnpm --filter @grok-desktop/desktop build:windows-service",
     "package:windows": "corepack pnpm --filter @grok-desktop/desktop package:windows",
+    "package:linux": "corepack pnpm --filter @grok-desktop/desktop package:linux",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives --ignore-pattern apps/desktop/electron/generated",
     "build": "corepack pnpm -r build",
     "typecheck": "corepack pnpm -r typecheck",

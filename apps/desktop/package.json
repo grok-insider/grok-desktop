@@ -20,7 +20,8 @@
     "generate:proto": "buf generate --template buf.gen.yaml",
     "build:windows-daemon": "node scripts/build-windows-daemon.mjs",
     "build:windows-service": "node scripts/build-windows-service.mjs",
-    "package:windows": "pnpm build && node scripts/package-windows.mjs"
+    "package:windows": "pnpm build && node scripts/package-windows.mjs",
+    "package:linux": "node scripts/package-linux.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.12.1",
