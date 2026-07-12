@@ -88,6 +88,12 @@ const mocks = vi.hoisted(() => {
         requestSingleInstanceLock: vi.fn(() => true),
         whenReady: vi.fn(() => Promise.resolve()),
       },
+      autoUpdater: {
+        on: vi.fn(),
+        setFeedURL: vi.fn(),
+        checkForUpdates: vi.fn(),
+        quitAndInstall: vi.fn(),
+      },
       BrowserWindow,
       dialog,
       ipcMain,

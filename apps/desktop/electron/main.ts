@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell, Tray, type WebContents } from "electron";
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell, Tray, type WebContents } from "electron";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -34,6 +34,7 @@ import { resolveTrayIconPath } from "./trayIcon.js";
 import { isTrustedTopLevelAppSender } from "./trustedSenderPolicy.js";
 import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy.js";
 import { withStartupDeadline } from "./startupDeadline.js";
+import { UpdateCoordinator } from "./updateCoordinator.js";
 import {
   applyGraphicsPolicy,
   DEVELOPMENT_GRAPHICS_FALLBACK_EXIT_CODE,
@@ -51,6 +52,7 @@ let keepRunningInNotificationArea = true;
 let applicationDocumentForWindow: string | undefined;
 let primaryWindowUsable = false;
 let graphicsFallbackStarting = false;
+let updateCoordinator: UpdateCoordinator | undefined;
 const productionDocument = "grok-desktop://app/index.html";
 const deepLinkDelivery = new DesktopDeepLinkDelivery();
 const conversationWatches = new Map<number, Map<string, ConversationWatch>>();
@@ -524,6 +526,17 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
         release();
       }
     }
+    if (request.kind === "desktop.getUpdateState") {
+      if (!updateCoordinator) throw new Error("update coordinator is unavailable");
+      return { kind: "desktop.updateState", state: updateCoordinator.getState() };
+    }
+    if (request.kind === "desktop.checkForUpdates") {
+      if (!updateCoordinator) throw new Error("update coordinator is unavailable");
+      return { kind: "desktop.updateState", state: updateCoordinator.check() };
+    }
+    if (request.kind === "desktop.installUpdate") {
+      return { kind: "desktop.updateInstallAccepted", accepted: updateCoordinator?.install() ?? false };
+    }
 
     const owner = BrowserWindow.fromWebContents(event.sender);
     if (request.kind === "window.minimize") {
@@ -907,6 +920,13 @@ if (primaryInstance) app.whenReady().then(async () => {
   const developmentServer = resolveDevelopmentServerUrl(app.isPackaged, process.env.VITE_DEV_SERVER_URL);
   const distributionRoot = path.join(directory, "../../dist");
   const applicationDocument = developmentServer ?? productionDocument;
+  updateCoordinator = new UpdateCoordinator(autoUpdater, {
+    packaged: app.isPackaged,
+    platform: process.platform,
+    architecture: process.arch,
+    version: app.getVersion(),
+  });
+  updateCoordinator.start();
   if (!developmentServer) {
     await protocol.handle("grok-desktop", async (request) => {
       if (request.method !== "GET") return new Response("Method not allowed", { status: 405, headers: { "X-Content-Type-Options": "nosniff" } });
@@ -960,6 +980,7 @@ app.on("second-instance", (_event, argv) => {
 });
 
 app.on("before-quit", (event) => {
+  updateCoordinator?.stop();
   const activeSupervisor = supervisor;
   if (!shouldDeferAppQuit(Boolean(activeSupervisor), shutdownCompleted) || !activeSupervisor) return;
   event.preventDefault();

@@ -422,9 +422,21 @@ export interface DesktopConversationTurnEventDelivery extends DesktopConversatio
   deliveryId: number;
 }
 
+export interface DesktopUpdateState {
+  phase: "unsupported" | "idle" | "checking" | "available" | "downloaded" | "not_available" | "failed";
+  currentVersion: string;
+  targetVersion: string;
+  channel: "stable";
+  checkedAtUnixMs: number;
+  reasonCode: "" | "development_install" | "platform_unsupported" | "check_failed";
+}
+
 export type BridgeRequest =
   | { kind: "runtime.info" }
   | { kind: "desktop.openExternalUrl"; url: string }
+  | { kind: "desktop.getUpdateState" }
+  | { kind: "desktop.checkForUpdates" }
+  | { kind: "desktop.installUpdate" }
   | { kind: "window.minimize" }
   | { kind: "window.maximize" }
   | { kind: "window.close" }
@@ -485,6 +497,8 @@ export type BridgeResponse =
   | { kind: "runtime.info"; platform: string; version: string }
   | { kind: "desktop.externalUrlOpened"; accepted: true }
   | { kind: "desktop.externalUrlOpenFailed"; reason: "rejected" | "busy" | "unavailable" }
+  | { kind: "desktop.updateState"; state: DesktopUpdateState }
+  | { kind: "desktop.updateInstallAccepted"; accepted: boolean }
   | { kind: "window.action"; accepted: true }
   | { kind: "daemon.bootstrap"; status: DaemonStatus; capabilities: DaemonCapabilityStatus[]; accountState: DaemonAccountState; workspace: DaemonWorkspaceSnapshot }
   | { kind: "daemon.accountState"; accountState: DaemonAccountState }

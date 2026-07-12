@@ -98,6 +98,12 @@ const mocks = vi.hoisted(() => {
     webContents,
     electron: {
       app,
+      autoUpdater: {
+        on: vi.fn(),
+        setFeedURL: vi.fn(),
+        checkForUpdates: vi.fn(),
+        quitAndInstall: vi.fn(),
+      },
       BrowserWindow,
       dialog: { showOpenDialog: vi.fn() },
       ipcMain: { handle: vi.fn(), on: vi.fn() },

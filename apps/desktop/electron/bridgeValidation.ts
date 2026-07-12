@@ -26,6 +26,9 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
   }
   if (
     kind === "runtime.info"
+    || kind === "desktop.getUpdateState"
+    || kind === "desktop.checkForUpdates"
+    || kind === "desktop.installUpdate"
     || kind === "window.minimize"
     || kind === "window.maximize"
     || kind === "window.close"
