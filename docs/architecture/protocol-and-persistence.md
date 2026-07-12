@@ -5,11 +5,12 @@ durable contracts they carry. Stable process architecture lives in
 [overview.md](overview.md). Layering rules live in [principles.md](principles.md).
 Decision detail lives in the linked ADRs.
 
-**Current surface (maintain as you bump):** desktop IPC **v15** rejects epochs
-**0–14** before dispatch. SQLCipher production schema tracks the latest
-forward-only migration (schema **18** at the time of the IPC v15 artifact
-removal journal). Always confirm against `grok-protocol` / `grok-sqlcipher`
-when changing code.
+**Current surface (maintain as you bump):** desktop IPC **v16** rejects epochs
+**0–15** before dispatch. SQLCipher production schema tracks the latest
+forward-only migration (schema **19**: automation scheduler journal kernel with
+execution still disabled). Earlier sections below that name v15/schema 18
+describe contracts still retained under later epochs. Always confirm against
+`grok-protocol` / `grok-sqlcipher` when changing code.
 
 No third-party model provider, arbitrary compatible endpoint, private Grok web
 API, or imported browser cookie is supported. Official surface research:

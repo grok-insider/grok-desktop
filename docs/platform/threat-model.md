@@ -1,9 +1,12 @@
 # Platform execution threat model
 
 - Status: foundation baseline
-- Last reviewed: 2026-07-10
-- Scope: Windows VM service, NixOS utility guest, managed integrations, and the
-  computer-use channel
+- Last reviewed: 2026-07-12
+- Scope: Windows VM service, **Linux QEMU/KVM broker (target)**, NixOS utility
+  guest, managed integrations, and the computer-use channel
+
+Linux full-product contract: [docs/quality/linux-ga.md](../quality/linux-ga.md).
+Linux platform ADRs: [0004](adr/0004-linux-qemu-kvm-managed-execution.md)–[0007](adr/0007-linux-workspace-share-and-host-commit.md).
 
 ## Security objective
 
@@ -128,11 +131,51 @@ Cross-compilation and fake-backed tests are not evidence of Windows isolation;
 the qualification gates below still apply before release.
 
 The Rust `grok-vm-service-client` exposes only a bounded `get_capabilities`
-probe and returns unavailable on non-Windows platforms. A successful response
-proves static broker compatibility after client-side server qualification. It
-does not prove a live guest, authorize a lifecycle or guest-control operation,
-or satisfy daemon proof and durable replay requirements. Work remains in
-Limited Mode when any of those independent facts is absent.
+probe and returns unavailable on non-Windows platforms until a real Linux
+broker backend is implemented and qualified. A successful response proves
+static broker compatibility after client-side server qualification. It does not
+prove a live guest, authorize a lifecycle or guest-control operation, or satisfy
+daemon proof and durable replay requirements. Work remains in Limited Mode when
+any of those independent facts is absent.
+
+## Linux host trust boundaries (target)
+
+These boundaries apply once the QEMU/KVM broker ships. Until then, Linux hosts
+remain Limited Mode for Work-class capabilities.
+
+1. The sandboxed renderer and model-supplied content remain untrusted (same as
+   Windows).
+2. The per-user daemon enforces grants and holds proof-of-possession material.
+   It is not privileged to configure host virtualization without the broker.
+3. The **privileged Linux VM broker** (systemd system service or equivalent) is
+   the only process allowed to create QEMU machines, attach RO workspaces, and
+   dial guest vsock control. It authenticates unix peers with `SO_PEERCRED`,
+   exact `grok-daemon` binary path identity, and challenge-bound PoP for
+   `GuestControl` ([ADR 0005](adr/0005-linux-broker-identity-and-proof.md)).
+4. QEMU/KVM is a closed template: no general guest NIC, no caller-selected
+   monitor/QMP exposure, bounded resources, fail closed without `/dev/kvm`
+   ([ADR 0004](adr/0004-linux-qemu-kvm-managed-execution.md)).
+5. The NixOS guest remains the isolation boundary for tools. Guest channel v2
+   authentication is service-mediated; host CID alone is not caller auth.
+6. Workspace shares are read-only (virtio-9p or virtio-fs). Host mutation uses
+   daemon-reviewed commit only
+   ([ADR 0007](adr/0007-linux-workspace-share-and-host-commit.md)).
+
+Local root, kernel, and hypervisor compromise remain outside the product
+boundary (same class as Windows local admin / hypervisor compromise).
+
+## Linux threats and controls (target)
+
+| Threat | Primary controls | Residual risk / qualification |
+| --- | --- | --- |
+| Same-UID process talks to the broker socket | Service-owned socket path/mode, peercred, `/proc/pid/exe` path match, start-time/inode continuity | Same-UID malware can DoS the socket; must not obtain GuestControl without PoP. |
+| Unpackaged or replaced daemon binary | Exact installed path and/or digest allowlist at accept and again at grant | Packaging layout and update races require install/update tests. |
+| Guest control without PoP | Challenge-bound PoP, journal idempotency, no raw vsock return | PoP storage and rotation remain implementation work. |
+| Arbitrary QEMU devices / NIC / monitor | Closed machine template; no caller XML/argv escape | QEMU version skew and feature flags need release pins. |
+| Malicious or rolled-back guest image | Signed catalog, size+SHA-256, anti-rollback sequence, service-owned staging | Interrupted EnsureImage and key rotation need Linux matrix tests. |
+| Host file modification via share | RO attach only; overlay + reviewed daemon commit | Hostile filenames/content still attack parsers and UX. |
+| Host-exec “fallback” when KVM missing | Hard Limited Mode; capabilities stay unavailable | Product/docs must never suggest bubblewrap Work. |
+| Simulated broker mistaken for isolation | `simulated: true` never sets Work Available | CI must not promote simulator-backed evidence. |
 
 ## Qualification gates
 

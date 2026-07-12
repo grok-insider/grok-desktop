@@ -2,6 +2,15 @@
 
 - Snapshot date: 2026-07-12
 - Release status: not qualified for distribution
+- Wire/schema tip: **IPC protocol epoch 16**, **SQLCipher schema 19** (scheduler
+  journal kernel; execution still disabled). Older narrative below that still
+  says “current IPC v15 / schema 18” describes retained contracts under those
+  later epochs unless an epoch explicitly replaced them.
+- Linux full product GA contract and milestones:
+  [linux-ga.md](linux-ga.md). Platform isolation on Linux is **specified**
+  (platform ADRs 0004–0007) and **not implemented**; Work remains Limited Mode
+  on Linux until the QEMU/KVM broker, virtio guest image, PoP, and privileged
+  gateway qualify.
 
 This ledger distinguishes implemented code from an end-to-end product workflow
 and from release evidence. A locally passing adapter or cross-compiled binary
@@ -290,6 +299,26 @@ Architecture principles:
 These workflows are engineering-preview behavior. The repository has no signed
 release artifact and has not passed the release matrix.
 
+## Linux full product GA blockers
+
+Tracked against [linux-ga.md](linux-ga.md). Summary only; Windows-specific gates
+remain under **Windows qualification blockers**.
+
+| Train | Status |
+| --- | --- |
+| T0 Architecture + GA contract | **Done in docs** (this snapshot): `linux-ga.md`, platform ADRs 0004–0007, threat-model Linux section, ADR 0003 extended |
+| T1 Linux packaging / updater | Missing (`package:windows` only) |
+| T2 BYOK / pinentry / Files qualification on package | Code largely present; packaged matrix open |
+| T3 Linux QEMU/KVM broker + virtio image | Missing (simulator only off-Windows) |
+| T4 Privileged gateway + PoP + live isolation facts | Journal exists; no I/O gateway; Work hard-unavailable |
+| T5 Subscription host auth + guest ACP Work | Auth not exposed on desktop IPC; host_control only |
+| T6 Overlay host commit UX | Specified; not product-wired |
+| T7 Automation execution | Schema 19 journal; execution disabled |
+| T8 Media / voice / search product ops | UI fail-closed / capabilities unavailable |
+| T9 Managed browser + Wisp lifecycle | Contracts; not production install path |
+| T10–T11 Policy settings, export, diagnostics | Mostly stubs |
+| T12 Linux release matrix + evidence | Not started |
+
 ## Product blockers
 
 - Chat still needs official thread/account identity when an official contract
@@ -298,11 +327,12 @@ release artifact and has not passed the release matrix.
   plus explicit child-thread Branch/Edit/Regenerate are implemented;
   completed and uncertain turns remain ineligible for Retry. General
   background-operation event synchronization remains separate; IPC v4's
-  run-event long poll carries audit events only, while current IPC v15 retains
-  epoch 7's direct-Chat-only turn-local text stream.
+  run-event long poll carries audit events only, while current IPC (epoch 16)
+  retains epoch 7's direct-Chat-only turn-local text stream.
 - Subscription authentication and session execution need a daemon-owned ACP
   lifecycle. Session prompts remain guest-only and unavailable until the
-  qualified guest proxy exists.
+  qualified guest proxy exists. On Linux that proxy is the future QEMU/KVM
+  broker (platform ADR 0004), not host execution.
 - BYOK add/replace needs native qualification of packaged process/window
   identity, prompt accessibility, cancellation, HWND reuse, buffer cleanup, and
   crash behavior on Windows. Linux additionally needs representative

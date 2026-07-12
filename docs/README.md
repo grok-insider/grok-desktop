@@ -32,12 +32,13 @@ Start here if you are new to the repository. Canonical agent checklist:
 1. [platform/threat-model.md](platform/threat-model.md)  
 2. [SECURITY.md](../SECURITY.md)  
 3. [platform/windows-release.md](platform/windows-release.md)  
-4. [platform/adr/](platform/adr/) (guest, channel, privileged journal)  
+4. [platform/adr/](platform/adr/) (guest, channel, privileged journal, Linux QEMU/KVM)  
 
 ### Release readiness
 
 1. [quality/implementation-status.md](quality/implementation-status.md)  
-2. [quality/release-qualification.md](quality/release-qualification.md)  
+2. [quality/linux-ga.md](quality/linux-ga.md) — Linux full product GA contract  
+3. [quality/release-qualification.md](quality/release-qualification.md)  
 
 ## Catalog
 
@@ -65,15 +66,16 @@ Start here if you are new to the repository. Canonical agent checklist:
 |-----|-------------|
 | [decisions/README.md](decisions/README.md) | Product ADR index |
 | [quality/implementation-status.md](quality/implementation-status.md) | What is implemented vs blocked |
+| [quality/linux-ga.md](quality/linux-ga.md) | Linux full product GA bar and milestones |
 | [quality/release-qualification.md](quality/release-qualification.md) | Release gates |
 
 ### Platform and research
 
 | Doc | Description |
 |-----|-------------|
-| [platform/threat-model.md](platform/threat-model.md) | Execution threat model |
+| [platform/threat-model.md](platform/threat-model.md) | Execution threat model (Windows + Linux target) |
 | [platform/windows-release.md](platform/windows-release.md) | MSIX, signing, fuses |
-| [platform/adr/](platform/adr/) | Privileged guest ADRs |
+| [platform/adr/](platform/adr/) | Privileged guest ADRs (incl. Linux QEMU/KVM 0004–0007) |
 | [research/official-grok-surfaces.md](research/official-grok-surfaces.md) | Official Grok contracts |
 | [research/claude-cowork-windows.md](research/claude-cowork-windows.md) | Cowork reference deltas |
 
