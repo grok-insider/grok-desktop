@@ -1,5 +1,10 @@
 # Local Electron CDP harness
 
+Canonical debugging and QA procedures (including Wisp/Hyprland and when not to
+touch the host desktop):
+[docs/development/debugging-and-qa.md](../../../docs/development/debugging-and-qa.md).
+This file is the CDP launcher and quality-probe detail.
+
 From the repository root, build the locked Rust daemon and deterministic Electron
 assets, then launch a named persistent QA profile:
 

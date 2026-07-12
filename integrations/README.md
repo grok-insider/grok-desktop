@@ -1,5 +1,12 @@
 # Managed integrations
 
+Architecture and product invariants:
+[docs/architecture/principles.md](../docs/architecture/principles.md),
+[docs/README.md](../docs/README.md). First-party Wisp product adapter:
+[first-party/wisp/ADAPTER.md](first-party/wisp/ADAPTER.md). Developer-host Wisp
+for QA is separate tooling — see
+[docs/development/debugging-and-qa.md](../docs/development/debugging-and-qa.md).
+
 Managed integrations are signed bundles executed by the NixOS guest integration
 runner. `schema/integration-manifest.schema.json` is the install-time contract;
 unknown fields are rejected so a misspelled permission cannot broaden access.

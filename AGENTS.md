@@ -4,6 +4,13 @@ This repository contains Grok Desktop, a Windows-first desktop workspace for
 official Grok and SpaceXAI services, including the xAI API. Read this file
 before changing the repository.
 
+**Documentation map:** [docs/README.md](docs/README.md)  
+**Principles (Clean Architecture, SOLID, clean code):**
+[docs/architecture/principles.md](docs/architecture/principles.md)  
+**Local run / debug:**
+[docs/development/local-development.md](docs/development/local-development.md),
+[docs/development/debugging-and-qa.md](docs/development/debugging-and-qa.md)
+
 ## Product invariants
 
 - Grok Desktop integrates only with official Grok/xAI contracts. Do not add
@@ -48,6 +55,11 @@ roots. Framework DTOs, SQL rows, Electron objects, and provider wire types must
 not enter domain code. Prefer small capability-focused ports over generic
 manager or provider interfaces.
 
+Expanded ownership: [docs/architecture/modules.md](docs/architecture/modules.md).  
+System design: [docs/architecture/overview.md](docs/architecture/overview.md).  
+IPC / schema chronicle:
+[docs/architecture/protocol-and-persistence.md](docs/architecture/protocol-and-persistence.md).
+
 ## Security requirements
 
 - Never put credentials in source, fixtures, renderer state, IPC responses,
@@ -85,9 +97,11 @@ nix flake check
 
 Dev loops: `pnpm dev` (Vite + Electron), `pnpm dev:web` (browser-only renderer
 preview), `pnpm dev:cdp` (persistent CDP QA profile, see
-`apps/desktop/scripts/README.md`), `pnpm test:e2e:electron` (CDP smoke).
-Protocol regeneration is `pnpm --filter @grok-desktop/desktop generate:proto`
-(buf); never hand-edit `apps/desktop/electron/generated`.
+[docs/development/debugging-and-qa.md](docs/development/debugging-and-qa.md)
+and [apps/desktop/scripts/README.md](apps/desktop/scripts/README.md)),
+`pnpm test:e2e:electron` (CDP smoke). Protocol regeneration is
+`pnpm --filter @grok-desktop/desktop generate:proto` (buf); never hand-edit
+`apps/desktop/electron/generated`.
 
 Run the smallest relevant gate while iterating and all available gates before
 declaring a cross-cutting change complete. Tests that require Windows HCS must
@@ -115,7 +129,8 @@ run on the documented Windows qualification workers.
   lockfiles, SBOMs, or changelogs unless their documented generator is used.
 - External code contributions are not accepted. Issues, reproducible reports,
   threat reports, and design feedback are welcome.
-
+- Day-to-day checklists:
+  [docs/development/coding-guidelines.md](docs/development/coding-guidelines.md).
 
 ## GitHub / branch policy
 

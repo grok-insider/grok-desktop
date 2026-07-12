@@ -7,6 +7,12 @@ This ledger distinguishes implemented code from an end-to-end product workflow
 and from release evidence. A locally passing adapter or cross-compiled binary
 does not make its UI capability available.
 
+IPC epochs, SQLCipher schemas, and durable contract narrative:
+[protocol-and-persistence.md](../architecture/protocol-and-persistence.md).
+Architecture principles:
+[principles.md](../architecture/principles.md). Doc map:
+[docs/README.md](../README.md).
+
 ## Implemented foundations
 
 - Sandboxed Electron/React presentation shell with narrow preload validation,

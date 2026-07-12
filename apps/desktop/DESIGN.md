@@ -4,6 +4,10 @@
 **Direction:** Light-first, IBM Plex, single charcoal-green accent. Precision instrument, not marketing page.
 **Stack:** Tailwind v4 (`@theme` tokens) + shadcn/ui primitives (new-york) + CSS variables below.
 
+Related engineering docs: [docs/README.md](../../docs/README.md),
+[coding-guidelines.md](../../docs/development/coding-guidelines.md),
+[debugging-and-qa.md](../../docs/development/debugging-and-qa.md).
+
 ---
 
 ## 1. Visual Theme & Atmosphere
