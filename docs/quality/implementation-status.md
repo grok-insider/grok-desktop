@@ -309,13 +309,13 @@ remain under **Windows qualification blockers**.
 | T0 Architecture + GA contract | **Done** (`linux-ga.md`, platform ADRs 0004–0007) |
 | T1 Linux packaging / updater | **Done entry** (`pnpm package:linux` embeds daemon; no auto-updater) |
 | T2 BYOK / pinentry / Files qualification | **Code + structural tests**; full packaged DE matrix still open |
-| T3 Linux QEMU/KVM broker + virtio image | **Broker + unix socket main**; StartVm still requires Spawn; GuestControl needs live process + health dial (no hardcoded OK). Socket wire: Go `[]byte` ↔ base64 JSON (fixtures under `native/linux-vm-service/testdata/wire/`) |
-| T4 Privileged gateway + PoP + live isolation facts | **IsolationRuntime** journals `runner.health`; Linux dialer uses `GROK_LINUX_VM_SOCKET` (typed parse). Residual: daemon does not yet orchestrate EnsureImage→Create/StartVm→grant; lab `peerExe` is client-supplied (SCM_CREDENTIALS residual) |
+| T3 Linux QEMU/KVM broker + virtio image | **Broker + unix socket main** exposes ensure_image/create_vm/start_vm/guest_control; StartVm requires Spawn (lab injects fake process). Wire: Go `[]byte` ↔ base64 JSON fixtures. Residual: production QEMU matrix |
+| T4 Privileged gateway + PoP + live isolation facts | **IsolationRuntime** journals `runner.health`; Linux dialer **orchestrates** EnsureImage→Create/Start→grant→health. Peer: **SO_PEERCRED + /proc/pid/exe** (client peerExe not authoritative). Residual: real KVM+image release matrix |
 | T5 Subscription host auth + guest ACP Work | **Host auth IPC + Setup Connect**; Work still needs isolation+auth facts |
 | T6 Overlay host commit UX | Specified; not product-wired |
 | T7 Automation execution | **Epoch 18** `schedule_active` + `KernelInitializedExecutionEnabled` when journal recovers; `execute_due` claims and links durable runs. Residual: full product schedule UX + occurrence history still thin |
 | T8 Media / voice / search product ops | Capabilities unavailable; **Library files-only** (Imagine create tabs removed) |
-| T9 Managed browser + Wisp lifecycle | Removed from primary nav; preview route only |
+| T9 Managed browser + Wisp lifecycle | Out of primary nav; `/extensions` preview only; install/update **fail-closed** (no daemon lifecycle IPC); first-party signed adapter schema under `integrations/first-party/wisp` |
 | T10–T11 Policy settings, export, diagnostics | Unavailable labels; Settings copy marks unfinished rows |
 | T12 Linux release matrix + evidence | Engineering evidence under goal scratch; full matrix open |
 

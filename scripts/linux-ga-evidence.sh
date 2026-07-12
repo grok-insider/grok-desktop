@@ -49,8 +49,8 @@ else
 fi
 
 # Socket smoke is included in daemon-wire-test; restate summary for verifier.
-if rg -q "socket_smoke_parses_guest_control_error_envelope ... ok" "$SCRATCH/daemon-wire-test.log" 2>/dev/null; then
-  echo "socket_smoke: ok (typed broker error, codec clean)" | tee "$SCRATCH/socket-smoke.log"
+if rg -q "socket_smoke_orchestrates_ensure_create_start_health ... ok|socket_smoke_parses_guest_control_error_envelope ... ok" "$SCRATCH/daemon-wire-test.log" 2>/dev/null; then
+  echo "socket_smoke: ok (product EnsureImage→Start→health orchestration, codec clean)" | tee "$SCRATCH/socket-smoke.log"
 else
   echo "socket_smoke: missing or failed — see daemon-wire-test.log" | tee "$SCRATCH/socket-smoke.log"
   status=1
@@ -68,12 +68,15 @@ GREEN paths captured this run:
 - desktop Library/Automations/ProductFlows/DaemonSupervisor vitest (when pnpm present)
 
 Honest residuals (NOT done for full Linux GA):
-- EnsureImage → Create/StartVm → grant → health orchestration not product-wired end-to-end (dialer issues guest_control only; no KVM lifecycle drive from daemon)
-- peerExe still client-supplied on lab socket (SCM_CREDENTIALS residual)
-- QEMU machine spawn template still deferred when Spawn unset
+- Production QEMU (non-lab Spawn) release matrix and signed guest image catalog promotion
+- Signed Wisp install/update IPC productization (adapter schema exists; install remains fail-closed)
+- T6 overlay host-commit UX still deferred
 - Imagine/voice/search product ops not shipped (Library de-advertises media creation)
 - Work Available still requires subscription + strong isolation guest health success
-- Wisp evidence: see wisp-*.log (browser preview; not full Electron+daemon)
+
+Shipped product isolation path (lab-qualified):
+- EnsureImage → Create/StartVm → grant → runner.health via GROK_LINUX_VM_SOCKET
+- Peer: SO_PEERCRED + /proc/pid/exe (client peerExe not authoritative)
 
 T7 status: durable execute_due + schedule_active + KernelInitializedExecutionEnabled when journal recovers cleanly.
 T8 status: de-advertise only (no Imagine create UI).

@@ -2972,6 +2972,8 @@ function unavailable<T>(reason: string, status: "configuration_required" | "unav
 }
 
 function productionWispDetail(): ManagedIntegrationDetail {
+  // Product surface is honesty-only until signed install lifecycle IPC ships.
+  // Install/update/rollback remain unavailable so Chat is never coupled to Wisp.
   return {
     id: "wisp",
     name: "Wisp",
@@ -2979,10 +2981,14 @@ function productionWispDetail(): ManagedIntegrationDetail {
     state: "available",
     availableVersion: "Not installed",
     checks: [
-      { label: "Managed add-on service", state: "action_required", detail: "Installer support is not available in the current daemon protocol" },
-      { label: "Signed component", state: "ready", detail: "Only signed compatibility metadata will be accepted" },
+      { label: "Managed add-on service", state: "action_required", detail: "Signed out-of-process install lifecycle is not exposed by the current daemon protocol" },
+      { label: "Signed component", state: "ready", detail: "Only signed first-party manifests under integrations/first-party/wisp are accepted when lifecycle ships" },
+      { label: "Chat isolation", state: "ready", detail: "Wisp absence must not block Chat or other unprivileged surfaces" },
     ],
     permissions: ["Observe approved applications", "Send input after scoped approval", "Manage isolated VM sessions"],
-    releaseNotes: ["Installation and update metadata will appear after the managed add-on service is connected."],
+    releaseNotes: [
+      "Install, update, and rollback are intentionally unavailable until daemon-owned signed lifecycle IPC is product-wired.",
+      "First-party adapter schema lives under integrations/first-party/wisp (out-of-process; no renderer injection).",
+    ],
   };
 }
