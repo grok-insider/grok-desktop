@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
-import type { AccountSetupState } from "../services/desktopClient";
+import type { AccountSetupState, SuperGrokEnrollmentStatus } from "../services/desktopClient";
 import { MockDesktopClient } from "../services/mockDesktopClient";
 import { SettingsView } from "./SettingsView";
 
@@ -18,6 +18,19 @@ class FailingPreferencesClient extends MockDesktopClient {
 class FailingAccountClient extends MockDesktopClient {
   override async getAccountSetup(): Promise<AccountSetupState> {
     throw new Error("vault unavailable");
+  }
+}
+
+class ConnectedSuperGrokClient extends MockDesktopClient {
+  override async getSuperGrokEnrollmentStatus(): Promise<SuperGrokEnrollmentStatus> {
+    return {
+      state: "connected",
+      verificationUri: "",
+      userCode: "",
+      expiresAtUnixMs: Date.now() + 60_000,
+      credentialGeneration: 2,
+      reasonCode: "",
+    };
   }
 }
 
@@ -110,6 +123,15 @@ describe("SettingsView", () => {
     expect(screen.getByText("Stored in the operating system credential vault")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Manage" })).toBeEnabled();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("labels a connected SuperGrok API rail separately from the API key", async () => {
+    renderSettings(new ConnectedSuperGrokClient());
+
+    expect(await screen.findByText("Connected and active for new Chat conversations")).toBeInTheDocument();
+    expect(screen.getByText("SuperGrok plan · API")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage SuperGrok" })).toBeEnabled();
+    expect(screen.getByText("Configured")).toBeInTheDocument();
   });
 
   it("offers secure enrollment when the daemon reports no configured key", async () => {
