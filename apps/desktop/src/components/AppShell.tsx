@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Activity,
   AlertTriangle,
-  Blocks,
   Clock3,
   FolderKanban,
   Library,

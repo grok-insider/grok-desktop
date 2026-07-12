@@ -3,7 +3,6 @@ import type {
   ArtifactOpenResult,
   ArtifactRemovalResult,
   AutomationDraft,
-  AutomationRunRecord,
   AutomationSummary,
   ClientResult,
   ChatModelCatalog,

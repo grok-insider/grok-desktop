@@ -23,7 +23,6 @@ import type {
   ArtifactOpenResult,
   ArtifactRemovalResult,
   AutomationDraft,
-  AutomationRunRecord,
   AutomationSchedule,
   AutomationSummary,
   CapabilityStatus,

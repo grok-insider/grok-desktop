@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
-import type { ArtifactRemovalResult, DesktopSnapshot, LibraryItem, MediaCreation } from "../services/desktopClient";
+import type { ArtifactRemovalResult, DesktopSnapshot, LibraryItem } from "../services/desktopClient";
 import { MockDesktopClient } from "../services/mockDesktopClient";
 import { LibraryView } from "./LibraryView";
 

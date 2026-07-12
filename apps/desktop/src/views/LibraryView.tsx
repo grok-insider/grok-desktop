@@ -944,7 +944,7 @@ function MetadataRow({ label, value, mono = false }: { label: string; value: str
   );
 }
 
-function MediaLibrary({ kind }: { kind: "image" | "video" }) {
+export function MediaLibrary({ kind }: { kind: "image" | "video" }) {
   const client = useDesktopClient();
   const [result, setResult] = useState<ClientResult<MediaCreation[]> | null>(null);
   const [prompt, setPrompt] = useState("");

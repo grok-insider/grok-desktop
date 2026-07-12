@@ -5,7 +5,6 @@ import { DesktopClientProvider } from "../services/DesktopClientContext";
 import type { AutomationDraft, AutomationSummary, ClientResult, DesktopSnapshot } from "../services/desktopClient";
 import { initialSnapshot } from "../services/mockData";
 import { MockDesktopClient } from "../services/mockDesktopClient";
-import { AUTOMATION_DEFINITION_ONLY_REASON } from "../services/productAvailability";
 import { AutomationsView } from "./AutomationsView";
 
 class SnapshotClient extends MockDesktopClient {

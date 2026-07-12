@@ -1,20 +1,11 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
-  Accessibility,
   Bot,
-  ChevronRight,
   CircleAlert,
-  Database,
-  Download,
-  Globe2,
-  HardDrive,
   KeyRound,
   Laptop,
-  Moon,
-  Network,
   RefreshCw,
   ShieldCheck,
-  Sun,
   UserRound,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -22,14 +13,13 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Button, PageHeader, Toggle } from "../components/ui";
-import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
+import { useDesktopClient } from "../services/DesktopClientContext";
 import type {
   AccountSetupState,
   ChatModelCatalog,
   DesktopPreferences,
   SuperGrokEnrollmentStatus,
 } from "../services/desktopClient";
-import { SETTINGS_PERSISTENCE_UNAVAILABLE_REASON } from "../services/productAvailability";
 
 // Only sections with at least one daemon-backed control are advertised.
 // Unfinished product surfaces (execution tools, browser grants, data export,
@@ -145,33 +135,6 @@ function SettingRow({ title, description, children }: { title: string; descripti
       </div>
       <div className="shrink-0 max-[680px]:w-full max-[680px]:[&_[data-slot=button]]:w-full">{children}</div>
     </div>
-  );
-}
-
-function UnavailableSelect({ label }: { label: string }) {
-  return (
-    <select
-      className="h-[34px] min-w-36 rounded-md border border-input bg-card px-2 text-body text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 max-[680px]:w-full"
-      aria-label={label}
-      disabled
-    >
-      <option>Unavailable</option>
-    </select>
-  );
-}
-
-function SettingsUnavailableNotice() {
-  return (
-    <aside
-      className="mb-4 flex min-h-16 items-start gap-3 rounded-lg border border-warning/25 bg-warning-soft p-4"
-      aria-label="Preferences unavailable"
-    >
-      <CircleAlert className="mt-0.5 shrink-0 text-warning" size={18} aria-hidden="true" />
-      <div className="min-w-0">
-        <h3 className="m-0 text-body font-semibold text-foreground">Preferences unavailable</h3>
-        <p className="m-0 mt-1 text-body-sm text-muted-foreground">{SETTINGS_PERSISTENCE_UNAVAILABLE_REASON}</p>
-      </div>
-    </aside>
   );
 }
 

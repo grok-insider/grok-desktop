@@ -15,7 +15,6 @@ import type {
 import { ElectronDesktopClient } from "./electronDesktopClient";
 import type { ConversationDetail } from "./desktopClient";
 import {
-  AUTOMATION_DEFINITION_ONLY_REASON,
   GROK_EXECUTION_UNAVAILABLE_REASON,
 } from "./productAvailability";
 
