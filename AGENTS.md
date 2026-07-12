@@ -15,9 +15,13 @@ before changing the repository.
 
 - Grok Desktop integrates only with official Grok/xAI contracts. Do not add
   other model providers, arbitrary OpenAI-compatible endpoints, scraped web
-  APIs, browser-cookie import, or unapproved OAuth clients.
-- Subscription access is owned by the official Grok Build ACP client. Direct
-  API access accepts only user-owned xAI API keys.
+  APIs, browser-cookie import, or unapproved OAuth clients. The public xAI
+  desktop/CLI OAuth client and fixed endpoints recorded in ADR 0026 are the
+  only approved subscription API grant.
+- Grok Build subscription execution is owned by the official Grok Build ACP
+  client. Direct API access accepts user-owned xAI API keys or a fresh,
+  user-authorized SuperGrok OAuth grant with `api:access`; OAuth tokens remain
+  daemon-owned and are never imported from another client.
 - The Rust daemon is the source of truth. Renderers do not own durable state,
   secrets, policy, provider calls, approvals, or tool execution.
 - Chat is unprivileged. Work capabilities are explicit, scoped, revocable, and

@@ -36,9 +36,10 @@ Start here if you are new to the repository. Canonical agent checklist:
 
 ### Release readiness
 
-1. [quality/implementation-status.md](quality/implementation-status.md)  
-2. [quality/linux-ga.md](quality/linux-ga.md) — Linux full product GA contract  
-3. [quality/release-qualification.md](quality/release-qualification.md)  
+1. [plan/README.md](plan/README.md) — audited recovery and completion plan
+2. [quality/implementation-status.md](quality/implementation-status.md)
+3. [quality/linux-ga.md](quality/linux-ga.md) — Linux full product GA contract
+4. [quality/release-qualification.md](quality/release-qualification.md)
 
 ## Catalog
 
@@ -69,6 +70,18 @@ Start here if you are new to the repository. Canonical agent checklist:
 | [quality/linux-ga.md](quality/linux-ga.md) | Linux full product GA bar and milestones |
 | [quality/release-qualification.md](quality/release-qualification.md) | Release gates |
 
+### Active implementation plan
+
+| Doc | Description |
+|-----|-------------|
+| [plan/README.md](plan/README.md) | Audited baseline, plan index, and status vocabulary |
+| [plan/01-review-findings.md](plan/01-review-findings.md) | Commit and dirty-work review |
+| [plan/02-implementation-roadmap.md](plan/02-implementation-roadmap.md) | Dependency-ordered delivery phases |
+| [plan/03-testing-and-qualification.md](plan/03-testing-and-qualification.md) | Local, Wisp-headless, and external gates |
+| [plan/04-agent-handoff.md](plan/04-agent-handoff.md) | Multi-agent ownership and handoff contract |
+| [plan/05-commit-plan.md](plan/05-commit-plan.md) | Forward-only Conventional Commit sequence |
+| [plan/06-open-risks-and-external-gates.md](plan/06-open-risks-and-external-gates.md) | Open security and release gates |
+
 ### Platform and research
 
 | Doc | Description |
@@ -78,6 +91,7 @@ Start here if you are new to the repository. Canonical agent checklist:
 | [platform/adr/](platform/adr/) | Privileged guest ADRs (incl. Linux QEMU/KVM 0004–0007) |
 | [research/official-grok-surfaces.md](research/official-grok-surfaces.md) | Official Grok contracts |
 | [research/claude-cowork-windows.md](research/claude-cowork-windows.md) | Cowork reference deltas |
+| [research/supergrok-api-chat-contract.md](research/supergrok-api-chat-contract.md) | SuperGrok usage split and gated Chat-contract research |
 
 ### Product integrations
 
