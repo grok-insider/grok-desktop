@@ -16,10 +16,13 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs::{self, File},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::Mutex,
 };
+
+#[cfg(any(test, target_os = "linux"))]
+use std::io::Write;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -1904,6 +1907,7 @@ fn publish_prepared_bundle(
     Ok(prepared.target.clone())
 }
 
+#[cfg(target_os = "linux")]
 fn verify_published_snapshot(
     root: &Path,
     verified: &VerifiedManifest,
@@ -2030,6 +2034,7 @@ mod tests {
         (service, store, state)
     }
 
+    #[cfg(target_os = "linux")]
     fn stage_count(state: &tempfile::TempDir) -> usize {
         let root = state.path().join("managed-integrations/desktop.grok.wisp");
         match fs::read_dir(root) {
@@ -2163,6 +2168,7 @@ mod tests {
         release
     }
 
+    #[cfg(target_os = "linux")]
     fn resign_fixture_manifest(bundle: &Path, version: &str) {
         let path = bundle.join("manifest.json");
         let mut manifest: SignedManifest =

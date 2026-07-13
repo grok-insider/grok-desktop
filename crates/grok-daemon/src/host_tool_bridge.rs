@@ -256,6 +256,11 @@ impl HostToolBridge {
 
     /// Starts an owner-only Windows named pipe and authenticates every client
     /// against the retained packaged helper identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a path-free unavailable error when the owner-only named pipe
+    /// cannot be created securely.
     #[cfg(windows)]
     pub fn start(
         _base: &Path,
@@ -286,12 +291,10 @@ impl HostToolBridge {
                 if connected.is_err() {
                     break;
                 }
-                let next = match grok_windows_acl::create_private_named_pipe_server(
-                    &endpoint_for_task,
-                    false,
-                ) {
-                    Ok(next) => next,
-                    Err(_) => break,
+                let Ok(next) =
+                    grok_windows_acl::create_private_named_pipe_server(&endpoint_for_task, false)
+                else {
+                    break;
                 };
                 if helper.reverify().is_err() {
                     let _ = listener.disconnect();
