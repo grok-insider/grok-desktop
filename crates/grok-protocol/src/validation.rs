@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 26);
+        assert_eq!(PROTOCOL_VERSION, 27);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -1146,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_twenty_six_host_work_request_and_result_round_trip() {
+    fn epoch_twenty_seven_host_work_request_cancel_and_result_round_trip() {
         let start = v1::StartHostWorkRequest {
             project_id: "project-1".into(),
             thread_id: "thread-1".into(),
@@ -1164,6 +1164,20 @@ mod tests {
         assert!(matches!(
             request.operation,
             Some(v1::request::Operation::StartHostWork(value)) if value == start
+        ));
+
+        let cancel = v1::Request {
+            operation: Some(v1::request::Operation::CancelHostWork(
+                v1::CancelHostWorkRequest {
+                    run_id: "run-1".into(),
+                },
+            )),
+        };
+        let decoded = v1::Request::decode(cancel.encode_to_vec().as_slice())
+            .expect("decode Host Work cancellation");
+        assert!(matches!(
+            decoded.operation,
+            Some(v1::request::Operation::CancelHostWork(value)) if value.run_id == "run-1"
         ));
 
         let result = v1::HostWorkResult {

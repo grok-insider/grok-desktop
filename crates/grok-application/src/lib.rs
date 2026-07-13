@@ -100,6 +100,8 @@ pub use grok_build_auth::{GrokBuildAuthService, GrokBuildAuthStatus};
 pub use grok_domain::DEFAULT_XAI_CHAT_MODEL_ID;
 pub use host_tools::{
     HostDirectoryEntry, HostFilesystemError, HostFilesystemErrorKind, HostFilesystemReader,
+    HostFilesystemWriter, HostProcessError, HostProcessErrorKind, HostProcessExecutor,
+    HostProcessOutput, HostProcessRequest,
 };
 pub use isolation::{
     IsolationBackend, IsolationBrokerCapabilities, IsolationBrokerOperation,

@@ -10,7 +10,7 @@ mod transport;
 pub use handler::{
     AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, HandlerError,
 };
-pub use host_tool_bridge::HostToolBridge;
+pub use host_tool_bridge::{HostToolBridge, HostToolServices};
 pub use host_work_runtime::{
     GrokAcpRoleFactory, HostWorkRoleFactory, HostWorkRuntime, VerifiedHostToolsHelper,
 };

@@ -1211,8 +1211,11 @@ dependencies = [
  "async-trait",
  "cap-std",
  "grok-application",
+ "rustix",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

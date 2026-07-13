@@ -1638,6 +1638,68 @@ async fn interrupted_effect_and_run_commit_atomically_across_restart() {
     );
 }
 
+#[tokio::test]
+async fn host_recovery_queries_return_only_unfinished_host_direct_work() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let store = open(
+        &directory.path().join("state.db"),
+        Arc::new(EphemeralKeyProvider::new([44; 32])),
+    )
+    .await;
+    let clock = Arc::new(FixedClock::new(10));
+    let (runs, effects) = services(store.clone(), clock);
+    let run = runs
+        .create_work(
+            CreateRun {
+                project_id: "project-host".into(),
+                thread_id: "thread-host".into(),
+            },
+            WorkExecutionBackend::HostDirect,
+            "create-host-recovery-run",
+        )
+        .await
+        .expect("create");
+    let run = runs
+        .transition(
+            &run.id,
+            run.revision,
+            RunState::Planning,
+            "plan-host-recovery-run",
+        )
+        .await
+        .expect("planning");
+    let run = runs
+        .transition(
+            &run.id,
+            run.revision,
+            RunState::Running,
+            "run-host-recovery-run",
+        )
+        .await
+        .expect("running");
+    let effect = effects
+        .prepare(PrepareEffect {
+            run_id: run.id.clone(),
+            kind: EffectKind::FileWrite,
+            target: "approved target".into(),
+            idempotency: Idempotency::Idempotent,
+        })
+        .await
+        .expect("effect");
+
+    assert_eq!(
+        store
+            .list_recoverable_host_effects(10)
+            .await
+            .expect("effects"),
+        vec![effect]
+    );
+    assert_eq!(
+        store.list_recoverable_host_runs(10).await.expect("runs"),
+        vec![run]
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn integrity_and_online_backup_produce_reopenable_snapshot() {

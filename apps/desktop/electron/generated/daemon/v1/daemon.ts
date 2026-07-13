@@ -408,6 +408,7 @@ export interface Request {
     | { $case: "prepareHostWorkRuntime"; value: PrepareHostWorkRuntimeRequest }
     | { $case: "deactivateHostWorkRuntime"; value: DeactivateHostWorkRuntimeRequest }
     | { $case: "startHostWork"; value: StartHostWorkRequest }
+    | { $case: "cancelHostWork"; value: CancelHostWorkRequest }
     | undefined;
 }
 
@@ -632,6 +633,10 @@ export interface StartHostWorkRequest {
   projectId: string;
   threadId: string;
   prompt: string;
+}
+
+export interface CancelHostWorkRequest {
+  runId: string;
 }
 
 export interface HostWorkResult {
@@ -1710,6 +1715,9 @@ export const Request: MessageFns<Request> = {
       case "startHostWork":
         StartHostWorkRequest.encode(message.operation.value, writer.uint32(578).fork()).join();
         break;
+      case "cancelHostWork":
+        CancelHostWorkRequest.encode(message.operation.value, writer.uint32(586).fork()).join();
+        break;
     }
     return writer;
   },
@@ -2323,6 +2331,14 @@ export const Request: MessageFns<Request> = {
           message.operation = { $case: "startHostWork", value: StartHostWorkRequest.decode(reader, reader.uint32()) };
           continue;
         }
+        case 73: {
+          if (tag !== 586) {
+            break;
+          }
+
+          message.operation = { $case: "cancelHostWork", value: CancelHostWorkRequest.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2847,6 +2863,15 @@ export const Request: MessageFns<Request> = {
           message.operation = {
             $case: "startHostWork",
             value: StartHostWorkRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "cancelHostWork": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "cancelHostWork",
+            value: CancelHostWorkRequest.fromPartial(object.operation.value),
           };
         }
         break;
@@ -5530,6 +5555,52 @@ export const StartHostWorkRequest: MessageFns<StartHostWorkRequest> = {
     message.projectId = object.projectId ?? "";
     message.threadId = object.threadId ?? "";
     message.prompt = object.prompt ?? "";
+    return message;
+  },
+};
+
+function createBaseCancelHostWorkRequest(): CancelHostWorkRequest {
+  return { runId: "" };
+}
+
+export const CancelHostWorkRequest: MessageFns<CancelHostWorkRequest> = {
+  encode(message: CancelHostWorkRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.runId !== "") {
+      writer.uint32(10).string(message.runId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): CancelHostWorkRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseCancelHostWorkRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.runId = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<CancelHostWorkRequest>): CancelHostWorkRequest {
+    return CancelHostWorkRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<CancelHostWorkRequest>): CancelHostWorkRequest {
+    const message = createBaseCancelHostWorkRequest();
+    message.runId = object.runId ?? "";
     return message;
   },
 };

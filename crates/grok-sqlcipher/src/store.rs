@@ -2086,6 +2086,64 @@ impl ExecutionStore for SqlCipherStore {
         .await
     }
 
+    async fn list_recoverable_host_effects(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<SideEffect>, StoreError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(StoreError::Internal("invalid recovery limit".into()));
+        }
+        self.with_store(move |connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT e.id,e.run_id,e.kind,e.target,e.idempotency,e.state,e.revision,e.created_at,e.updated_at
+                     FROM side_effects e
+                     INNER JOIN runs r ON r.id=e.run_id
+                     WHERE r.run_kind=2 AND r.work_backend=1
+                       AND e.kind IN (0,1) AND e.state IN (0,1)
+                     ORDER BY e.created_at ASC,e.id ASC LIMIT ?1",
+                )
+                .map_err(map_sqlite)?;
+            statement
+                .query_map(
+                    [number(u64::try_from(limit).map_err(|_| {
+                        StoreError::Internal("invalid recovery limit".into())
+                    })?)?],
+                    mapping::effect_from_row,
+                )
+                .map_err(map_sqlite)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_sqlite)
+        })
+        .await
+    }
+
+    async fn list_recoverable_host_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(StoreError::Internal("invalid recovery limit".into()));
+        }
+        self.with_store(move |connection| {
+            let mut statement = connection
+                .prepare(&format!(
+                    "SELECT {RUN_COLUMNS} FROM runs
+                     WHERE run_kind=2 AND work_backend=1 AND state NOT IN (5,6,7)
+                     ORDER BY created_at ASC,id ASC LIMIT ?1"
+                ))
+                .map_err(map_sqlite)?;
+            statement
+                .query_map(
+                    [number(u64::try_from(limit).map_err(|_| {
+                        StoreError::Internal("invalid recovery limit".into())
+                    })?)?],
+                    mapping::run_from_row,
+                )
+                .map_err(map_sqlite)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_sqlite)
+        })
+        .await
+    }
+
     async fn save_effect(
         &self,
         effect: SideEffect,

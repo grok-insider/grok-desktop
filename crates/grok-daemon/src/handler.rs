@@ -1126,6 +1126,9 @@ impl Daemon {
             Some(v1::request::Operation::StartHostWork(request)) => {
                 self.start_host_work(request, idempotency_key).await
             }
+            Some(v1::request::Operation::CancelHostWork(request)) => {
+                self.cancel_host_work(request, idempotency_key).await
+            }
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
             }
@@ -1736,8 +1739,8 @@ impl Daemon {
         let service = self.host_work_service.as_ref().ok_or_else(|| {
             ApplicationError::Unavailable("Host Work service is not configured".into())
         })?;
-        let outcome = service
-            .execute(
+        let run = service
+            .start(
                 &request.project_id,
                 &request.thread_id,
                 &request.prompt,
@@ -1745,8 +1748,23 @@ impl Daemon {
             )
             .await?;
         Ok(v1::response::Result::HostWorkResult(v1::HostWorkResult {
-            run: Some(run_to_wire(outcome.run)),
-            assistant_text: outcome.assistant_text,
+            run: Some(run_to_wire(run)),
+            assistant_text: String::new(),
+        }))
+    }
+
+    async fn cancel_host_work(
+        &self,
+        request: v1::CancelHostWorkRequest,
+        key: Option<&str>,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let service = self.host_work_service.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("Host Work service is not configured".into())
+        })?;
+        let run = service.cancel(&request.run_id, mutation_key(key)?).await?;
+        Ok(v1::response::Result::HostWorkResult(v1::HostWorkResult {
+            run: Some(run_to_wire(run)),
+            assistant_text: String::new(),
         }))
     }
 

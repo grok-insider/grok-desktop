@@ -7,6 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const CALL_TIMEOUT: Duration = Duration::from_mins(16);
 
 #[derive(Debug)]
 struct Configuration {
@@ -60,7 +61,9 @@ async fn run() -> Result<(), ()> {
             })),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(tool_catalog()),
-            "tools/call" => forward_tool_call(&configuration, request.get("params")).await,
+            "tools/call" => {
+                forward_tool_call(&configuration, id.as_ref(), request.get("params")).await
+            }
             method if method.starts_with("notifications/") => continue,
             _ => Err((-32601, "method not found")),
         };
@@ -111,7 +114,10 @@ fn tool_catalog() -> Value {
             "description": "Read one bounded file inside an enrolled host root.",
             "inputSchema": {
                 "type": "object", "additionalProperties": false,
-                "properties": { "path": { "type": "string" } }, "required": ["path"]
+                "properties": {
+                    "path": { "type": "string" },
+                    "maxBytes": { "type": "integer", "minimum": 1, "maximum": 8_388_608 }
+                }, "required": ["path"]
             }
         },
         {
@@ -141,14 +147,20 @@ fn tool_catalog() -> Value {
 
 async fn forward_tool_call(
     configuration: &Configuration,
+    call_id: Option<&Value>,
     parameters: Option<&Value>,
 ) -> Result<Value, (i64, &'static str)> {
     let parameters = parameters.ok_or((-32602, "invalid tool arguments"))?;
+    let call_id = call_id.ok_or((-32600, "tool call id is required"))?;
     let request = json!({
         "version": 1,
         "runId": configuration.run_id,
         "policyRevision": configuration.policy_revision,
-        "toolCall": parameters
+        "toolCall": {
+            "callId": call_id,
+            "name": parameters.get("name"),
+            "arguments": parameters.get("arguments")
+        }
     });
     bridge_call(&configuration.endpoint, &request)
         .await
@@ -195,7 +207,7 @@ where
     tokio::time::timeout(IO_TIMEOUT, stream.write_all(&encoded))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "write timeout"))??;
-    let response = tokio::time::timeout(IO_TIMEOUT, read_bounded_line(&mut stream))
+    let response = tokio::time::timeout(CALL_TIMEOUT, read_bounded_line(&mut stream))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "read timeout"))??
         .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "bridge closed"))?;

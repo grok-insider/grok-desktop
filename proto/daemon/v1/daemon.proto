@@ -85,6 +85,7 @@ message Request {
     PrepareHostWorkRuntimeRequest prepare_host_work_runtime = 70;
     DeactivateHostWorkRuntimeRequest deactivate_host_work_runtime = 71;
     StartHostWorkRequest start_host_work = 72;
+    CancelHostWorkRequest cancel_host_work = 73;
   }
 }
 
@@ -308,6 +309,10 @@ message StartHostWorkRequest {
   string project_id = 1;
   string thread_id = 2;
   string prompt = 3;
+}
+
+message CancelHostWorkRequest {
+  string run_id = 1;
 }
 
 message HostWorkResult {

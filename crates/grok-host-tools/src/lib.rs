@@ -1,21 +1,38 @@
 //! Capability-rooted host filesystem adapter.
 
 use std::{
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
+    time::Duration,
 };
 
 use async_trait::async_trait;
-use cap_std::{ambient_authority, fs::Dir};
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, OpenOptions},
+};
 use grok_application::{
     HostDirectoryEntry, HostFilesystemError, HostFilesystemErrorKind, HostFilesystemReader,
+    HostFilesystemWriter, HostProcessError, HostProcessErrorKind, HostProcessExecutor,
+    HostProcessOutput, HostProcessRequest,
 };
+use tokio::io::AsyncReadExt;
+use tokio_util::sync::CancellationToken;
 
 /// Maximum directory entries returned by one call.
-pub const MAX_DIRECTORY_ENTRIES: usize = 1_000;
+pub const MAX_DIRECTORY_ENTRIES: usize = 500;
 /// Maximum UTF-8 file bytes returned by one call.
 pub const MAX_READ_BYTES: u64 = 1024 * 1024;
+/// Hard maximum bytes returned when a caller explicitly raises the read cap.
+pub const MAX_READ_HARD_BYTES: u64 = 8 * 1024 * 1024;
+/// Maximum UTF-8 bytes accepted by one atomic write.
+pub const MAX_WRITE_BYTES: usize = 8 * 1024 * 1024;
+/// Shared stdout and stderr retention cap.
+pub const MAX_PROCESS_OUTPUT_BYTES: usize = 1024 * 1024;
+/// Maximum process duration accepted by the adapter.
+pub const MAX_PROCESS_DURATION: Duration = Duration::from_mins(5);
 
 struct CapabilityRoot {
     canonical: PathBuf,
@@ -125,7 +142,10 @@ impl CapabilityHostFilesystem {
         Ok(result)
     }
 
-    fn read_blocking(&self, path: &Path) -> Result<String, HostFilesystemError> {
+    fn read_blocking(&self, path: &Path, max_bytes: u64) -> Result<Vec<u8>, HostFilesystemError> {
+        if max_bytes == 0 || max_bytes > MAX_READ_HARD_BYTES {
+            return Err(invalid("Host Tools read limit is invalid"));
+        }
         let (root, relative) = self.resolve(path)?;
         let file = root
             .open(&relative)
@@ -133,17 +153,68 @@ impl CapabilityHostFilesystem {
         let metadata = file
             .metadata()
             .map_err(|_| unavailable("Host Tools file is unavailable"))?;
-        if !metadata.is_file() || metadata.len() > MAX_READ_BYTES {
+        if !metadata.is_file() || metadata.len() > max_bytes {
             return Err(invalid("Host Tools file exceeds the readable contract"));
         }
         let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-        file.take(MAX_READ_BYTES + 1)
+        file.take(max_bytes + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| unavailable("Host Tools file read failed"))?;
-        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_READ_BYTES {
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
             return Err(invalid("Host Tools file exceeds the readable contract"));
         }
-        String::from_utf8(bytes).map_err(|_| invalid("Host Tools file is not UTF-8"))
+        Ok(bytes)
+    }
+
+    fn write_blocking(&self, path: &Path, content: &[u8]) -> Result<(), HostFilesystemError> {
+        if content.len() > MAX_WRITE_BYTES {
+            return Err(invalid("Host Tools write exceeds the byte limit"));
+        }
+        let (root, relative) = self.resolve(path)?;
+        let parent = relative
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let name = relative
+            .file_name()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| invalid("Host Tools write target is invalid"))?;
+        let directory = root
+            .open_dir(parent)
+            .map_err(|_| denied("Host Tools write parent is unavailable"))?;
+        let temporary = format!(".grok-write-{}", uuid::Uuid::new_v4());
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let mut file = directory
+            .open_with(&temporary, &options)
+            .map_err(|_| unavailable("Host Tools temporary file is unavailable"))?;
+        let result = (|| {
+            file.write_all(content)
+                .map_err(|_| unavailable("Host Tools file write failed"))?;
+            file.sync_all()
+                .map_err(|_| unavailable("Host Tools file sync failed"))?;
+            directory
+                .rename(&temporary, &directory, name)
+                .map_err(|_| unavailable("Host Tools atomic replace failed"))?;
+            directory
+                .dir_metadata()
+                .map_err(|_| unavailable("Host Tools write parent changed"))?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = directory.remove_file(&temporary);
+        }
+        result
+    }
+
+    fn canonical_directory(&self, path: &Path) -> Result<PathBuf, HostProcessError> {
+        self.resolve(path).map_err(filesystem_process_error)?;
+        let canonical = std::fs::canonicalize(path)
+            .map_err(|_| process_unavailable("Host process working directory is unavailable"))?;
+        let (root, relative) = self.resolve(&canonical).map_err(filesystem_process_error)?;
+        root.open_dir(relative)
+            .map_err(|_| process_denied("Host process working directory is unavailable"))?;
+        Ok(canonical)
     }
 }
 
@@ -160,9 +231,344 @@ impl HostFilesystemReader for CapabilityHostFilesystem {
     async fn read_text(&self, path: &Path) -> Result<String, HostFilesystemError> {
         let this = self.clone();
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || this.read_blocking(&path))
+        let bytes = tokio::task::spawn_blocking(move || this.read_blocking(&path, MAX_READ_BYTES))
+            .await
+            .map_err(|_| unavailable("Host Tools filesystem task failed"))??;
+        String::from_utf8(bytes).map_err(|_| invalid("Host Tools file is not UTF-8"))
+    }
+
+    async fn read_bytes(
+        &self,
+        path: &Path,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, HostFilesystemError> {
+        let this = self.clone();
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || this.read_blocking(&path, max_bytes))
             .await
             .map_err(|_| unavailable("Host Tools filesystem task failed"))?
+    }
+}
+
+#[async_trait]
+impl HostFilesystemWriter for CapabilityHostFilesystem {
+    async fn write_text(&self, path: &Path, content: String) -> Result<(), HostFilesystemError> {
+        let this = self.clone();
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || this.write_blocking(&path, content.as_bytes()))
+            .await
+            .map_err(|_| unavailable("Host Tools filesystem task failed"))?
+    }
+}
+
+#[async_trait]
+impl HostProcessExecutor for CapabilityHostFilesystem {
+    async fn validate(
+        &self,
+        mut request: HostProcessRequest,
+    ) -> Result<HostProcessRequest, HostProcessError> {
+        validate_process_request(&request)?;
+        request.cwd = self
+            .canonical_directory(Path::new(&request.cwd))?
+            .to_string_lossy()
+            .into_owned();
+        request.argv[0] = resolve_executable(&request.argv[0])?
+            .to_string_lossy()
+            .into_owned();
+        Ok(request)
+    }
+
+    async fn execute(
+        &self,
+        request: HostProcessRequest,
+        cancellation: CancellationToken,
+    ) -> Result<HostProcessOutput, HostProcessError> {
+        let request = self.validate(request).await?;
+        let mut command = tokio::process::Command::new(&request.argv[0]);
+        command
+            .args(&request.argv[1..])
+            .current_dir(&request.cwd)
+            .env_clear()
+            .env("PATH", platform_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(false);
+        add_safe_locale_environment(&mut command);
+        add_safe_user_environment(&mut command);
+        #[cfg(unix)]
+        {
+            command.process_group(0);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|_| process_unavailable("Host process could not be started"))?;
+        let pid = child.id();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| process_unavailable("Host process stdout is unavailable"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| process_unavailable("Host process stderr is unavailable"))?;
+        let retained = Arc::new(tokio::sync::Mutex::new(RetainedOutput::default()));
+        let stdout_task = tokio::spawn(drain_output(stdout, retained.clone(), true));
+        let stderr_task = tokio::spawn(drain_output(stderr, retained.clone(), false));
+        let terminal = tokio::select! {
+            status = child.wait() => ProcessTerminal::Exited(status),
+            () = cancellation.cancelled() => ProcessTerminal::Cancelled,
+            () = tokio::time::sleep(request.timeout) => ProcessTerminal::TimedOut,
+        };
+        let status = match terminal {
+            ProcessTerminal::Exited(status) => {
+                status.map_err(|_| process_unavailable("Host process wait failed"))?
+            }
+            ProcessTerminal::Cancelled => {
+                kill_process_tree(pid, &mut child);
+                let _ = child.wait().await;
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err(process_interrupted("Host process was cancelled"));
+            }
+            ProcessTerminal::TimedOut => {
+                kill_process_tree(pid, &mut child);
+                let _ = child.wait().await;
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err(process_timed_out("Host process exceeded its time limit"));
+            }
+        };
+        let _ = stdout_task.await;
+        let _ = stderr_task.await;
+        let retained = Arc::try_unwrap(retained)
+            .map_err(|_| process_unavailable("Host process output task did not finish"))?
+            .into_inner();
+        Ok(HostProcessOutput {
+            exit_code: status.code(),
+            stdout: String::from_utf8_lossy(&retained.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&retained.stderr).into_owned(),
+            truncated: retained.truncated,
+        })
+    }
+}
+
+enum ProcessTerminal {
+    Exited(std::io::Result<std::process::ExitStatus>),
+    Cancelled,
+    TimedOut,
+}
+
+#[derive(Default)]
+struct RetainedOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    truncated: bool,
+}
+
+async fn drain_output<R>(
+    mut reader: R,
+    retained: Arc<tokio::sync::Mutex<RetainedOutput>>,
+    stdout: bool,
+) where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let Ok(read) = reader.read(&mut buffer).await else {
+            return;
+        };
+        if read == 0 {
+            return;
+        }
+        let mut output = retained.lock().await;
+        let used = output.stdout.len().saturating_add(output.stderr.len());
+        let available = MAX_PROCESS_OUTPUT_BYTES.saturating_sub(used);
+        let retain = available.min(read);
+        if stdout {
+            output.stdout.extend_from_slice(&buffer[..retain]);
+        } else {
+            output.stderr.extend_from_slice(&buffer[..retain]);
+        }
+        output.truncated |= retain < read;
+    }
+}
+
+fn validate_process_request(request: &HostProcessRequest) -> Result<(), HostProcessError> {
+    let total = request.argv.iter().map(String::len).sum::<usize>();
+    if request.argv.is_empty()
+        || request.argv.len() > 64
+        || request
+            .argv
+            .iter()
+            .any(|argument| argument.len() > 8 * 1024)
+        || total > 64 * 1024
+        || request.cwd.is_empty()
+        || request.cwd.len() > 4096
+        || request.timeout.is_zero()
+        || request.timeout > MAX_PROCESS_DURATION
+    {
+        return Err(process_invalid("Host process request exceeds its bounds"));
+    }
+    Ok(())
+}
+
+fn resolve_executable(value: &str) -> Result<PathBuf, HostProcessError> {
+    let candidate = Path::new(value);
+    let resolved = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else if candidate.components().count() == 1 {
+        platform_search_directories()
+            .into_iter()
+            .map(|directory| directory.join(candidate))
+            .find(|path| path.is_file())
+            .ok_or_else(|| process_invalid("Host process executable was not found"))?
+    } else {
+        return Err(process_invalid(
+            "Host process executable must be absolute or a bare name",
+        ));
+    };
+    std::fs::canonicalize(&resolved)
+        .map_err(|_| process_invalid("Host process executable is unavailable"))?;
+    Ok(resolved)
+}
+
+#[cfg(unix)]
+fn platform_search_directories() -> Vec<PathBuf> {
+    let mut directories = vec![
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ];
+    if let Some(path) = std::env::var_os("PATH") {
+        directories.extend(
+            std::env::split_paths(&path)
+                .filter(|directory| directory.is_absolute() && directory.is_dir()),
+        );
+    }
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
+#[cfg(windows)]
+fn platform_search_directories() -> Vec<PathBuf> {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    vec![PathBuf::from(root).join("System32")]
+}
+
+#[cfg(not(any(unix, windows)))]
+fn platform_search_directories() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(unix)]
+fn platform_path() -> std::ffi::OsString {
+    std::env::join_paths(platform_search_directories()).unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn platform_path() -> std::ffi::OsString {
+    platform_search_directories()
+        .first()
+        .map_or_else(std::ffi::OsString::new, |path| path.as_os_str().to_owned())
+}
+
+#[cfg(not(any(unix, windows)))]
+const fn platform_path() -> &'static str {
+    ""
+}
+
+fn add_safe_locale_environment(command: &mut tokio::process::Command) {
+    for (name, value) in std::env::vars_os() {
+        let name = name.to_string_lossy();
+        if (name == "LANG" || name.starts_with("LC_"))
+            && value.len() <= 256
+            && value
+                .to_string_lossy()
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "_.@-".contains(character))
+        {
+            command.env(name.as_ref(), value);
+        }
+    }
+}
+
+fn add_safe_user_environment(command: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    for name in ["HOME", "USER"] {
+        if let Some(value) = std::env::var_os(name).filter(|value| value.len() <= 4096) {
+            command.env(name, value);
+        }
+    }
+    #[cfg(windows)]
+    for name in ["USERPROFILE", "TEMP", "TMP"] {
+        if let Some(value) = std::env::var_os(name).filter(|value| value.len() <= 4096) {
+            command.env(name, value);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn kill_process_tree(pid: Option<u32>, child: &mut tokio::process::Child) {
+    if let Some(pid) = pid
+        .and_then(|value| i32::try_from(value).ok())
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    } else {
+        let _ = child.start_kill();
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_tree(_pid: Option<u32>, child: &mut tokio::process::Child) {
+    let _ = child.start_kill();
+}
+
+fn filesystem_process_error(error: HostFilesystemError) -> HostProcessError {
+    HostProcessError {
+        kind: match error.kind {
+            HostFilesystemErrorKind::Denied => HostProcessErrorKind::Denied,
+            HostFilesystemErrorKind::Invalid => HostProcessErrorKind::Invalid,
+            HostFilesystemErrorKind::Unavailable => HostProcessErrorKind::Unavailable,
+        },
+        message: error.message,
+    }
+}
+
+fn process_invalid(message: &str) -> HostProcessError {
+    HostProcessError {
+        kind: HostProcessErrorKind::Invalid,
+        message: message.into(),
+    }
+}
+
+fn process_denied(message: &str) -> HostProcessError {
+    HostProcessError {
+        kind: HostProcessErrorKind::Denied,
+        message: message.into(),
+    }
+}
+
+fn process_unavailable(message: &str) -> HostProcessError {
+    HostProcessError {
+        kind: HostProcessErrorKind::Unavailable,
+        message: message.into(),
+    }
+}
+
+fn process_timed_out(message: &str) -> HostProcessError {
+    HostProcessError {
+        kind: HostProcessErrorKind::TimedOut,
+        message: message.into(),
+    }
+}
+
+fn process_interrupted(message: &str) -> HostProcessError {
+    HostProcessError {
+        kind: HostProcessErrorKind::Interrupted,
+        message: message.into(),
     }
 }
 

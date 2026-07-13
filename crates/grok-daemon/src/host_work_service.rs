@@ -1,17 +1,19 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use grok_application::{
     AgentEvent, AgentPrompt, AgentRuntime, AgentRuntimeError, AgentSessionRequest,
-    ApplicationError, CreateMessage, CreateRun, ExecutionStore, HostExecutionPolicyStore,
-    HostFilesystemReader, HostToolsMcpServer, RunService, WorkspaceService,
+    ApplicationError, ApprovalService, Clock, CreateMessage, CreateRun, ExecutionStore,
+    HostExecutionPolicyStore, HostFilesystemReader, HostFilesystemWriter, HostProcessExecutor,
+    HostToolsMcpServer, RunService, SideEffectService, WorkspaceService,
 };
 use grok_domain::{MessageRole, ProjectId, Run, RunState, ThreadId, WorkExecutionBackend};
 use grok_host_tools::CapabilityHostFilesystem;
 use sha2::{Digest, Sha256};
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 
-use crate::{HostToolBridge, HostWorkRuntime};
+use crate::{HostToolBridge, HostToolServices, HostWorkRuntime};
 
 const MAX_WORK_PROMPT_BYTES: usize = 256 * 1024;
 const MAX_WORK_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -26,14 +28,20 @@ pub struct HostWorkOutcome {
 }
 
 /// Daemon composition for one-at-a-time Host Work ACP execution.
+#[derive(Clone)]
 pub struct HostWorkService {
     runtime: Arc<HostWorkRuntime>,
     policies: Arc<dyn HostExecutionPolicyStore>,
     executions: Arc<dyn ExecutionStore>,
     runs: Arc<RunService>,
     workspace: Arc<WorkspaceService>,
+    approvals: Arc<ApprovalService>,
+    effects: Arc<SideEffectService>,
+    clock: Arc<dyn Clock>,
     endpoint_base: PathBuf,
-    active: Semaphore,
+    active: Arc<Semaphore>,
+    start_lock: Arc<Mutex<()>>,
+    tasks: Arc<Mutex<HashMap<grok_domain::RunId, CancellationToken>>>,
 }
 
 impl std::fmt::Debug for HostWorkService {
@@ -47,12 +55,16 @@ impl std::fmt::Debug for HostWorkService {
 impl HostWorkService {
     /// Creates a Host Work use case from daemon-owned ports and adapters.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: Arc<HostWorkRuntime>,
         policies: Arc<dyn HostExecutionPolicyStore>,
         executions: Arc<dyn ExecutionStore>,
         runs: Arc<RunService>,
         workspace: Arc<WorkspaceService>,
+        approvals: Arc<ApprovalService>,
+        effects: Arc<SideEffectService>,
+        clock: Arc<dyn Clock>,
         endpoint_base: PathBuf,
     ) -> Self {
         Self {
@@ -61,34 +73,35 @@ impl HostWorkService {
             executions,
             runs,
             workspace,
+            approvals,
+            effects,
+            clock,
             endpoint_base,
-            active: Semaphore::new(1),
+            active: Arc::new(Semaphore::new(1)),
+            start_lock: Arc::new(Mutex::new(())),
+            tasks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Runs one bounded prompt through authenticated `HostWorkTools` and its MCP bridge.
+    /// Reserves and starts one bounded Host Work turn without holding the IPC request open.
     ///
     /// # Errors
     ///
-    /// Returns a stable application error when policy, run, helper, ACP, bridge,
-    /// filesystem, or persistence readiness fails.
+    /// Returns a stable application error when policy, run, helper, or capacity
+    /// readiness fails before ownership is durably established.
     #[allow(clippy::too_many_lines)]
-    pub async fn execute(
+    pub async fn start(
         &self,
         project_id: &str,
         thread_id: &str,
         prompt: &str,
         idempotency_key: &str,
-    ) -> Result<HostWorkOutcome, ApplicationError> {
+    ) -> Result<Run, ApplicationError> {
         if prompt.trim().is_empty() || prompt.len() > MAX_WORK_PROMPT_BYTES {
             return Err(ApplicationError::InvalidInput(
                 "Host Work prompt is invalid".into(),
             ));
         }
-        let _permit = self
-            .active
-            .try_acquire()
-            .map_err(|_| ApplicationError::Unavailable("Host Work runtime is busy".into()))?;
         if !self.runtime.is_ready().await {
             return Err(ApplicationError::Unavailable(
                 "Host Work runtime is not prepared".into(),
@@ -110,10 +123,7 @@ impl HostWorkService {
                 "Host Work thread does not belong to the selected project".into(),
             ));
         }
-        let filesystem: Arc<dyn HostFilesystemReader> = Arc::new(
-            CapabilityHostFilesystem::open(&policy.canonical_roots)
-                .map_err(|error| ApplicationError::Unavailable(error.message))?,
-        );
+        let _start_guard = self.start_lock.lock().await;
         let run_key = derived_key(idempotency_key, "run");
         let mut run = self
             .runs
@@ -126,6 +136,14 @@ impl HostWorkService {
                 &run_key,
             )
             .await?;
+        if run.state != RunState::Queued {
+            return Ok(run);
+        }
+        let permit = self
+            .active
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApplicationError::Unavailable("Host Work runtime is busy".into()))?;
         run = self
             .runs
             .transition(
@@ -145,14 +163,73 @@ impl HostWorkService {
                 &derived_key(idempotency_key, "user-message"),
             )
             .await?;
+        let cancellation = CancellationToken::new();
+        {
+            let mut tasks = self.tasks.lock().await;
+            if tasks.contains_key(&run.id) {
+                return Ok(run);
+            }
+            tasks.insert(run.id.clone(), cancellation.clone());
+        }
+        let service = self.clone();
+        let started = run.clone();
+        let key = idempotency_key.to_owned();
+        let prompt = prompt.to_owned();
+        tokio::spawn(async move {
+            if service
+                .execute_reserved(
+                    started.clone(),
+                    policy,
+                    helper,
+                    prompt,
+                    key.clone(),
+                    cancellation,
+                    permit,
+                )
+                .await
+                .is_err()
+            {
+                service.fail_current(&started.id, &key).await;
+            }
+            service.tasks.lock().await.remove(&started.id);
+        });
+        Ok(run)
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn execute_reserved(
+        &self,
+        mut run: Run,
+        policy: grok_domain::HostExecutionPolicy,
+        helper: crate::VerifiedHostToolsHelper,
+        prompt: String,
+        idempotency_key: String,
+        cancellation: CancellationToken,
+        _permit: OwnedSemaphorePermit,
+    ) -> Result<HostWorkOutcome, ApplicationError> {
+        let filesystem = Arc::new(
+            CapabilityHostFilesystem::open(&policy.canonical_roots)
+                .map_err(|error| ApplicationError::Unavailable(error.message))?,
+        );
+        let filesystem_reader: Arc<dyn HostFilesystemReader> = filesystem.clone();
+        let filesystem_writer: Arc<dyn HostFilesystemWriter> = filesystem.clone();
+        let process_executor: Arc<dyn HostProcessExecutor> = filesystem;
         let bridge = HostToolBridge::start(
             &self.endpoint_base,
             run.id.clone(),
             policy.revision,
             helper.clone(),
-            self.policies.clone(),
-            self.executions.clone(),
-            filesystem,
+            Arc::new(HostToolServices::new(
+                self.policies.clone(),
+                self.executions.clone(),
+                filesystem_reader,
+                filesystem_writer,
+                process_executor,
+                self.approvals.clone(),
+                self.effects.clone(),
+                self.clock.clone(),
+            )),
+            cancellation.child_token(),
         )?;
         let roots = policy
             .canonical_roots
@@ -182,7 +259,7 @@ impl HostWorkService {
             Ok(session) => session,
             Err(error) => {
                 bridge.shutdown().await;
-                return Err(self.fail_run(run, idempotency_key, error).await);
+                return Err(self.fail_run(run, &idempotency_key, error).await);
             }
         };
         let running = self
@@ -191,7 +268,7 @@ impl HostWorkService {
                 &run.id,
                 run.revision,
                 RunState::Running,
-                &derived_key(idempotency_key, "running"),
+                &derived_key(&idempotency_key, "running"),
             )
             .await;
         run = match running {
@@ -204,20 +281,30 @@ impl HostWorkService {
         let stream = self
             .runtime
             .prompt(AgentPrompt {
-                session_id: session.id,
-                text: prompt.into(),
+                session_id: session.id.clone(),
+                text: prompt,
             })
             .await;
         let mut stream = match stream {
             Ok(stream) => stream,
             Err(error) => {
                 bridge.shutdown().await;
-                return Err(self.fail_run(run, idempotency_key, error).await);
+                return Err(self.fail_run(run, &idempotency_key, error).await);
             }
         };
         let mut assistant = String::new();
         let mut completed = false;
-        while let Some(event) = stream.next().await {
+        loop {
+            let event = tokio::select! {
+                () = cancellation.cancelled() => {
+                    let _ = self.runtime.cancel(&session.id).await;
+                    bridge.shutdown().await;
+                    self.cancel_current(&run.id, &idempotency_key).await;
+                    return Err(ApplicationError::Cancelled);
+                }
+                event = stream.next() => event,
+            };
+            let Some(event) = event else { break };
             match event {
                 Ok(AgentEvent::MessageDelta(delta)) => {
                     if assistant.len().saturating_add(delta.len()) > MAX_WORK_RESPONSE_BYTES {
@@ -225,7 +312,7 @@ impl HostWorkService {
                         return Err(self
                             .fail_run(
                                 run,
-                                idempotency_key,
+                                &idempotency_key,
                                 unavailable("Host Work response exceeded its bound"),
                             )
                             .await);
@@ -244,7 +331,7 @@ impl HostWorkService {
                 ) => {}
                 Err(error) => {
                     bridge.shutdown().await;
-                    return Err(self.fail_run(run, idempotency_key, error).await);
+                    return Err(self.fail_run(run, &idempotency_key, error).await);
                 }
             }
         }
@@ -253,7 +340,7 @@ impl HostWorkService {
             return Err(self
                 .fail_run(
                     run,
-                    idempotency_key,
+                    &idempotency_key,
                     unavailable("Host Work ended without a complete response"),
                 )
                 .await);
@@ -261,11 +348,11 @@ impl HostWorkService {
         self.workspace
             .create_message(
                 CreateMessage {
-                    thread_id: thread_id.to_string(),
+                    thread_id: run.thread_id.to_string(),
                     role: MessageRole::Assistant,
                     content: assistant.clone(),
                 },
-                &derived_key(idempotency_key, "assistant-message"),
+                &derived_key(&idempotency_key, "assistant-message"),
             )
             .await?;
         run = self
@@ -274,13 +361,89 @@ impl HostWorkService {
                 &run.id,
                 run.revision,
                 RunState::Completed,
-                &derived_key(idempotency_key, "completed"),
+                &derived_key(&idempotency_key, "completed"),
             )
             .await?;
         Ok(HostWorkOutcome {
             run,
             assistant_text: assistant,
         })
+    }
+
+    /// Signals an owned Host Work task and returns its latest durable state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an application error for an invalid ID, a non-Host run, or a
+    /// persistence failure. A side effect already across the boundary is left
+    /// in `InterruptedNeedsReview` by the bridge before cancellation commits.
+    pub async fn cancel(
+        &self,
+        run_id: &str,
+        _idempotency_key: &str,
+    ) -> Result<Run, ApplicationError> {
+        let run_id = grok_domain::RunId::new(run_id)?;
+        let run = self.executions.get_run(&run_id).await?;
+        if !run.is_work_bound_to(WorkExecutionBackend::HostDirect) {
+            return Err(ApplicationError::InvalidInput(
+                "run is not Host Work".into(),
+            ));
+        }
+        if run.state.is_terminal() || run.state == RunState::InterruptedNeedsReview {
+            return Ok(run);
+        }
+        if let Some(cancellation) = self.tasks.lock().await.get(&run_id).cloned() {
+            cancellation.cancel();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let current = self.executions.get_run(&run_id).await?;
+                if current.state.is_terminal()
+                    || current.state == RunState::InterruptedNeedsReview
+                    || tokio::time::Instant::now() >= deadline
+                {
+                    return Ok(current);
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+        self.cancel_current(&run_id, "orphan-cancel").await;
+        Ok(self.executions.get_run(&run_id).await?)
+    }
+
+    async fn cancel_current(&self, run_id: &grok_domain::RunId, key: &str) {
+        let Ok(run) = self.executions.get_run(run_id).await else {
+            return;
+        };
+        if run.state.is_terminal() || run.state == RunState::InterruptedNeedsReview {
+            return;
+        }
+        let _ = self
+            .runs
+            .transition(
+                &run.id,
+                run.revision,
+                RunState::Cancelled,
+                &derived_key(key, "cancelled"),
+            )
+            .await;
+    }
+
+    async fn fail_current(&self, run_id: &grok_domain::RunId, key: &str) {
+        let Ok(run) = self.executions.get_run(run_id).await else {
+            return;
+        };
+        if run.state.is_terminal() || run.state == RunState::InterruptedNeedsReview {
+            return;
+        }
+        let _ = self
+            .runs
+            .transition(
+                &run.id,
+                run.revision,
+                RunState::Failed,
+                &derived_key(key, "failed-current"),
+            )
+            .await;
     }
 
     async fn fail_run(&self, run: Run, key: &str, error: AgentRuntimeError) -> ApplicationError {
@@ -335,6 +498,7 @@ mod tests {
     struct ScriptedRuntime {
         work: bool,
         saw_mcp: Arc<AtomicBool>,
+        hang: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -374,6 +538,9 @@ mod tests {
             &self,
             _prompt: AgentPrompt,
         ) -> Result<grok_application::AgentEventStream, AgentRuntimeError> {
+            if self.hang.load(Ordering::SeqCst) {
+                return Ok(Box::pin(stream::pending()));
+            }
             Ok(Box::pin(stream::iter([
                 Ok(AgentEvent::MessageDelta("Host Work reply".into())),
                 Ok(AgentEvent::Completed {
@@ -393,6 +560,7 @@ mod tests {
     #[derive(Debug)]
     struct ScriptedFactory {
         saw_mcp: Arc<AtomicBool>,
+        hang: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -401,6 +569,7 @@ mod tests {
             Ok(Arc::new(ScriptedRuntime {
                 work: false,
                 saw_mcp: self.saw_mcp.clone(),
+                hang: self.hang.clone(),
             }))
         }
 
@@ -411,6 +580,7 @@ mod tests {
             Ok(Arc::new(ScriptedRuntime {
                 work: true,
                 saw_mcp: self.saw_mcp.clone(),
+                hang: self.hang.clone(),
             }))
         }
     }
@@ -424,10 +594,12 @@ mod tests {
             VerifiedHostToolsHelper::verify(std::env::current_exe().expect("test executable"))
                 .expect("helper");
         let saw_mcp = Arc::new(AtomicBool::new(false));
+        let hang = Arc::new(AtomicBool::new(false));
         let runtime = Arc::new(
             HostWorkRuntime::start(
                 Arc::new(ScriptedFactory {
                     saw_mcp: saw_mcp.clone(),
+                    hang: hang.clone(),
                 }),
                 Some(helper),
             )
@@ -494,26 +666,47 @@ mod tests {
             .await
             .expect("thread");
         let execution: Arc<dyn ExecutionStore> = store.clone();
-        let runs = Arc::new(RunService::new(execution.clone(), clock, ids));
+        let runs = Arc::new(RunService::new(
+            execution.clone(),
+            clock.clone(),
+            ids.clone(),
+        ));
         let service = HostWorkService::new(
             runtime,
-            store,
-            execution,
+            store.clone(),
+            execution.clone(),
             runs,
             workspace.clone(),
+            Arc::new(ApprovalService::new(
+                execution.clone(),
+                clock.clone(),
+                ids.clone(),
+            )),
+            Arc::new(SideEffectService::new(
+                execution.clone(),
+                clock.clone(),
+                ids,
+            )),
+            clock,
             endpoints.path().to_path_buf(),
         );
-        let outcome = service
-            .execute(
+        let started = service
+            .start(
                 project.id.as_str(),
                 thread.id.as_str(),
                 "Read the project",
                 "host-work-command",
             )
             .await
-            .expect("execute");
-        assert_eq!(outcome.run.state, RunState::Completed);
-        assert_eq!(outcome.assistant_text, "Host Work reply");
+            .expect("start");
+        let outcome = loop {
+            let current = execution.get_run(&started.id).await.expect("run");
+            if current.state.is_terminal() {
+                break current;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert_eq!(outcome.state, RunState::Completed);
         assert!(saw_mcp.load(Ordering::SeqCst));
         let messages = workspace
             .list_messages(&thread.id, None, 10)
@@ -523,5 +716,41 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(messages[1].role, MessageRole::Assistant);
+
+        while !service.tasks.lock().await.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        hang.store(true, Ordering::SeqCst);
+        let cancelled_thread = workspace
+            .create_thread(
+                CreateThread {
+                    project_id: project.id.to_string(),
+                    title: "Cancelled Host work".into(),
+                },
+                "cancelled-host-thread",
+            )
+            .await
+            .expect("cancelled thread");
+        let cancelling = service
+            .start(
+                project.id.as_str(),
+                cancelled_thread.id.as_str(),
+                "Wait for cancellation",
+                "cancelled-host-work-command",
+            )
+            .await
+            .expect("start cancellable work");
+        loop {
+            let current = execution.get_run(&cancelling.id).await.expect("run");
+            if current.state == RunState::Running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let cancelled = service
+            .cancel(cancelling.id.as_str(), "cancel-host-work-command")
+            .await
+            .expect("cancel");
+        assert_eq!(cancelled.state, RunState::Cancelled);
     }
 }

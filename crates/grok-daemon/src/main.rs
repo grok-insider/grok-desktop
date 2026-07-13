@@ -35,8 +35,8 @@ use grok_application::{
     MAX_CONVERSATION_RECOVERY_BATCH, MAX_PRIVILEGED_RECOVERY_BATCH,
     ManagedIntegrationLifecycleStore, PrivilegedGatewayError, PrivilegedGuestControlTransport,
     PrivilegedOperationService, PrivilegedOperationStore, RunService, ScheduledGuestDispatcher,
-    SecretName, SecretValue, SecretVault, SuperGrokEnrollmentService, VaultError, WorkspaceService,
-    WorkspaceStore,
+    SecretName, SecretValue, SecretVault, SideEffectService, SuperGrokEnrollmentService,
+    VaultError, WorkspaceService, WorkspaceStore,
 };
 #[cfg(target_os = "linux")]
 use grok_artifact_storage::LinuxArtifactContent;
@@ -46,7 +46,7 @@ use grok_daemon::{
     AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, GrokAcpRoleFactory,
     HostWorkRuntime, HostWorkService, VerifiedHostToolsHelper, serve_connection,
 };
-use grok_domain::{AutomationSchedulerOwnerId, ChatRail};
+use grok_domain::{AutomationSchedulerOwnerId, ChatRail, EffectState, RunState};
 use grok_memory::{
     EphemeralKeyProvider, InMemoryExecutionStore, InMemoryManagedIntegrationLifecycleStore,
     InMemorySecretVault, SystemClock, UuidGenerator,
@@ -78,6 +78,7 @@ const ACP_COMPONENT_NAME: &str = "grok-acp";
 const ACP_CATALOG_FILE: &str = "catalog.json";
 const ACP_CATALOG_WATERMARK_NAME: &str = "grok-acp.catalog-sequence.v1";
 const ACP_CATALOG_WATERMARK_MAGIC: &[u8; 8] = b"GRKACP01";
+const MAX_HOST_WORK_RECOVERY_BATCH: usize = 100;
 const MAX_BUILD_KEY_INPUT_BYTES: usize = 4096;
 const MAX_BUILD_KEYS: usize = 16;
 const MAX_CONCURRENT_IPC_CONNECTIONS: usize = 64;
@@ -178,6 +179,12 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         clock.clone(),
         ids.clone(),
     ));
+    let effects = Arc::new(SideEffectService::new(
+        stores.execution.clone(),
+        clock.clone(),
+        ids.clone(),
+    ));
+    recover_host_work(stores.execution.as_ref(), effects.as_ref(), runs.as_ref()).await?;
     let workspace = Arc::new(WorkspaceService::new(
         stores.workspace.clone(),
         clock.clone(),
@@ -274,7 +281,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     };
     let mut daemon = Daemon::new(
         runs.clone(),
-        approvals,
+        approvals.clone(),
         credentials.clone(),
         clock.clone(),
         startup_nonce.value,
@@ -312,6 +319,9 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
                 stores.execution.clone(),
                 runs,
                 workspace,
+                approvals,
+                effects,
+                clock,
                 host_tools_endpoint_base()?,
             ));
             daemon
@@ -920,6 +930,75 @@ async fn recover_privileged_operations(
         return Err(grok_application::ApplicationError::Unavailable(
             "privileged-operation recovery backlog exceeds the bounded startup pass".into(),
         ));
+    }
+    Ok(())
+}
+
+async fn recover_host_work(
+    store: &dyn ExecutionStore,
+    effects: &SideEffectService,
+    runs: &RunService,
+) -> Result<(), ApplicationError> {
+    let incomplete = store
+        .list_recoverable_host_effects(MAX_HOST_WORK_RECOVERY_BATCH + 1)
+        .await?;
+    if incomplete.len() > MAX_HOST_WORK_RECOVERY_BATCH {
+        return Err(ApplicationError::Unavailable(
+            "Host Work recovery backlog exceeds the bounded startup pass".into(),
+        ));
+    }
+    let mut needs_review = 0_u64;
+    let mut never_dispatched = 0_u64;
+    for effect in incomplete {
+        match effect.state {
+            EffectState::Executing => {
+                effects.interrupt(&effect.id, effect.revision).await?;
+                needs_review = needs_review.saturating_add(1);
+            }
+            EffectState::Prepared => {
+                let executing = effects.start(&effect.id, effect.revision).await?;
+                effects
+                    .finish(&executing.id, executing.revision, false)
+                    .await?;
+                never_dispatched = never_dispatched.saturating_add(1);
+            }
+            EffectState::Succeeded | EffectState::Failed | EffectState::NeedsReview => {}
+        }
+    }
+
+    let recoverable = store
+        .list_recoverable_host_runs(MAX_HOST_WORK_RECOVERY_BATCH + 1)
+        .await?;
+    if recoverable.len() > MAX_HOST_WORK_RECOVERY_BATCH {
+        return Err(ApplicationError::Unavailable(
+            "Host Work run recovery backlog exceeds the bounded startup pass".into(),
+        ));
+    }
+    let mut closed_runs = 0_u64;
+    for stale in recoverable {
+        let current = store.get_run(&stale.id).await?;
+        if current.state == RunState::InterruptedNeedsReview || current.state.is_terminal() {
+            continue;
+        }
+        let next = if current.state == RunState::Queued {
+            RunState::Cancelled
+        } else {
+            RunState::Failed
+        };
+        runs.transition(
+            &current.id,
+            current.revision,
+            next,
+            &format!("host-work-startup-recovery-{}", current.id),
+        )
+        .await?;
+        closed_runs = closed_runs.saturating_add(1);
+    }
+    if needs_review > 0 || never_dispatched > 0 || closed_runs > 0 {
+        warn!(
+            needs_review,
+            never_dispatched, closed_runs, "recovered incomplete Host Work without replay"
+        );
     }
     Ok(())
 }
@@ -2664,6 +2743,72 @@ mod tests {
             read_bounded_catalog(&catalog),
             Err(ManagedComponentError::Verification)
         ));
+    }
+
+    #[tokio::test]
+    async fn host_work_startup_recovery_never_replays_an_executing_effect() {
+        use grok_application::{CreateRun, PrepareEffect};
+        use grok_domain::{EffectKind, Idempotency, WorkExecutionBackend};
+
+        let store = Arc::new(InMemoryExecutionStore::new());
+        let clock = Arc::new(grok_memory::FixedClock::new(10));
+        let ids: Arc<dyn IdGenerator> = Arc::new(grok_memory::SequentialIdGenerator::new());
+        let execution: Arc<dyn ExecutionStore> = store.clone();
+        let runs = RunService::new(execution.clone(), clock.clone(), ids.clone());
+        let effects = SideEffectService::new(execution.clone(), clock, ids);
+        let run = runs
+            .create_work(
+                CreateRun {
+                    project_id: "project".into(),
+                    thread_id: "thread".into(),
+                },
+                WorkExecutionBackend::HostDirect,
+                "recover-host-run",
+            )
+            .await
+            .expect("run");
+        let run = runs
+            .transition(
+                &run.id,
+                run.revision,
+                RunState::Planning,
+                "recover-planning",
+            )
+            .await
+            .expect("planning");
+        let run = runs
+            .transition(&run.id, run.revision, RunState::Running, "recover-running")
+            .await
+            .expect("running");
+        let effect = effects
+            .prepare(PrepareEffect {
+                run_id: run.id.clone(),
+                kind: EffectKind::ProcessExecution,
+                target: "approved command".into(),
+                idempotency: Idempotency::NonIdempotent,
+            })
+            .await
+            .expect("prepare");
+        let effect = effects
+            .start(&effect.id, effect.revision)
+            .await
+            .expect("start");
+
+        recover_host_work(execution.as_ref(), &effects, &runs)
+            .await
+            .expect("recover");
+        assert_eq!(
+            execution
+                .get_effect(&effect.id)
+                .await
+                .expect("effect")
+                .state,
+            EffectState::NeedsReview
+        );
+        assert_eq!(
+            execution.get_run(&run.id).await.expect("run").state,
+            RunState::InterruptedNeedsReview
+        );
     }
 
     fn catalog_signature_message(key_id: &str, payload: &[u8]) -> Vec<u8> {

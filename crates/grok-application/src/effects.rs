@@ -42,6 +42,24 @@ impl SideEffectService {
     /// Returns [`ApplicationError`] when the run is not active, input is invalid,
     /// or durable intent persistence fails.
     pub async fn prepare(&self, input: PrepareEffect) -> Result<SideEffect, ApplicationError> {
+        self.prepare_with_id(input, EffectId::new(self.ids.generate("effect"))?)
+            .await
+    }
+
+    /// Persists an intent under a caller-derived, collision-resistant identity.
+    ///
+    /// This is used at replay-sensitive daemon boundaries where the same
+    /// transport call must resolve to the same side effect without redispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplicationError`] when the run is inactive, the target is
+    /// invalid, the identity conflicts, or durable persistence fails.
+    pub async fn prepare_with_id(
+        &self,
+        input: PrepareEffect,
+        effect_id: EffectId,
+    ) -> Result<SideEffect, ApplicationError> {
         let run = self.store.get_run(&input.run_id).await?;
         if run.state != RunState::Running {
             return Err(ApplicationError::InvalidState(
@@ -55,7 +73,7 @@ impl SideEffectService {
         }
         let now = self.clock.now();
         let effect = SideEffect::prepare(
-            EffectId::new(self.ids.generate("effect"))?,
+            effect_id,
             input.run_id,
             input.kind,
             input.target,

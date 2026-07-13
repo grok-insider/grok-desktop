@@ -184,6 +184,15 @@ pub trait ExecutionStore: Send + Sync {
     /// Loads one side effect.
     async fn get_effect(&self, id: &grok_domain::EffectId) -> Result<SideEffect, StoreError>;
 
+    /// Lists bounded unfinished file/process effects owned by `HostDirect` runs.
+    async fn list_recoverable_host_effects(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<SideEffect>, StoreError>;
+
+    /// Lists bounded non-terminal `HostDirect` Work runs for restart recovery.
+    async fn list_recoverable_host_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError>;
+
     /// Saves a revisioned side effect.
     async fn save_effect(
         &self,

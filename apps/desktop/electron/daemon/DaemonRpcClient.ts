@@ -35,8 +35,8 @@ import {
   type SuperGrokEnrollmentStatus,
 } from "../generated/daemon/v1/daemon.js";
 
-// Epoch twenty-six adds daemon-owned Host Work dispatch while preserving older fail-closed surfaces.
-export const PROTOCOL_VERSION = 26;
+// Epoch twenty-seven adds cancellable asynchronous Host Work dispatch.
+export const PROTOCOL_VERSION = 27;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;

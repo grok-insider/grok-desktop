@@ -56,12 +56,13 @@ use grok_domain::{
     ConversationMessageDerivation, ConversationMessageDerivationKind, ConversationThreadOrigin,
     ConversationTurn, ConversationTurnEvent, ConversationTurnEventKind, ConversationTurnEventLog,
     ConversationTurnId, ConversationTurnLineage, ConversationTurnOrigin, ConversationTurnState,
-    DesktopPreferences, EffectId, EffectKind, HostExecutionPolicy, HostToolClasses, Idempotency,
-    MAX_AUTOMATION_OCCURRENCE_CLAIM_ATTEMPTS, MAX_AUTOMATION_SCHEDULE_DECISIONS,
+    DesktopPreferences, EffectId, EffectKind, EffectState, HostExecutionPolicy, HostToolClasses,
+    Idempotency, MAX_AUTOMATION_OCCURRENCE_CLAIM_ATTEMPTS, MAX_AUTOMATION_SCHEDULE_DECISIONS,
     MAX_AUTOMATION_SCHEDULER_LEASE_MS, MAX_CONVERSATION_TEXT_CHUNK_BYTES, Message, MessageId,
     MessageRole, MessageState, MissedRunPolicy, OverlapPolicy, PrivilegedOperation,
     PrivilegedOperationId, PrivilegedOperationState, Project, ProjectId, ProjectState, Run,
     RunEvent, RunEventKind, RunId, RunState, SideEffect, Thread, ThreadId, ThreadState, UnixMillis,
+    WorkExecutionBackend,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -615,6 +616,52 @@ impl ExecutionStore for InMemoryExecutionStore {
             .get(id)
             .cloned()
             .ok_or(StoreError::NotFound)
+    }
+
+    async fn list_recoverable_host_effects(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<SideEffect>, StoreError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(StoreError::Internal("invalid recovery limit".into()));
+        }
+        let state = self.state.lock().await;
+        let mut effects = state
+            .effects
+            .values()
+            .filter(|effect| {
+                matches!(
+                    effect.kind,
+                    EffectKind::FileWrite | EffectKind::ProcessExecution
+                ) && matches!(effect.state, EffectState::Prepared | EffectState::Executing)
+                    && state
+                        .runs
+                        .get(&effect.run_id)
+                        .is_some_and(|run| run.is_work_bound_to(WorkExecutionBackend::HostDirect))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        effects.sort_by_key(|effect| (effect.created_at, effect.id.clone()));
+        effects.truncate(limit);
+        Ok(effects)
+    }
+
+    async fn list_recoverable_host_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(StoreError::Internal("invalid recovery limit".into()));
+        }
+        let state = self.state.lock().await;
+        let mut runs = state
+            .runs
+            .values()
+            .filter(|run| {
+                run.is_work_bound_to(WorkExecutionBackend::HostDirect) && !run.state.is_terminal()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        runs.sort_by_key(|run| (run.created_at, run.id.clone()));
+        runs.truncate(limit);
+        Ok(runs)
     }
 
     async fn save_effect(
