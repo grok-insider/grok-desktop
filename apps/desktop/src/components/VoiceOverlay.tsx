@@ -10,6 +10,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useDesktopClient } from "../services/DesktopClientContext";
 import type { VoiceSession, VoiceSetup } from "../services/desktopClient";
@@ -201,39 +208,37 @@ export function VoiceOverlay({ onClose }: { onClose(): void }) {
             </div>
 
             <div className="grid shrink-0 grid-cols-2 gap-3 border-t border-border bg-muted px-4 py-3 max-[680px]:grid-cols-1">
-              <label className="flex min-w-0 flex-col gap-1 font-mono text-label font-medium text-muted-foreground">
+              <label className="flex min-w-0 flex-col gap-1 font-mono text-label font-medium text-muted-foreground" htmlFor="voice-input-device">
                 <span className="flex items-center gap-1.5">
                   <Mic size={14} aria-hidden="true" />
                   Microphone
                 </span>
-                <select
-                  className="h-[34px] min-w-0 rounded-md border border-input bg-card px-2 font-sans text-body text-foreground outline-none transition-colors hover:border-input-hover focus-visible:ring-[3px] focus-visible:ring-ring"
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                >
-                  {setup?.inputDevices.map((device) => (
-                    <option key={device.id} value={device.id}>
-                      {device.label}
-                    </option>
-                  ))}
-                </select>
+                <Select value={input} onValueChange={setInput}>
+                  <SelectTrigger id="voice-input-device" className="h-[34px] w-full min-w-0 bg-card px-2 font-sans text-body text-foreground">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {setup?.inputDevices.map((device) => (
+                      <SelectItem key={device.id} value={device.id}>{device.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </label>
-              <label className="flex min-w-0 flex-col gap-1 font-mono text-label font-medium text-muted-foreground">
+              <label className="flex min-w-0 flex-col gap-1 font-mono text-label font-medium text-muted-foreground" htmlFor="voice-output-device">
                 <span className="flex items-center gap-1.5">
                   <Headphones size={14} aria-hidden="true" />
                   Speakers
                 </span>
-                <select
-                  className="h-[34px] min-w-0 rounded-md border border-input bg-card px-2 font-sans text-body text-foreground outline-none transition-colors hover:border-input-hover focus-visible:ring-[3px] focus-visible:ring-ring"
-                  value={output}
-                  onChange={(event) => setOutput(event.target.value)}
-                >
-                  {setup?.outputDevices.map((device) => (
-                    <option key={device.id} value={device.id}>
-                      {device.label}
-                    </option>
-                  ))}
-                </select>
+                <Select value={output} onValueChange={setOutput}>
+                  <SelectTrigger id="voice-output-device" className="h-[34px] w-full min-w-0 bg-card px-2 font-sans text-body text-foreground">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {setup?.outputDevices.map((device) => (
+                      <SelectItem key={device.id} value={device.id}>{device.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </label>
             </div>
 

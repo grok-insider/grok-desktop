@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
 import type { ArtifactRemovalResult, DesktopSnapshot, LibraryItem } from "../services/desktopClient";
@@ -174,8 +175,10 @@ describe("LibraryView", () => {
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Import a file" });
     const project = within(dialog).getByLabelText("Project");
-    expect(project).toHaveValue("atlas");
-    fireEvent.change(project, { target: { value: "ops" } });
+    expect(project).toHaveTextContent("Atlas launch");
+    const user = userEvent.setup();
+    await user.click(project);
+    await user.click(await screen.findByRole("option", { name: "Operations" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Choose file" }));
 
     expect(importArtifact).toHaveBeenCalledWith("ops");
@@ -414,9 +417,9 @@ describe("LibraryView", () => {
   it("exposes only the Files library surface without Imagine media tabs", async () => {
     renderLibrary();
     const filesTab = screen.getByRole("tab", { name: "Files" });
-    const filesPanel = document.getElementById("library-files-panel");
+    const filesPanel = screen.getByRole("tabpanel", { name: "Files" });
 
-    expect(filesTab).toHaveAttribute("aria-controls", "library-files-panel");
+    expect(filesTab).toHaveAttribute("aria-controls", filesPanel.id);
     expect(filesTab).toHaveAttribute("aria-selected", "true");
     expect(filesPanel).not.toHaveAttribute("hidden");
     expect(screen.queryByRole("tab", { name: "Images" })).not.toBeInTheDocument();

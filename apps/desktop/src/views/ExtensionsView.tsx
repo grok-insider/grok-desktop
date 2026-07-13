@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Blocks,
   Check,
@@ -15,6 +15,7 @@ import { PageHeader } from "../components/ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useDesktopSnapshot } from "../services/DesktopClientContext";
 import type { ExtensionSummary } from "../services/desktopClient";
@@ -51,19 +52,6 @@ export function ExtensionsView() {
   const isolationReady = snapshot?.capabilities.some(
     (item) => ["work", "mcp", "shell"].includes(item.id) && item.available,
   ) ?? false;
-
-  const selectFilterFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % filters.length;
-    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + filters.length) % filters.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = filters.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    setFilter(filters[nextIndex].id);
-    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role='tab']");
-    tabs?.[nextIndex]?.focus();
-  };
 
   return (
     <div className="min-h-full px-[clamp(24px,3.2vw,48px)] pt-8 pb-11 max-[680px]:px-4 max-[680px]:pt-6 max-[680px]:pb-8">
@@ -129,31 +117,22 @@ export function ExtensionsView() {
               className="pl-9"
             />
           </div>
-          <div
-            className="flex flex-wrap gap-1"
-            role="tablist"
-            aria-label="Extension filters"
-            aria-orientation="horizontal"
-          >
-            {filters.map((item, index) => {
-              const selected = filter === item.id;
-              return (
-                <Button
+          <Tabs value={filter} onValueChange={(value) => setFilter(value as ExtensionFilter)}>
+            <TabsList aria-label="Extension filters" className="h-auto flex-wrap gap-1 rounded-lg bg-transparent p-0">
+              {filters.map((item) => (
+                <TabsTrigger
                   key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  tabIndex={selected ? 0 : -1}
-                  variant={selected ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setFilter(item.id)}
-                  onKeyDown={(event) => selectFilterFromKeyboard(event, index)}
+                  value={item.id}
+                  className={cn(
+                    "h-7 flex-none rounded-md px-2.5 text-body-sm font-semibold text-muted-foreground",
+                    "hover:bg-muted hover:text-foreground data-[state=active]:bg-secondary data-[state=active]:text-secondary-foreground data-[state=active]:shadow-none",
+                  )}
                 >
                   {item.label}
-                </Button>
-              );
-            })}
-          </div>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
 
         <ExtensionSection

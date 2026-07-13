@@ -3,7 +3,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -32,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { PageHeader, RunStatus } from "../components/ui";
@@ -70,20 +70,6 @@ export function ProjectsView() {
   useEffect(() => {
     setTab("Overview");
   }, [projectId]);
-
-  const selectTabFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let nextIndex: number | undefined;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = tabs.length - 1;
-    if (nextIndex === undefined) return;
-
-    event.preventDefault();
-    setTab(tabs[nextIndex]);
-    const tabButtons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role='tab']");
-    tabButtons?.[nextIndex]?.focus();
-  };
 
   return (
     <div className="flex h-full min-h-0 flex-col px-[clamp(24px,3.2vw,48px)] pt-8 pb-6 max-[680px]:h-auto max-[680px]:min-h-full max-[680px]:px-4 max-[680px]:pt-6 max-[680px]:pb-8">
@@ -193,52 +179,45 @@ export function ProjectsView() {
               </div>
             </header>
 
-            <div
-              className="flex max-w-full gap-5 overflow-x-auto border-b border-border"
-              role="tablist"
-              aria-label="Project sections"
-              aria-orientation="horizontal"
+            <Tabs
+              value={tab}
+              onValueChange={(value) => setTab(value as ProjectTab)}
+              className="flex min-h-0 flex-1 flex-col gap-0"
             >
-              {tabs.map((item, index) => {
-                const active = tab === item;
-                const slug = item.toLowerCase();
-                return (
-                  <button
-                    type="button"
-                    role="tab"
-                    id={`project-tab-${slug}`}
-                    aria-controls={`project-panel-${slug}`}
-                    aria-selected={active}
-                    tabIndex={active ? 0 : -1}
-                    className={cn(
-                      "relative h-10 shrink-0 border-0 bg-transparent px-0.5 font-mono text-label font-semibold text-subtle-foreground outline-none",
-                      "transition-[color,transform] duration-150 ease-fluid after:absolute after:right-0 after:bottom-0 after:left-0 after:h-0.5 after:origin-center after:scale-x-0 after:bg-primary after:transition-transform after:duration-150",
-                      "hover:text-foreground active:scale-[.98] focus-visible:ring-[3px] focus-visible:ring-ring",
-                      active && "text-foreground after:scale-x-100",
-                    )}
-                    onClick={() => setTab(item)}
-                    onKeyDown={(event) => selectTabFromKeyboard(event, index)}
+              <TabsList
+                aria-label="Project sections"
+                variant="line"
+                className="h-auto w-full max-w-full justify-start gap-5 overflow-x-auto overflow-y-hidden rounded-none border-b border-border p-0"
+              >
+                {tabs.map((item) => (
+                  <TabsTrigger
+                    value={item}
                     key={item}
+                    className={cn(
+                      "h-10 flex-none rounded-none border-0 border-b-2 border-transparent bg-transparent px-0.5 font-mono text-label font-semibold text-subtle-foreground",
+                      "transition-[color,transform] duration-150 ease-fluid after:hidden",
+                      "hover:text-foreground active:scale-[.98]",
+                      "data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground",
+                    )}
                   >
                     {item}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div
-              className="min-h-0 overflow-y-auto py-5 max-[680px]:overflow-visible"
-              id={`project-panel-${tab.toLowerCase()}`}
-              role="tabpanel"
-              aria-labelledby={`project-tab-${tab.toLowerCase()}`}
-              tabIndex={0}
-            >
-              {tab === "Overview" && <ProjectOverview project={selected} snapshot={snapshot} />}
-              {tab === "Conversations" && <ProjectConversations projectName={selected.name} snapshot={snapshot} />}
-              {tab === "Files" && <ProjectFiles projectName={selected.name} snapshot={snapshot} />}
-              {tab === "Automations" && <ProjectAutomations projectName={selected.name} snapshot={snapshot} />}
-              {tab === "Instructions" && <ProjectInstructions instructions={selected.instructions} />}
-            </div>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              {tabs.map((item) => (
+                <TabsContent
+                  value={item}
+                  key={item}
+                  className="min-h-0 overflow-y-auto py-5 max-[680px]:overflow-visible"
+                >
+                  {item === "Overview" && <ProjectOverview project={selected} snapshot={snapshot} />}
+                  {item === "Conversations" && <ProjectConversations projectName={selected.name} snapshot={snapshot} />}
+                  {item === "Files" && <ProjectFiles projectName={selected.name} snapshot={snapshot} />}
+                  {item === "Automations" && <ProjectAutomations projectName={selected.name} snapshot={snapshot} />}
+                  {item === "Instructions" && <ProjectInstructions instructions={selected.instructions} />}
+                </TabsContent>
+              ))}
+            </Tabs>
           </section>
         ) : (
           <ProjectDetailPlaceholder loading={loading} hasProjects={Boolean(snapshot?.projects.length)} />

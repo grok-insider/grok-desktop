@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useMemo, useState } from "react";
 import {
   Check,
   CheckCircle2,
@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { IconButton, PageHeader, RunStatus } from "../components/ui";
 import { useDesktopSnapshot } from "../services/DesktopClientContext";
@@ -61,53 +62,30 @@ export function ActivityView() {
   const selected = filtered.find((run) => run.id === (selectedId ?? requestedId)) ?? filtered[0];
   const needsInputCount = snapshot?.runs.filter((run) => needsInput(run.state)).length ?? 0;
 
-  const selectFilterFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextIndex = (currentIndex + 1) % activityFilters.length;
-    }
-    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      nextIndex = (currentIndex - 1 + activityFilters.length) % activityFilters.length;
-    }
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = activityFilters.length - 1;
-    if (nextIndex === null) return;
-
-    event.preventDefault();
-    setFilter(activityFilters[nextIndex].id);
-    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]");
-    tabs?.[nextIndex]?.focus();
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden px-[clamp(24px,3.2vw,48px)] pt-8 pb-6 max-[900px]:h-auto max-[900px]:overflow-visible max-[680px]:px-4 max-[680px]:pt-6 max-[680px]:pb-8">
       <PageHeader title="Activity" description="Monitor work, review decisions, and inspect running tasks." />
 
-      <div
-        className="mx-auto mb-3 flex w-full max-w-[1440px] items-center gap-1 overflow-x-auto rounded-md bg-secondary p-1"
-        role="tablist"
-        aria-label="Activity filters"
+      <Tabs
+        value={filter}
+        onValueChange={(value) => setFilter(value as ActivityFilter)}
+        className="mx-auto mb-3 w-full max-w-[1440px]"
       >
-        {activityFilters.map((item, index) => {
-          const active = filter === item.id;
-          return (
-            <Button
+        <TabsList
+          aria-label="Activity filters"
+          className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-md bg-secondary p-1"
+        >
+          {activityFilters.map((item) => (
+            <TabsTrigger
               id={`activity-filter-${item.id}`}
               key={item.id}
-              type="button"
-              role="tab"
+              value={item.id}
               aria-controls="activity-filter-panel"
-              aria-selected={active}
               aria-label={item.id === "needs_input" ? `${item.label}, ${needsInputCount}` : item.label}
-              tabIndex={active ? 0 : -1}
-              variant={active ? "secondary" : "ghost"}
-              size="sm"
               className={cn(
-                "min-w-fit",
-                active && "bg-card font-semibold text-foreground shadow-raised hover:bg-card",
+                "h-7 min-w-fit flex-none rounded-md px-2.5 text-body-sm font-medium text-muted-foreground",
+                "hover:text-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-raised",
               )}
-              onClick={() => setFilter(item.id)}
-              onKeyDown={(event) => selectFilterFromKeyboard(event, index)}
             >
               {item.label}
               {item.id === "needs_input" && (
@@ -118,10 +96,10 @@ export function ActivityView() {
                   {needsInputCount}
                 </span>
               )}
-            </Button>
-          );
-        })}
-      </div>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <div
         id="activity-filter-panel"

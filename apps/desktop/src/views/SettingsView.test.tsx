@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
@@ -173,16 +174,18 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
     const modelSelect = await screen.findByRole("combobox", { name: "Default chat model" });
     await waitFor(() => expect(modelSelect).toBeEnabled());
-    expect(modelSelect).toHaveValue("grok-4.3");
-    expect(within(modelSelect).getByRole("option", { name: /Grok 4\.3.*product default.*grok-4\.3/ })).toBeInTheDocument();
+    expect(modelSelect).toHaveTextContent(/Grok 4\.3.*product default.*grok-4\.3/);
 
-    fireEvent.change(modelSelect, { target: { value: "grok-4.3-fast" } });
+    const user = userEvent.setup();
+    await user.click(modelSelect);
+    expect(await screen.findByRole("option", { name: /Grok 4\.3.*product default.*grok-4\.3/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /Grok 4\.3 Fast/ }));
 
     await waitFor(() => expect(selectModel).toHaveBeenCalledWith({
       expectedRevision: 0,
       modelId: "grok-4.3-fast",
     }));
-    await waitFor(() => expect(modelSelect).toHaveValue("grok-4.3-fast"));
+    await waitFor(() => expect(modelSelect).toHaveTextContent(/Grok 4\.3 Fast/));
     expect(screen.getByLabelText("Model status")).toHaveTextContent("existing turns never change");
   });
 
@@ -222,14 +225,16 @@ describe("SettingsView", () => {
     const modelSelect = await screen.findByRole("combobox", { name: "Default chat model" });
     await waitFor(() => expect(modelSelect).toBeEnabled());
 
-    fireEvent.change(modelSelect, { target: { value: "grok-4.3-fast" } });
+    const user = userEvent.setup();
+    await user.click(modelSelect);
+    await user.click(await screen.findByRole("option", { name: /Grok 4\.3 Fast/ }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("could not be reconciled");
     expect(screen.getByRole("button", { name: "Retry discovery" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
     expect(screen.getByLabelText("Model status")).toHaveTextContent("Stale");
-    expect(screen.getByRole("combobox", { name: "Default chat model" })).toHaveValue("grok-4.3");
+    expect(screen.getByRole("combobox", { name: "Default chat model" })).toHaveTextContent(/product default.*grok-4\.3/);
   });
 
   it("retains a bounded stale catalog when explicit live refresh fails", async () => {
@@ -253,6 +258,6 @@ describe("SettingsView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Model catalog unavailable");
     expect(screen.getByRole("combobox", { name: "Default chat model" })).toBeDisabled();
     expect(screen.getByLabelText("Model status")).toHaveTextContent("Stale");
-    expect(screen.getByRole("combobox", { name: "Default chat model" })).toHaveValue("grok-4.3");
+    expect(screen.getByRole("combobox", { name: "Default chat model" })).toHaveTextContent(/product default.*grok-4\.3/);
   });
 });

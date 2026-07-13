@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
@@ -89,8 +89,9 @@ describe("ActivityView", () => {
 
     allTab.focus();
     fireEvent.keyDown(allTab, { key: "ArrowRight" });
-    expect(needsInputTab).toHaveFocus();
-    expect(needsInputTab).toHaveAttribute("aria-selected", "true");
+    // Radix moves roving focus in a macrotask; selection follows focus.
+    await waitFor(() => expect(needsInputTab).toHaveFocus());
+    await waitFor(() => expect(needsInputTab).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("button", { name: /Publish the Friday operations brief/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Publish interrupted release notes/ })).toBeInTheDocument();
 
@@ -100,14 +101,14 @@ describe("ActivityView", () => {
 
     fireEvent.keyDown(needsInputTab, { key: "End" });
     const completedTab = within(tabs).getByRole("tab", { name: "Completed" });
-    expect(completedTab).toHaveFocus();
-    expect(completedTab).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(completedTab).toHaveFocus());
+    await waitFor(() => expect(completedTab).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("button", { name: /Summarize customer interviews/ })).toBeInTheDocument();
     expect(screen.queryByText("Publish interrupted release notes")).not.toBeInTheDocument();
 
     fireEvent.keyDown(completedTab, { key: "Home" });
-    expect(allTab).toHaveFocus();
-    expect(allTab).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(allTab).toHaveFocus());
+    await waitFor(() => expect(allTab).toHaveAttribute("aria-selected", "true"));
   });
 
   it("keeps execution and approval mutations unavailable", async () => {

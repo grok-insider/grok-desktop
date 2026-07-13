@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 type ImagineToolKind = "image" | "video";
@@ -41,11 +42,10 @@ type ImagineToolKind = "image" | "video";
 /* Radix Select forbids empty-string item values; sentinel for "no project". */
 const NO_PROJECT_VALUE = "__no-project__";
 
-const modeTabClass = (active: boolean) =>
-  cn(
-    "h-7 min-w-[69px] rounded-md px-3 text-body-sm font-semibold transition-colors duration-150",
-    active ? "bg-card text-foreground shadow-raised" : "text-muted-foreground hover:text-foreground",
-  );
+const modeTabClassName = cn(
+  "h-7 min-w-[69px] rounded-md px-3 text-body-sm font-semibold text-muted-foreground transition-colors duration-150",
+  "hover:text-foreground data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-raised",
+);
 
 export function Composer() {
   const client = useDesktopClient();
@@ -166,21 +166,19 @@ export function Composer() {
 
   return (
     <section className="w-full" aria-label="Start a conversation">
-      <div className="mb-2 ml-1 flex w-fit gap-0.5 rounded-lg bg-secondary p-[3px]" role="tablist" aria-label="Conversation mode">
-        <button role="tab" aria-selected={mode === "chat"} className={modeTabClass(mode === "chat")} onClick={() => setMode("chat")}>
-          Chat
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === "work"}
-          className={modeTabClass(mode === "work")}
-          disabled={!workAvailable}
-          title={!workAvailable ? workCapability?.reason : undefined}
-          onClick={() => setMode("work")}
-        >
-          Work
-        </button>
-      </div>
+      <Tabs value={mode} onValueChange={(value) => setMode(value as "chat" | "work")} className="mb-2 ml-1 w-fit">
+        <TabsList aria-label="Conversation mode" className="h-auto gap-0.5 rounded-lg bg-secondary p-[3px]">
+          <TabsTrigger value="chat" className={modeTabClassName}>Chat</TabsTrigger>
+          <TabsTrigger
+            value="work"
+            className={modeTabClassName}
+            disabled={!workAvailable}
+            title={!workAvailable ? workCapability?.reason : undefined}
+          >
+            Work
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
       <div className="min-h-[148px] rounded-xl border border-input bg-card px-3.5 pt-3.5 pb-2.5 shadow-overlay transition-[border-color,box-shadow] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring">
         <label htmlFor="main-prompt" className="sr-only">Message Grok</label>
         <textarea

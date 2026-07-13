@@ -11,6 +11,13 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { modelDisplayLabel } from "../lib/modelLabels";
@@ -453,28 +460,33 @@ function ModelSettings() {
           {loading && !catalog ? (
             <Skeleton className="h-[34px] w-48 max-[680px]:w-full" aria-label="Discovering official xAI models" />
           ) : (
-            <select
-              className="h-[34px] min-w-52 max-w-[min(32rem,50vw)] truncate rounded-md border border-input bg-card px-2 font-mono text-body-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 max-[680px]:w-full max-[680px]:max-w-full"
-              aria-label="Default chat model"
+            <Select
               value={catalog?.preference.selectedModelId ?? ""}
               disabled={!catalog || status !== "ready" || saving || selectableModels.length === 0}
-              onChange={(event) => void selectModel(event.target.value)}
+              onValueChange={(value) => void selectModel(value)}
             >
-              {!catalog && <option value="">Unavailable</option>}
-              {catalog && !selectedInCatalog && (
-                <option value={catalog.preference.selectedModelId} disabled>
-                  {modelDisplayLabel(catalog.preference.selectedModelId)} ({catalog.preference.selectedModelId}) — unavailable
-                </option>
-              )}
-              {selectableModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {modelDisplayLabel(model.id)}
-                  {model.id === catalog?.defaultModelId ? " — product default" : ""}
-                  {" · "}
-                  {model.id}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                aria-label="Default chat model"
+                className="h-[34px] min-w-52 max-w-[min(32rem,50vw)] bg-card font-mono text-body-sm text-foreground max-[680px]:w-full max-[680px]:max-w-full"
+              >
+                <SelectValue placeholder="Unavailable" />
+              </SelectTrigger>
+              <SelectContent position="popper" align="start">
+                {catalog && !selectedInCatalog && (
+                  <SelectItem value={catalog.preference.selectedModelId} disabled className="font-mono text-body-sm">
+                    {modelDisplayLabel(catalog.preference.selectedModelId)} ({catalog.preference.selectedModelId}) — unavailable
+                  </SelectItem>
+                )}
+                {selectableModels.map((model) => (
+                  <SelectItem key={model.id} value={model.id} className="font-mono text-body-sm">
+                    {modelDisplayLabel(model.id)}
+                    {model.id === catalog?.defaultModelId ? " — product default" : ""}
+                    {" · "}
+                    {model.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </SettingRow>
         {saving && (

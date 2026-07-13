@@ -3,7 +3,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -40,7 +39,15 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/ui";
@@ -107,20 +114,6 @@ export function LibraryView() {
   const { snapshot, loading } = useDesktopSnapshot();
   const filesCapability = snapshot?.capabilities.find((capability) => capability.id === "files");
 
-  const selectTabFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % LIBRARY_TABS.length;
-    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + LIBRARY_TABS.length) % LIBRARY_TABS.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = LIBRARY_TABS.length - 1;
-    if (nextIndex === null) return;
-
-    event.preventDefault();
-    setTab(LIBRARY_TABS[nextIndex].id);
-    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role='tab']");
-    tabs?.[nextIndex]?.focus();
-  };
-
   return (
     <div className="min-h-full overflow-y-auto px-[clamp(24px,3.2vw,48px)] pt-8 pb-11 max-[680px]:px-4 max-[680px]:pt-6 max-[680px]:pb-8">
       <div className="mx-auto max-w-[1540px]">
@@ -140,55 +133,40 @@ export function LibraryView() {
           }
         />
 
-        <div
-          className="mb-4 flex gap-1 border-b border-border"
-          role="tablist"
-          aria-label="Library sections"
-          aria-orientation="horizontal"
-        >
-          {LIBRARY_TABS.map((item, index) => {
-            const selected = tab === item.id;
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                id={`library-${item.id}-tab`}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                aria-controls={`library-${item.id}-panel`}
-                tabIndex={selected ? 0 : -1}
-                className={cn(
-                  "flex h-10 items-center gap-2 border-b-2 border-transparent px-3 text-body font-medium text-muted-foreground outline-none",
-                  "transition-[background-color,border-color,color,transform] duration-150 ease-fluid hover:bg-muted hover:text-foreground active:scale-[.98] focus-visible:ring-[3px] focus-visible:ring-ring",
-                  selected && "border-primary font-semibold text-foreground",
-                )}
-                onClick={() => setTab(item.id)}
-                onKeyDown={(event) => selectTabFromKeyboard(event, index)}
-              >
-                <Icon size={16} aria-hidden="true" />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div
-          id="library-files-panel"
-          role="tabpanel"
-          aria-labelledby="library-files-tab"
-          tabIndex={tab === "files" ? 0 : -1}
-          hidden={tab !== "files"}
-        >
-          {tab === "files" && (
+        <Tabs value={tab} onValueChange={(value) => setTab(value as LibraryTab)} className="gap-0">
+          <TabsList
+            aria-label="Library sections"
+            variant="line"
+            className="mb-4 h-auto w-full justify-start gap-1 rounded-none border-b border-border p-0"
+          >
+            {LIBRARY_TABS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <TabsTrigger
+                  key={item.id}
+                  value={item.id}
+                  className={cn(
+                    "h-10 flex-none gap-2 rounded-none border-0 border-b-2 border-transparent px-3 text-body font-medium text-muted-foreground",
+                    "transition-[background-color,border-color,color,transform] duration-150 ease-fluid after:hidden",
+                    "hover:bg-muted hover:text-foreground active:scale-[.98]",
+                    "data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-foreground",
+                  )}
+                >
+                  <Icon size={16} aria-hidden="true" />
+                  {item.label}
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+          <TabsContent value="files">
             <FilesLibrary
               snapshot={snapshot}
               loading={loading}
               filesAvailable={filesCapability?.available === true}
               filesReason={filesCapability?.reason}
             />
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
@@ -281,17 +259,19 @@ function ImportArtifactAction({
             <label className="text-body font-medium text-foreground" htmlFor="artifact-import-project">
               Project
             </label>
-            <select
-              id="artifact-import-project"
-              className="h-[34px] w-full rounded-md border border-input bg-card px-3 text-body text-foreground outline-none transition-[border-color] hover:border-input-hover focus-visible:ring-[3px] focus-visible:ring-ring"
-              value={projectId}
-              disabled={pending}
-              onChange={(event) => setProjectId(event.target.value)}
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
-            </select>
+            <Select value={projectId} disabled={pending} onValueChange={setProjectId}>
+              <SelectTrigger
+                id="artifact-import-project"
+                className="h-[34px] w-full bg-card px-3 text-body text-foreground"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {pending && (
             <p className="m-0 flex items-center gap-2 text-body-sm text-muted-foreground" role="status">
@@ -1113,32 +1093,33 @@ export function MediaLibrary({ kind }: { kind: "image" | "video" }) {
         />
 
         <div className="mt-3 grid grid-cols-[8rem_7rem_minmax(0,1fr)_auto] items-end gap-2 max-[680px]:grid-cols-2">
-          <label className="flex flex-col gap-1 text-body-sm font-medium text-muted-foreground">
+          <label className="flex flex-col gap-1 text-body-sm font-medium text-muted-foreground" htmlFor="media-aspect-ratio">
             Aspect ratio
-            <select
-              className="h-[34px] rounded-md border border-input bg-card px-2 text-body text-foreground outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
-              value={aspectRatio}
-              onChange={(event) => setAspectRatio(event.target.value)}
-            >
-              <option>16:9</option>
-              <option>1:1</option>
-              <option>9:16</option>
-              <option>4:3</option>
-            </select>
+            <Select value={aspectRatio} onValueChange={setAspectRatio}>
+              <SelectTrigger id="media-aspect-ratio" className="h-[34px] w-full bg-card px-2 text-body text-foreground">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                {["16:9", "1:1", "9:16", "4:3"].map((ratio) => (
+                  <SelectItem key={ratio} value={ratio}>{ratio}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
 
           {kind === "video" ? (
-            <label className="flex flex-col gap-1 text-body-sm font-medium text-muted-foreground">
+            <label className="flex flex-col gap-1 text-body-sm font-medium text-muted-foreground" htmlFor="media-duration">
               Duration
-              <select
-                className="h-[34px] rounded-md border border-input bg-card px-2 text-body text-foreground outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
-                value={duration}
-                onChange={(event) => setDuration(event.target.value)}
-              >
-                <option>6s</option>
-                <option>8s</option>
-                <option>10s</option>
-              </select>
+              <Select value={duration} onValueChange={setDuration}>
+                <SelectTrigger id="media-duration" className="h-[34px] w-full bg-card px-2 text-body text-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  {["6s", "8s", "10s"].map((value) => (
+                    <SelectItem key={value} value={value}>{value}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </label>
           ) : (
             <span aria-hidden="true" />

@@ -110,15 +110,16 @@ describe("ProjectsView", () => {
     fireEvent.keyDown(overview, { key: "ArrowRight" });
 
     const conversations = within(tablist).getByRole("tab", { name: "Conversations" });
-    expect(conversations).toHaveFocus();
-    expect(conversations).toHaveAttribute("aria-selected", "true");
+    // Radix moves roving focus in a macrotask; selection follows focus.
+    await waitFor(() => expect(conversations).toHaveFocus());
+    await waitFor(() => expect(conversations).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("tabpanel", { name: "Conversations" })).toBeInTheDocument();
     expect(screen.getByText("Q3 launch narrative")).toBeInTheDocument();
 
     fireEvent.keyDown(conversations, { key: "End" });
     const instructions = within(tablist).getByRole("tab", { name: "Instructions" });
-    expect(instructions).toHaveFocus();
-    expect(screen.getByRole("tabpanel", { name: "Instructions" })).toBeInTheDocument();
+    await waitFor(() => expect(instructions).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("tabpanel", { name: "Instructions" })).toBeInTheDocument());
     expect(screen.getByLabelText("Project instructions")).toHaveValue(
       "Prioritize evidence-backed recommendations and flag assumptions.",
     );

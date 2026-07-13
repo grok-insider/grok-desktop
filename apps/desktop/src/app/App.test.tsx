@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
@@ -153,7 +154,8 @@ describe("Grok Desktop shell", () => {
     expect(screen.queryByText("Grok execution available")).not.toBeInTheDocument();
     const work = screen.getByRole("tab", { name: "Work" });
     await waitFor(() => expect(work).toBeEnabled());
-    fireEvent.click(work);
+    const user = userEvent.setup();
+    await user.click(work);
     fireEvent.change(screen.getByLabelText("Message Grok"), { target: { value: "Prepare a launch readiness report" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -164,7 +166,8 @@ describe("Grok Desktop shell", () => {
   it("exposes project sections as keyboard-accessible tabs", async () => {
     renderApp("/projects/atlas");
     expect(await screen.findByRole("heading", { name: "Atlas launch" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Instructions" }));
     expect(screen.getByLabelText("Project instructions")).toHaveValue(
       "Prioritize evidence-backed recommendations and flag assumptions.",
     );

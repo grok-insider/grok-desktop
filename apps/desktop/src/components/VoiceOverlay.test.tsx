@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
@@ -92,10 +93,15 @@ describe("VoiceOverlay", () => {
 
     expect(await screen.findByRole("heading", { name: "Listening" })).toBeInTheDocument();
     expect(start).toHaveBeenCalledWith("default-mic", "default-speaker");
-    expect(screen.getByLabelText("Microphone")).toHaveValue("default-mic");
-    expect(screen.getByLabelText("Speakers")).toHaveValue("default-speaker");
-    expect(screen.getByRole("option", { name: "Studio microphone" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Headphones" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Microphone")).toHaveTextContent("Default microphone");
+    expect(screen.getByLabelText("Speakers")).toHaveTextContent("Default speakers");
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Microphone"));
+    expect(await screen.findByRole("option", { name: "Studio microphone" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByLabelText("Speakers"));
+    expect(await screen.findByRole("option", { name: "Headphones" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Live captions")).toHaveTextContent("Summarize the current launch risks.");
     expect(screen.getByText("Streaming")).toHaveClass("sr-only");
 

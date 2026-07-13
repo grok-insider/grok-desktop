@@ -23,6 +23,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -33,11 +40,7 @@ import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientC
 import type { AutomationDraft, AutomationSchedule, AutomationSummary } from "../services/desktopClient";
 import { AUTOMATION_DEFINITION_ONLY_REASON } from "../services/productAvailability";
 
-const selectClassName = cn(
-  "h-[34px] w-full min-w-0 rounded-md border border-input bg-card px-3 text-body text-foreground outline-none",
-  "transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring",
-  "disabled:cursor-not-allowed disabled:opacity-50",
-);
+const selectTriggerClassName = "h-[34px] w-full min-w-0 bg-card px-3 font-normal text-body text-foreground";
 
 export function AutomationsView() {
   const client = useDesktopClient();
@@ -549,16 +552,20 @@ function AutomationEditor({
             ) : (
               <label className="flex min-w-0 flex-col gap-1 text-body font-semibold text-foreground" htmlFor="automation-project">
                 Project
-                <select
-                  id="automation-project"
-                  className={selectClassName}
-                  required
-                  disabled={saving}
+                <Select
                   value={draft.projectId}
-                  onChange={(event) => update("projectId", event.target.value)}
+                  disabled={saving}
+                  onValueChange={(value) => update("projectId", value)}
                 >
-                  {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
-                </select>
+                  <SelectTrigger id="automation-project" className={selectTriggerClassName}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {projects.map((project) => (
+                      <SelectItem value={project.id} key={project.id}>{project.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </label>
             )}
 
@@ -579,17 +586,28 @@ function AutomationEditor({
             <fieldset className="col-span-2 min-w-0 rounded-lg border border-border p-3 max-[680px]:col-span-1">
               <legend className="px-1 text-body font-semibold text-foreground">Timing definition</legend>
               <div className="grid grid-cols-3 gap-3 max-[560px]:grid-cols-1">
-                <EditorSelect label="Frequency" value={draft.schedule.frequency} disabled={saving} onChange={(value) => updateSchedule("frequency", value as AutomationSchedule["frequency"])}>
-                  <option value="daily">Every day</option>
-                  <option value="weekdays">Weekdays</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </EditorSelect>
+                <EditorSelect
+                  label="Frequency"
+                  value={draft.schedule.frequency}
+                  disabled={saving}
+                  onChange={(value) => updateSchedule("frequency", value as AutomationSchedule["frequency"])}
+                  options={[
+                    { value: "daily", label: "Every day" },
+                    { value: "weekdays", label: "Weekdays" },
+                    { value: "weekly", label: "Weekly" },
+                    { value: "monthly", label: "Monthly" },
+                  ]}
+                />
 
                 {draft.schedule.frequency === "weekly" && (
-                  <EditorSelect label="Day of week" value={String(draft.schedule.weekday ?? 1)} disabled={saving} onChange={(value) => updateSchedule("weekday", Number(value) as AutomationSchedule["weekday"])}>
-                    {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day, index) => <option value={index} key={day}>{day}</option>)}
-                  </EditorSelect>
+                  <EditorSelect
+                    label="Day of week"
+                    value={String(draft.schedule.weekday ?? 1)}
+                    disabled={saving}
+                    onChange={(value) => updateSchedule("weekday", Number(value) as AutomationSchedule["weekday"])}
+                    options={["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                      .map((day, index) => ({ value: String(index), label: day }))}
+                  />
                 )}
 
                 {draft.schedule.frequency === "monthly" && (
@@ -617,9 +635,8 @@ function AutomationEditor({
                   value={draft.schedule.timeZoneIana}
                   disabled={saving}
                   onChange={(value) => onDraftChange({ ...draft, schedule: { ...draft.schedule, timeZoneIana: value, timeZoneWindows: undefined } })}
-                >
-                  {TIME_ZONE_OPTIONS.map((zone) => <option value={zone} key={zone}>{zone}</option>)}
-                </EditorSelect>
+                  options={TIME_ZONE_OPTIONS.map((zone) => ({ value: zone, label: zone }))}
+                />
 
                 <label className="col-span-3 flex min-w-0 flex-col gap-1 text-body-sm font-semibold text-muted-foreground max-[560px]:col-span-1" htmlFor="automation-windows-timezone">
                   Windows timezone mapping
@@ -641,15 +658,27 @@ function AutomationEditor({
               </div>
             </fieldset>
 
-            <EditorSelect label="Missed run policy" value={draft.missedRunPolicy} disabled={saving} onChange={(value) => update("missedRunPolicy", value as AutomationDraft["missedRunPolicy"])}>
-              <option value="run_once">Run once when available</option>
-              <option value="skip">Skip missed run</option>
-            </EditorSelect>
+            <EditorSelect
+              label="Missed run policy"
+              value={draft.missedRunPolicy}
+              disabled={saving}
+              onChange={(value) => update("missedRunPolicy", value as AutomationDraft["missedRunPolicy"])}
+              options={[
+                { value: "run_once", label: "Run once when available" },
+                { value: "skip", label: "Skip missed run" },
+              ]}
+            />
 
-            <EditorSelect label="Overlapping runs" value={draft.overlapPolicy} disabled={saving} onChange={(value) => update("overlapPolicy", value as AutomationDraft["overlapPolicy"])}>
-              <option value="queue_one">Queue one run</option>
-              <option value="skip">Skip overlap</option>
-            </EditorSelect>
+            <EditorSelect
+              label="Overlapping runs"
+              value={draft.overlapPolicy}
+              disabled={saving}
+              onChange={(value) => update("overlapPolicy", value as AutomationDraft["overlapPolicy"])}
+              options={[
+                { value: "queue_one", label: "Queue one run" },
+                { value: "skip", label: "Skip overlap" },
+              ]}
+            />
 
             <div className="col-span-2 flex min-h-16 items-center justify-between gap-4 rounded-lg border border-border bg-muted p-3 max-[680px]:col-span-1">
               <div className="min-w-0">
@@ -688,21 +717,28 @@ function EditorSelect({
   value,
   disabled,
   onChange,
-  children,
+  options,
 }: {
   label: string;
   value: string;
   disabled: boolean;
   onChange(value: string): void;
-  children: React.ReactNode;
+  options: Array<{ value: string; label: string }>;
 }) {
   const id = `automation-${label.toLowerCase().replaceAll(" ", "-")}`;
   return (
     <label className="flex min-w-0 flex-col gap-1 text-body-sm font-semibold text-muted-foreground" htmlFor={id}>
       {label}
-      <select id={id} className={selectClassName} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}>
-        {children}
-      </select>
+      <Select value={value} disabled={disabled} onValueChange={onChange}>
+        <SelectTrigger id={id} className={selectTriggerClassName}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent position="popper">
+          {options.map((option) => (
+            <SelectItem value={option.value} key={option.value}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </label>
   );
 }

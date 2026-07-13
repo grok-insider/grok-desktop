@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
 import { MockDesktopClient } from "../services/mockDesktopClient";
@@ -33,13 +34,16 @@ describe("ExtensionsView", () => {
 
     fireEvent.change(screen.getByLabelText("Search extensions"), { target: { value: "" } });
     const allTab = screen.getByRole("tab", { name: "All" });
+    allTab.focus();
     fireEvent.keyDown(allTab, { key: "ArrowRight" });
     const builtInTab = screen.getByRole("tab", { name: "Built-in" });
-    expect(builtInTab).toHaveAttribute("aria-selected", "true");
-    expect(builtInTab).toHaveFocus();
+    // Radix moves roving focus in a macrotask; selection follows focus.
+    await waitFor(() => expect(builtInTab).toHaveFocus());
+    await waitFor(() => expect(builtInTab).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("heading", { name: "Managed browser", level: 3 })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "MCP" }));
     expect(screen.getByRole("heading", { name: "GitHub MCP", level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Linear MCP", level: 3 })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Wisp", level: 3 })).not.toBeInTheDocument();
