@@ -33,6 +33,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -337,27 +344,32 @@ export function ConversationView() {
             {conversation.projectName} · {conversation.mode === "work" ? "Work" : "Chat"}
           </p>
         </div>
-        <div className="flex h-9 min-w-0 max-w-48 items-center gap-1 rounded-md border border-input bg-card px-2 text-foreground shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring max-[680px]:max-w-[126px]">
-          <GitBranch className="shrink-0 text-muted-foreground" size={14} aria-hidden="true" />
-          <select
+        <Select
+          value={conversation.id}
+          onValueChange={(value) => {
+            if (value !== conversation.id) navigate(`/conversations/${value}`);
+          }}
+        >
+          <SelectTrigger
             aria-label="Conversation branch"
-            className="min-w-0 flex-1 appearance-none truncate bg-transparent font-mono text-label outline-none"
-            onChange={(event) => {
-              if (event.target.value !== conversation.id) {
-                navigate(`/conversations/${event.target.value}`);
-              }
-            }}
-            value={conversation.id}
+            className="h-9 max-w-48 min-w-0 gap-1.5 border-input bg-card px-2 font-mono text-label text-foreground shadow-xs max-[680px]:max-w-[126px]"
           >
+            <GitBranch className="shrink-0 text-muted-foreground" size={14} aria-hidden="true" />
+            <SelectValue />
+            <Badge className="min-w-5 shrink-0 px-1.5" variant="neutral">{conversation.branchCount}</Badge>
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
             {conversation.branches.map((branchOption) => (
-              <option key={branchOption.threadId} value={branchOption.threadId}>
+              <SelectItem
+                key={branchOption.threadId}
+                value={branchOption.threadId}
+                className="font-mono text-label"
+              >
                 {branchOption.label}
-              </option>
+              </SelectItem>
             ))}
-          </select>
-          <Badge className="min-w-5 shrink-0 px-1.5" variant="neutral">{conversation.branchCount}</Badge>
-          <ChevronDown className="pointer-events-none shrink-0 text-muted-foreground" size={13} aria-hidden="true" />
-        </div>
+          </SelectContent>
+        </Select>
         <Button
           aria-busy={newestBranchSource ? forkingMessageId === newestBranchSource.message.id : undefined}
           aria-label="New branch from latest completed response"

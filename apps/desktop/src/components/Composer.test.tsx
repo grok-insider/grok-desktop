@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
@@ -29,9 +30,10 @@ function renderComposer(client: MockDesktopClient = new CapturingClient()) {
 }
 
 async function chooseModel(modelId: string) {
-  fireEvent.click(await screen.findByRole("button", { name: /Choose model/ }));
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Choose model/ }));
   // Accessible name includes product label and mono canonical id.
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: new RegExp(modelId) }));
+  await user.click(await screen.findByRole("menuitemradio", { name: new RegExp(modelId) }));
 }
 
 describe("Composer Imagine tools", () => {
@@ -80,8 +82,9 @@ describe("Composer Imagine tools", () => {
     await chooseModel("grok-4.3-fast");
     expect(screen.getByRole("button", { name: "Choose model, Grok 4.3 Fast" })).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Tools" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Imagine image" }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tools" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Imagine image" }));
     expect(screen.getByLabelText("Imagine image tool")).toBeInTheDocument();
 
     const mediaPrompt = screen.getByLabelText("Media prompt");
@@ -141,8 +144,9 @@ describe("Composer model selection", () => {
   it("saves a model as the daemon-owned default through the secondary action", async () => {
     const client = renderComposer();
     const select = vi.spyOn(client, "selectChatModel");
-    fireEvent.click(await screen.findByRole("button", { name: /Choose model/ }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Set Grok 4.3 Fast as default" }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Choose model/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Set Grok 4.3 Fast as default" }));
 
     await waitFor(() => expect(select).toHaveBeenCalledWith({ expectedRevision: 0, modelId: "grok-4.3-fast" }));
     await screen.findByRole("button", { name: "Choose model, Default · Grok 4.3 Fast" });
@@ -158,9 +162,10 @@ describe("Composer model selection", () => {
       }
     }
     const client = renderComposer(new RetryClient()) as RetryClient;
-    fireEvent.click(await screen.findByRole("button", { name: "Choose model, Choose model" }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Choose model, Choose model" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("model catalog is unavailable");
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
 
     await screen.findByRole("menuitemradio", { name: /Default · Grok 4\.3/ });
     expect(client.calls).toBe(2);
@@ -168,10 +173,11 @@ describe("Composer model selection", () => {
 
   it("closes the accessible menu with Escape", async () => {
     renderComposer();
+    const user = userEvent.setup();
     const trigger = await screen.findByRole("button", { name: /Choose model/ });
-    fireEvent.click(trigger);
+    await user.click(trigger);
     await screen.findByRole("menu", { name: "Chat model" });
-    fireEvent.keyDown(document, { key: "Escape" });
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Chat model" })).not.toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
   });

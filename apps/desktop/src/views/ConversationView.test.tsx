@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -257,11 +258,13 @@ describe("ConversationView", () => {
     }));
     renderConversation(client);
 
+    const user = userEvent.setup();
     const selector = await screen.findByRole("combobox", { name: "Conversation branch" });
-    expect(selector).toHaveValue("thread-1");
+    expect(selector).toHaveTextContent("Main");
     expect(screen.getByText("2", { selector: "[data-slot='badge']" })).toBeInTheDocument();
 
-    fireEvent.change(selector, { target: { value: "thread-child-select" } });
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: "Branch 2" }));
     await waitFor(() => {
       expect(screen.getByTestId("current-location")).toHaveTextContent("/conversations/thread-child-select");
     });

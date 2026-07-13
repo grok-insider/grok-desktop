@@ -1,9 +1,7 @@
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   AtSign,
-  Check,
   ChevronDown,
   CircleAlert,
   Globe2,
@@ -21,9 +19,27 @@ import { modelDisplayLabel, modelMenuTriggerLabel } from "../lib/modelLabels";
 import { IconButton } from "./ui";
 import { VoiceOverlay } from "./VoiceOverlay";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 type ImagineToolKind = "image" | "video";
+
+/* Radix Select forbids empty-string item values; sentinel for "no project". */
+const NO_PROJECT_VALUE = "__no-project__";
 
 const modeTabClass = (active: boolean) =>
   cn(
@@ -54,29 +70,12 @@ export function Composer() {
     (capability) => capability.id === "chat" && capability.available,
   ) === true;
   const models = useChatModelCatalog(chatAvailable);
-  const toolsRootRef = useRef<HTMLDivElement>(null);
   const modelOverrideRef = useRef(modelOverride);
   modelOverrideRef.current = modelOverride;
 
   useEffect(() => {
     if (!projectId && snapshot?.projects[0]) setProjectId(snapshot.projects[0].id);
   }, [projectId, snapshot]);
-
-  useEffect(() => {
-    if (!toolsOpen) return;
-    const onPointer = (event: PointerEvent) => {
-      if (!toolsRootRef.current?.contains(event.target as Node)) setToolsOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setToolsOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [toolsOpen]);
 
   const capabilitiesLoaded = (snapshot?.capabilities.length ?? 0) > 0;
   const interfacePreview = snapshot?.connection.interfacePreview === true;
@@ -230,33 +229,45 @@ export function Composer() {
               className="mb-2 block w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-body-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
             />
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-1 font-mono text-label text-muted-foreground">
+              <span className="flex items-center gap-1 font-mono text-label text-muted-foreground">
                 Aspect
-                <select
-                  aria-label="Aspect ratio"
-                  value={aspectRatio}
-                  onChange={(event) => setAspectRatio(event.target.value)}
-                  className="h-7 rounded-md border border-input bg-card px-1.5 text-label text-foreground"
-                >
-                  {["1:1", "16:9", "9:16", "3:2", "2:3"].map((ratio) => (
-                    <option key={ratio} value={ratio}>{ratio}</option>
-                  ))}
-                </select>
-              </label>
-              {imagineKind === "video" && (
-                <label className="flex items-center gap-1 font-mono text-label text-muted-foreground">
-                  Duration
-                  <select
-                    aria-label="Video duration"
-                    value={duration}
-                    onChange={(event) => setDuration(event.target.value)}
-                    className="h-7 rounded-md border border-input bg-card px-1.5 text-label text-foreground"
+                <Select value={aspectRatio} onValueChange={setAspectRatio}>
+                  <SelectTrigger
+                    aria-label="Aspect ratio"
+                    size="sm"
+                    className="h-7 gap-1 bg-card px-1.5 font-mono text-label text-foreground"
                   >
-                    {["6s", "10s"].map((value) => (
-                      <option key={value} value={value}>{value}</option>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    {["1:1", "16:9", "9:16", "3:2", "2:3"].map((ratio) => (
+                      <SelectItem key={ratio} value={ratio} className="font-mono text-label">
+                        {ratio}
+                      </SelectItem>
                     ))}
-                  </select>
-                </label>
+                  </SelectContent>
+                </Select>
+              </span>
+              {imagineKind === "video" && (
+                <span className="flex items-center gap-1 font-mono text-label text-muted-foreground">
+                  Duration
+                  <Select value={duration} onValueChange={setDuration}>
+                    <SelectTrigger
+                      aria-label="Video duration"
+                      size="sm"
+                      className="h-7 gap-1 bg-card px-1.5 font-mono text-label text-foreground"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      {["6s", "10s"].map((value) => (
+                        <SelectItem key={value} value={value} className="font-mono text-label">
+                          {value}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </span>
               )}
               <Button
                 className="ml-auto"
@@ -272,7 +283,7 @@ export function Composer() {
           </div>
         )}
         <div className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
-          <div className="relative flex items-center gap-1" ref={toolsRootRef}>
+          <div className="flex items-center gap-1">
             <IconButton
               label={searchEnabled ? "Disable Search" : "Enable Search"}
               disabled={mode !== "chat" || submitting || !modeAvailable}
@@ -283,45 +294,43 @@ export function Composer() {
             >
               <Globe2 size={18} />
             </IconButton>
-            <IconButton
-              label="Tools"
-              disabled={mode !== "chat" || submitting || !anyImagineTool}
-              title={!anyImagineTool ? "Imagine tools require a ready xAI media capability" : "Chat tools"}
-              className={cn(toolsOpen && "border-border bg-muted")}
-              onClick={() => setToolsOpen((value) => !value)}
-            >
-              <Plus size={18} />
-            </IconButton>
-            {toolsOpen && (
-              <div
-                className="absolute bottom-[calc(100%+8px)] left-0 z-30 min-w-[220px] overflow-hidden rounded-xl border border-input bg-popover p-1.5 shadow-overlay"
-                role="menu"
+            <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen}>
+              <DropdownMenuTrigger asChild>
+                <IconButton
+                  label="Tools"
+                  disabled={mode !== "chat" || submitting || !anyImagineTool}
+                  title={!anyImagineTool ? "Imagine tools require a ready xAI media capability" : "Chat tools"}
+                  className={cn(toolsOpen && "border-border bg-muted")}
+                >
+                  <Plus size={18} />
+                </IconButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                side="top"
+                align="start"
                 aria-label="Composer tools"
+                className="min-w-[220px] rounded-xl border-input p-1.5 shadow-overlay"
               >
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                <DropdownMenuItem
+                  className="gap-2 rounded-md px-2 py-2 text-body-sm text-foreground"
                   disabled={!imagineImageAvailable}
                   title={!imagineImageAvailable ? imagineImageCapability?.reason : undefined}
-                  onClick={() => openImagineTool("image")}
+                  onSelect={() => openImagineTool("image")}
                 >
                   <ImageIcon size={16} aria-hidden="true" />
                   Imagine image
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 rounded-md px-2 py-2 text-body-sm text-foreground"
                   disabled={!imagineVideoAvailable}
                   title={!imagineVideoAvailable ? imagineVideoCapability?.reason : undefined}
-                  onClick={() => openImagineTool("video")}
+                  onSelect={() => openImagineTool("video")}
                 >
                   <Video size={16} aria-hidden="true" />
                   Imagine video
-                </button>
-              </div>
-            )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <div className="flex items-center gap-1">
             <ComposerModelMenu
@@ -349,18 +358,29 @@ export function Composer() {
         </div>
       </div>
       <div className="flex min-h-[29px] items-center justify-between gap-3 px-1 pt-1.5 font-mono text-label text-subtle-foreground">
-        <label className="flex items-center gap-1">
+        <span className="flex items-center gap-1">
           <AtSign size={14} aria-hidden="true" />
-          <select
-            value={projectId}
-            onChange={(event) => setProjectId(event.target.value)}
-            aria-label="Project"
-            className="max-w-[170px] rounded-sm border-0 bg-transparent font-mono text-label text-muted-foreground"
+          <Select
+            value={projectId || NO_PROJECT_VALUE}
+            onValueChange={(value) => setProjectId(value === NO_PROJECT_VALUE ? "" : value)}
           >
-            <option value="">No project</option>
-            {snapshot?.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
-          </select>
-        </label>
+            <SelectTrigger
+              aria-label="Project"
+              size="sm"
+              className="h-auto max-w-[170px] gap-1 rounded-sm border-0 bg-transparent px-1 py-0.5 font-mono text-label text-muted-foreground shadow-none"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectItem value={NO_PROJECT_VALUE} className="font-mono text-label">No project</SelectItem>
+              {snapshot?.projects.map((project) => (
+                <SelectItem value={project.id} key={project.id} className="font-mono text-label">
+                  {project.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </span>
         <span className="flex items-center gap-1 max-[680px]:hidden">
           <CircleAlert size={13} /> {interfacePreview ? "Interface preview only" : modeAvailable ? "Grok execution available" : "Grok execution unavailable"}
         </span>
@@ -386,40 +406,8 @@ export function Composer() {
   );
 }
 
-/**
- * The model menu is portaled to <body> with fixed coordinates because the
- * composer lives inside the scrolling <main> region: a CSS-anchored drop-up
- * gets clipped by that ancestor's overflow when the composer sits near the
- * top of the view (e.g. Home). The placement flips below the trigger when
- * there is not enough room above it.
- */
-const MODEL_MENU_TRIGGER_GAP = 8;
-const MODEL_MENU_VIEWPORT_MARGIN = 12;
-const MODEL_MENU_MAX_HEIGHT = 420;
-const MODEL_MENU_MIN_HEIGHT = 160;
-
-type ModelMenuPlacement = {
-  top?: number;
-  bottom?: number;
-  right: number;
-  maxHeight: number;
-};
-
-function modelMenuPlacement(trigger: HTMLElement): ModelMenuPlacement {
-  const rect = trigger.getBoundingClientRect();
-  const spaceAbove = rect.top - MODEL_MENU_TRIGGER_GAP - MODEL_MENU_VIEWPORT_MARGIN;
-  const spaceBelow = window.innerHeight - rect.bottom - MODEL_MENU_TRIGGER_GAP - MODEL_MENU_VIEWPORT_MARGIN;
-  const openUpward = spaceAbove >= MODEL_MENU_MAX_HEIGHT || spaceAbove >= spaceBelow;
-  const right = Math.max(window.innerWidth - rect.right, MODEL_MENU_VIEWPORT_MARGIN);
-  const available = Math.max(openUpward ? spaceAbove : spaceBelow, MODEL_MENU_MIN_HEIGHT);
-  return {
-    ...(openUpward
-      ? { bottom: window.innerHeight - rect.top + MODEL_MENU_TRIGGER_GAP }
-      : { top: rect.bottom + MODEL_MENU_TRIGGER_GAP }),
-    right,
-    maxHeight: Math.min(available, MODEL_MENU_MAX_HEIGHT),
-  };
-}
+/* Sentinel radio value for "use the daemon default model" (no override). */
+const DEFAULT_MODEL_VALUE = "__default-model__";
 
 function ComposerModelMenu({
   catalog,
@@ -437,208 +425,108 @@ function ComposerModelMenu({
   onOverrideChange(modelId: string | undefined): void;
   disabled: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const [placement, setPlacement] = useState<ModelMenuPlacement | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const firstItemRef = useRef<HTMLButtonElement>(null);
   const defaultModelId = catalog?.preference.selectedModelId;
   const visibleLabel = modelMenuTriggerLabel({
     overrideModelId,
     defaultModelId,
   });
-  const closeAndRestoreFocus = useCallback(() => {
-    setOpen(false);
-    queueMicrotask(() => triggerRef.current?.focus());
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPlacement(null);
-      return;
-    }
-    const reposition = () => {
-      if (triggerRef.current) setPlacement(modelMenuPlacement(triggerRef.current));
-    };
-    reposition();
-    window.addEventListener("resize", reposition);
-    window.addEventListener("scroll", reposition, true);
-    return () => {
-      window.removeEventListener("resize", reposition);
-      window.removeEventListener("scroll", reposition, true);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeAndRestoreFocus();
-      }
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [closeAndRestoreFocus, open]);
-
-  const positioned = placement !== null;
-  useEffect(() => {
-    if (open && positioned) firstItemRef.current?.focus();
-  }, [open, positioned]);
 
   return (
-    <div className="relative" ref={rootRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="inline-flex h-[30px] max-w-56 items-center gap-1.5 rounded-md border border-transparent px-2 text-label font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted aria-expanded:border-input aria-expanded:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+    /*
+     * Non-modal: "Set as default" keeps the menu open while saving, and the
+     * rest of the composer must stay accessible (no aria-hidden/scroll lock).
+     */
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger
+        className="inline-flex h-[30px] max-w-56 items-center gap-1.5 rounded-md border border-transparent px-2 text-label font-medium text-muted-foreground transition-colors outline-none hover:border-border hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring aria-expanded:border-input aria-expanded:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         aria-label={`Choose model, ${visibleLabel}`}
-        aria-haspopup="menu"
-        aria-controls="composer-model-menu"
-        aria-expanded={open}
         disabled={disabled}
         title={disabled
           ? "Model overrides apply to Chat conversations only"
           : overrideModelId ?? defaultModelId
             ? `Canonical id: ${overrideModelId ?? defaultModelId}`
             : undefined}
-        onClick={() => setOpen((value) => !value)}
       >
         <span className="truncate">{visibleLabel}</span>
         <ChevronDown className="shrink-0" size={14} aria-hidden="true" />
-      </button>
-      {open && placement && createPortal(
-        <div
-          id="composer-model-menu"
-          ref={menuRef}
-          className="fixed z-50 flex w-[min(360px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-input bg-popover shadow-overlay"
-          style={{
-            top: placement.top,
-            bottom: placement.bottom,
-            right: placement.right,
-            maxHeight: placement.maxHeight,
-          }}
-          role="menu"
-          tabIndex={-1}
-          aria-label="Chat model"
-          onKeyDown={(event) => {
-            if (!matchesMenuNavigationKey(event.key)) return;
-            const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role^='menuitem']:not(:disabled)") ?? [])];
-            if (items.length === 0) return;
-            event.preventDefault();
-            const current = items.indexOf(document.activeElement as HTMLButtonElement);
-            const next = event.key === "Home"
-              ? 0
-              : event.key === "End"
-                ? items.length - 1
-                : event.key === "ArrowDown"
-                  ? current < 0 ? 0 : (current + 1) % items.length
-                  : current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;
-            items[next]?.focus();
-          }}
-        >
-          <div className="shrink-0 border-b border-border px-3 py-2">
-            <p className="m-0 text-body-sm font-semibold text-foreground">Model for this conversation</p>
-            <p className="m-0 mt-0.5 text-label text-muted-foreground">A temporary choice clears after the conversation starts.</p>
-          </div>
-          {catalog && (
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              <ModelChoice
-                ref={firstItemRef}
-                label={defaultModelId ? `Default · ${modelDisplayLabel(defaultModelId)}` : "Default"}
-                secondary={defaultModelId}
-                selected={!overrideModelId}
-                onChoose={() => {
-                  onOverrideChange(undefined);
-                  closeAndRestoreFocus();
-                }}
-              />
-              {selectableModels.map((model) => (
-                <div className="group flex items-center gap-1 rounded-md hover:bg-muted" key={model.id} role="none">
-                  <ModelChoice
-                    label={modelDisplayLabel(model.id)}
-                    secondary={model.id}
-                    selected={overrideModelId === model.id}
-                    disabled={status !== "ready"}
-                    onChoose={() => {
-                      onOverrideChange(model.id);
-                      closeAndRestoreFocus();
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="top"
+        align="end"
+        aria-label="Chat model"
+        // Radix defaults aria-labelledby to the trigger, which would override
+        // the aria-label above as the accessible name.
+        aria-labelledby={undefined}
+        className="w-[min(360px,calc(100vw-32px))] rounded-xl border-input p-0 shadow-overlay"
+      >
+        <div className="border-b border-border px-3 py-2">
+          <p className="m-0 text-body-sm font-semibold text-foreground">Model for this conversation</p>
+          <p className="m-0 mt-0.5 text-label text-muted-foreground">A temporary choice clears after the conversation starts.</p>
+        </div>
+        {catalog && (
+          <DropdownMenuRadioGroup
+            className="p-1.5"
+            value={overrideModelId ?? DEFAULT_MODEL_VALUE}
+            onValueChange={(value) => {
+              onOverrideChange(value === DEFAULT_MODEL_VALUE ? undefined : value);
+            }}
+          >
+            <DropdownMenuRadioItem value={DEFAULT_MODEL_VALUE} className="rounded-md">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">
+                  {defaultModelId ? `Default · ${modelDisplayLabel(defaultModelId)}` : "Default"}
+                </span>
+                {defaultModelId ? (
+                  <span className="mt-0.5 block truncate font-mono text-label text-subtle-foreground">
+                    {defaultModelId}
+                  </span>
+                ) : null}
+              </span>
+            </DropdownMenuRadioItem>
+            {selectableModels.map((model) => (
+              <div className="flex items-center gap-1" key={model.id}>
+                <DropdownMenuRadioItem
+                  value={model.id}
+                  className="min-w-0 flex-1 rounded-md"
+                  disabled={status !== "ready"}
+                  title={model.id}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{modelDisplayLabel(model.id)}</span>
+                    <span className="mt-0.5 block truncate font-mono text-label text-subtle-foreground">{model.id}</span>
+                  </span>
+                </DropdownMenuRadioItem>
+                {model.id !== defaultModelId && (
+                  <DropdownMenuItem
+                    aria-label={`Set ${modelDisplayLabel(model.id)} as default`}
+                    className="shrink-0 rounded-md px-2 py-1.5 text-label font-medium text-muted-foreground"
+                    disabled={savingModelId !== null || status !== "ready"}
+                    onSelect={(event) => {
+                      // Saving the default keeps the menu open to show progress.
+                      event.preventDefault();
+                      void setDefaultModel(model.id);
                     }}
-                  />
-                  {model.id !== defaultModelId && (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      aria-label={`Set ${modelDisplayLabel(model.id)} as default`}
-                      className="mr-1 shrink-0 rounded-md px-2 py-1.5 text-label font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-                      disabled={savingModelId !== null || status !== "ready"}
-                      onClick={() => void setDefaultModel(model.id)}
-                    >
-                      {savingModelId === model.id ? "Saving…" : "Set as default"}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {!catalog && status === "loading" && (
-            <p className="m-0 px-3 py-4 text-body-sm text-muted-foreground" role="status">Discovering available models…</p>
-          )}
-          {status === "error" && (
-            <div className="border-t border-warning/20 bg-warning-soft p-3" role="alert">
-              <p className="m-0 text-body-sm text-warning">{error}</p>
-              <Button className="mt-2" size="sm" variant="outline" onClick={() => void retry()}>
-                <RefreshCw size={14} aria-hidden="true" /> Retry
-              </Button>
-            </div>
-          )}
-        </div>,
-        document.body,
-      )}
-    </div>
+                  >
+                    {savingModelId === model.id ? "Saving…" : "Set as default"}
+                  </DropdownMenuItem>
+                )}
+              </div>
+            ))}
+          </DropdownMenuRadioGroup>
+        )}
+        {!catalog && status === "loading" && (
+          <p className="m-0 px-3 py-4 text-body-sm text-muted-foreground" role="status">Discovering available models…</p>
+        )}
+        {status === "error" && (
+          <div className="border-t border-warning/20 bg-warning-soft p-3" role="alert">
+            <p className="m-0 text-body-sm text-warning">{error}</p>
+            <Button className="mt-2" size="sm" variant="outline" onClick={() => void retry()}>
+              <RefreshCw size={14} aria-hidden="true" /> Retry
+            </Button>
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function matchesMenuNavigationKey(key: string): key is "ArrowDown" | "ArrowUp" | "Home" | "End" {
-  return key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End";
-}
-
-const ModelChoice = forwardRef<HTMLButtonElement, {
-  label: string;
-  secondary?: string;
-  selected: boolean;
-  onChoose(): void;
-  disabled?: boolean;
-}>(function ModelChoice({ label, secondary, selected, onChoose, disabled = false }, ref) {
-  return (
-    <button
-      ref={ref}
-      type="button"
-      role="menuitemradio"
-      aria-checked={selected}
-      disabled={disabled}
-      title={secondary}
-      className="flex min-h-[34px] min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-body-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-      onClick={onChoose}
-    >
-      <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
-        {selected && <Check size={14} />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{label}</span>
-        {secondary ? (
-          <span className="mt-0.5 block truncate font-mono text-label text-subtle-foreground">{secondary}</span>
-        ) : null}
-      </span>
-    </button>
-  );
-});
