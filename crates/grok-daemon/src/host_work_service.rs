@@ -39,6 +39,7 @@ pub struct HostWorkService {
     effects: Arc<SideEffectService>,
     clock: Arc<dyn Clock>,
     endpoint_base: PathBuf,
+    denied_filesystem_roots: Arc<Vec<String>>,
     active: Arc<Semaphore>,
     start_lock: Arc<Mutex<()>>,
     tasks: Arc<Mutex<HashMap<grok_domain::RunId, CancellationToken>>>,
@@ -66,6 +67,7 @@ impl HostWorkService {
         effects: Arc<SideEffectService>,
         clock: Arc<dyn Clock>,
         endpoint_base: PathBuf,
+        denied_filesystem_roots: Vec<String>,
     ) -> Self {
         Self {
             runtime,
@@ -77,6 +79,7 @@ impl HostWorkService {
             effects,
             clock,
             endpoint_base,
+            denied_filesystem_roots: Arc::new(denied_filesystem_roots),
             active: Arc::new(Semaphore::new(1)),
             start_lock: Arc::new(Mutex::new(())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
@@ -208,8 +211,11 @@ impl HostWorkService {
         _permit: OwnedSemaphorePermit,
     ) -> Result<HostWorkOutcome, ApplicationError> {
         let filesystem = Arc::new(
-            CapabilityHostFilesystem::open(&policy.canonical_roots)
-                .map_err(|error| ApplicationError::Unavailable(error.message))?,
+            CapabilityHostFilesystem::open_with_denied_roots(
+                &policy.canonical_roots,
+                self.denied_filesystem_roots.as_ref(),
+            )
+            .map_err(|error| ApplicationError::Unavailable(error.message))?,
         );
         let filesystem_reader: Arc<dyn HostFilesystemReader> = filesystem.clone();
         let filesystem_writer: Arc<dyn HostFilesystemWriter> = filesystem.clone();
@@ -689,6 +695,7 @@ mod tests {
             )),
             clock,
             endpoints.path().to_path_buf(),
+            Vec::new(),
         );
         let started = service
             .start(

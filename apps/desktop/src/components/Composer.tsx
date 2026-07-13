@@ -186,7 +186,7 @@ export function Composer() {
             <strong className="text-body font-semibold">Work needs an execution mode</strong>
             <p className="m-0 mt-1 text-body-sm">{workCapability?.reason ?? "Review Host Tools risks or prepare Isolated Work."}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>Work settings</Button>
+          <Button variant="outline" size="sm" onClick={() => navigate("/settings?section=work")}>Work settings</Button>
         </div>
       )}
       <div className="min-h-[148px] rounded-xl border border-input bg-card px-3.5 pt-3.5 pb-2.5 shadow-overlay transition-[border-color,box-shadow] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring">
@@ -405,7 +405,7 @@ export function Composer() {
       )}
       {modeAvailable && !projectId && (
         <p className="m-0 mx-1 mt-1 flex min-h-[27px] items-center text-label text-warning" role="status">
-          Create or select a project before starting Chat.
+          Create or select a project before starting {mode === "work" ? "Work" : "Chat"}.
         </p>
       )}
       {error && (

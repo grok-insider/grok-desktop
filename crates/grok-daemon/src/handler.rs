@@ -431,9 +431,20 @@ fn canonical_host_roots(values: &[String]) -> Result<Vec<PathBuf>, ApplicationEr
                 "Host Tools roots must be unique directories".into(),
             ));
         }
+        if host_root_is_daemon_private(&canonical) {
+            return Err(ApplicationError::InvalidInput(
+                "Grok Desktop private data cannot be a Host Tools root".into(),
+            ));
+        }
         roots.push(canonical);
     }
     Ok(roots)
+}
+
+fn host_root_is_daemon_private(root: &Path) -> bool {
+    directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
+        .and_then(|directories| directories.data_local_dir().canonicalize().ok())
+        .is_some_and(|private| root.starts_with(private))
 }
 
 fn host_root_is_broad(root: &Path) -> bool {
@@ -1293,12 +1304,13 @@ impl Daemon {
             .into_iter()
             .map(capability_to_wire)
             .collect();
+        let host_bound_run_active = self.runs.has_active_host_work().await?;
         Ok(v1::response::Result::Capabilities(
             v1::ResolveCapabilitiesResponse {
                 statuses,
                 work_execution_backend: work_execution_backend as i32,
                 host_work_runtime_ready: facts.host_work_runtime_ready,
-                host_bound_run_active: false,
+                host_bound_run_active,
             },
         ))
     }
@@ -1811,6 +1823,9 @@ impl Daemon {
             .resolve_host_execution_policy_mutation(&command)
             .await?
         {
+            if let Some(runtime) = &self.host_work_runtime {
+                let _ = runtime.deactivate().await;
+            }
             return Ok(v1::response::Result::HostExecutionPolicy(
                 host_execution_policy_to_wire(policy, false),
             ));
@@ -1825,6 +1840,9 @@ impl Daemon {
         let policy = store
             .replace_host_execution_policy(policy, request.expected_revision, &command)
             .await?;
+        if let Some(runtime) = &self.host_work_runtime {
+            let _ = runtime.deactivate().await;
+        }
         Ok(v1::response::Result::HostExecutionPolicy(
             host_execution_policy_to_wire(policy, false),
         ))
@@ -5098,6 +5116,76 @@ mod tests {
         };
         assert!(!revoked.active);
         assert_eq!(revoked.revision, 2);
+    }
+
+    #[tokio::test]
+    async fn capability_projection_reports_non_terminal_host_bound_runs_authoritatively() {
+        let (daemon, _) = daemon();
+        let workspace = daemon.workspace().expect("workspace");
+        let project = workspace
+            .create_project(
+                CreateProject {
+                    name: "Host warning".into(),
+                    description: String::new(),
+                },
+                "host-warning-project",
+            )
+            .await
+            .expect("project");
+        let thread = workspace
+            .create_thread(
+                CreateThread {
+                    project_id: project.id.to_string(),
+                    title: "Host warning".into(),
+                },
+                "host-warning-thread",
+            )
+            .await
+            .expect("thread");
+        let run = daemon
+            .runs
+            .create_work(
+                CreateRun {
+                    project_id: project.id.to_string(),
+                    thread_id: thread.id.to_string(),
+                },
+                grok_domain::WorkExecutionBackend::HostDirect,
+                "host-warning-run",
+            )
+            .await
+            .expect("run");
+
+        let active = daemon
+            .handle(request(request::Operation::ResolveCapabilities(
+                v1::ResolveCapabilitiesRequest::default(),
+            )))
+            .await
+            .expect("active capabilities");
+        let response::Result::Capabilities(active) = response_result(active) else {
+            panic!("capabilities")
+        };
+        assert!(active.host_bound_run_active);
+
+        daemon
+            .runs
+            .transition(
+                &run.id,
+                run.revision,
+                grok_domain::RunState::Cancelled,
+                "cancel-host-warning",
+            )
+            .await
+            .expect("cancel run");
+        let terminal = daemon
+            .handle(request(request::Operation::ResolveCapabilities(
+                v1::ResolveCapabilitiesRequest::default(),
+            )))
+            .await
+            .expect("terminal capabilities");
+        let response::Result::Capabilities(terminal) = response_result(terminal) else {
+            panic!("capabilities")
+        };
+        assert!(!terminal.host_bound_run_active);
     }
 
     #[tokio::test]

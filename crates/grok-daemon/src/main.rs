@@ -323,6 +323,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
                 effects,
                 clock,
                 host_tools_endpoint_base()?,
+                host_tools_denied_filesystem_roots()?,
             ));
             daemon
                 .with_host_work_runtime(runtime)
@@ -1380,6 +1381,13 @@ fn host_tools_endpoint_base() -> Result<PathBuf, DynError> {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(path)
+}
+
+fn host_tools_denied_filesystem_roots() -> Result<Vec<String>, DynError> {
+    let directories = directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
+        .ok_or("operating system did not provide a local application data directory")?;
+    let root = directories.data_local_dir().canonicalize()?;
+    Ok(vec![root.to_string_lossy().into_owned()])
 }
 
 fn configured_host_tools_helper() -> Option<VerifiedHostToolsHelper> {

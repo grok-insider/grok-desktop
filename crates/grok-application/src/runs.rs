@@ -54,6 +54,15 @@ impl RunService {
         Ok(snapshots)
     }
 
+    /// Reports whether any non-terminal Host-bound Work run exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplicationError`] when storage cannot answer authoritatively.
+    pub async fn has_active_host_work(&self) -> Result<bool, ApplicationError> {
+        Ok(!self.store.list_recoverable_host_runs(1).await?.is_empty())
+    }
+
     /// Persists a queued run and its first audit event in one transaction.
     ///
     /// # Errors

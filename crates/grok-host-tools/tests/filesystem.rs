@@ -123,6 +123,69 @@ async fn writes_replace_exact_files_and_reject_outside_targets() {
     );
 }
 
+#[tokio::test]
+async fn daemon_private_subtrees_remain_denied_inside_a_broad_root() {
+    let root = tempfile::tempdir().expect("root");
+    let private = root.path().join("daemon-private");
+    std::fs::create_dir(&private).expect("private directory");
+    std::fs::write(private.join("secret.txt"), "secret").expect("private file");
+    let filesystem = CapabilityHostFilesystem::open_with_denied_roots(
+        &[root.path().to_string_lossy().into_owned()],
+        &[private.to_string_lossy().into_owned()],
+    )
+    .expect("filesystem");
+
+    assert_eq!(
+        filesystem
+            .read_text(&private.join("secret.txt"))
+            .await
+            .expect_err("private read denied")
+            .kind,
+        HostFilesystemErrorKind::Denied
+    );
+    assert_eq!(
+        filesystem
+            .write_text(&private.join("new.txt"), "no".into())
+            .await
+            .expect_err("private write denied")
+            .kind,
+        HostFilesystemErrorKind::Denied
+    );
+    assert_eq!(
+        filesystem
+            .validate(HostProcessRequest {
+                argv: vec!["printf".into(), "no".into()],
+                cwd: private.to_string_lossy().into_owned(),
+                timeout: Duration::from_secs(1),
+            })
+            .await
+            .expect_err("private cwd denied")
+            .kind,
+        HostProcessErrorKind::Denied
+    );
+
+    let public = root.path().join("public.txt");
+    std::fs::write(&public, "ok").expect("public file");
+    assert_eq!(
+        filesystem.read_text(&public).await.expect("public read"),
+        "ok"
+    );
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&private, root.path().join("private-link"))
+            .expect("private symlink");
+        assert_eq!(
+            filesystem
+                .read_text(&root.path().join("private-link/secret.txt"))
+                .await
+                .expect_err("private symlink denied")
+                .kind,
+            HostFilesystemErrorKind::Denied
+        );
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn process_execution_is_bounded_rooted_and_cancellable() {

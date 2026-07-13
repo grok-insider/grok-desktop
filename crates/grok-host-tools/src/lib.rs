@@ -44,6 +44,7 @@ struct CapabilityRoot {
 #[derive(Clone)]
 pub struct CapabilityHostFilesystem {
     roots: Arc<Vec<CapabilityRoot>>,
+    denied_roots: Arc<Vec<PathBuf>>,
 }
 
 impl std::fmt::Debug for CapabilityHostFilesystem {
@@ -51,6 +52,7 @@ impl std::fmt::Debug for CapabilityHostFilesystem {
         formatter
             .debug_struct("CapabilityHostFilesystem")
             .field("root_count", &self.roots.len())
+            .field("denied_root_count", &self.denied_roots.len())
             .finish()
     }
 }
@@ -63,6 +65,20 @@ impl CapabilityHostFilesystem {
     /// Returns a path-free error if a root is relative, duplicated, missing, or
     /// cannot be opened as a directory capability.
     pub fn open(roots: &[String]) -> Result<Self, HostFilesystemError> {
+        Self::open_with_denied_roots(roots, &[])
+    }
+
+    /// Opens enrolled roots while excluding daemon-private subtrees even when
+    /// a broad parent such as the user's home directory was enrolled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a path-free error when a denied root is relative, missing, or
+    /// cannot be canonicalized.
+    pub fn open_with_denied_roots(
+        roots: &[String],
+        denied_roots: &[String],
+    ) -> Result<Self, HostFilesystemError> {
         if roots.is_empty() || roots.len() > 8 {
             return Err(invalid("invalid Host Tools root count"));
         }
@@ -90,15 +106,52 @@ impl CapabilityHostFilesystem {
                 .count()
                 .cmp(&left.canonical.components().count())
         });
+        let mut denied = Vec::with_capacity(denied_roots.len());
+        for value in denied_roots {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() {
+                return Err(invalid("invalid Host Tools denied root"));
+            }
+            let canonical = std::fs::canonicalize(path)
+                .map_err(|_| unavailable("Host Tools denied root is unavailable"))?;
+            if !canonical.is_dir() {
+                return Err(invalid("invalid Host Tools denied root"));
+            }
+            if !denied.contains(&canonical) {
+                denied.push(canonical);
+            }
+        }
+        denied.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         Ok(Self {
             roots: Arc::new(opened),
+            denied_roots: Arc::new(denied),
         })
+    }
+
+    fn reject_denied(&self, path: &Path) -> Result<(), HostFilesystemError> {
+        if self
+            .denied_roots
+            .iter()
+            .any(|denied| path.starts_with(denied))
+        {
+            return Err(denied("Host Tools path is daemon-private"));
+        }
+        if let Ok(canonical) = std::fs::canonicalize(path)
+            && self
+                .denied_roots
+                .iter()
+                .any(|denied| canonical.starts_with(denied))
+        {
+            return Err(denied("Host Tools path is daemon-private"));
+        }
+        Ok(())
     }
 
     fn resolve(&self, path: &Path) -> Result<(&Dir, PathBuf), HostFilesystemError> {
         if !path.is_absolute() {
             return Err(invalid("Host Tools path must be absolute"));
         }
+        self.reject_denied(path)?;
         for root in self.roots.iter() {
             if let Ok(relative) = path.strip_prefix(&root.canonical) {
                 let relative = if relative.as_os_str().is_empty() {
@@ -172,6 +225,11 @@ impl CapabilityHostFilesystem {
             return Err(invalid("Host Tools write exceeds the byte limit"));
         }
         let (root, relative) = self.resolve(path)?;
+        let absolute_parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .ok_or_else(|| invalid("Host Tools write target is invalid"))?;
+        self.reject_denied(absolute_parent)?;
         let parent = relative
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())

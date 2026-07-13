@@ -12,7 +12,7 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,8 +75,23 @@ type SettingsSection = (typeof settingSections)[number]["id"];
 
 const settingsHeadingId = (section: SettingsSection) => `settings-${section}-heading`;
 
+function settingsSectionFromSearch(search: string): SettingsSection | null {
+  const requested = new URLSearchParams(search).get("section");
+  return settingSections.some(({ id }) => id === requested)
+    ? requested as SettingsSection
+    : null;
+}
+
 export function SettingsView() {
-  const [section, setSection] = useState<SettingsSection>("account");
+  const location = useLocation();
+  const [section, setSection] = useState<SettingsSection>(
+    () => settingsSectionFromSearch(location.search) ?? "account",
+  );
+
+  useEffect(() => {
+    const requested = settingsSectionFromSearch(location.search);
+    if (requested) setSection(requested);
+  }, [location.search]);
 
   const selectSectionFromKeyboard = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
     let nextIndex: number | null = null;
@@ -484,7 +499,7 @@ function AccountSettings() {
         <div className="min-w-0 flex-1">
           <h3 className="m-0 text-title-sm font-semibold text-foreground">Grok subscription</h3>
           <p className="m-0 mt-0.5 text-body-sm text-muted-foreground">
-            Host authentication is managed in Setup. Work still requires isolation readiness.
+            Host authentication is managed in Setup. Work requires either qualified isolation or explicitly enrolled and prepared Host Tools.
           </p>
           <Badge className="mt-2" variant="neutral">
             <ShieldCheck size={13} aria-hidden="true" /> Use Setup

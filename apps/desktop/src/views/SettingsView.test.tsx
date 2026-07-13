@@ -35,10 +35,13 @@ class ConnectedSuperGrokClient extends MockDesktopClient {
   }
 }
 
-function renderSettings(client: MockDesktopClient = new MockDesktopClient()) {
+function renderSettings(
+  client: MockDesktopClient = new MockDesktopClient(),
+  initialEntry = "/settings",
+) {
   render(
     <DesktopClientProvider client={client}>
-      <MemoryRouter initialEntries={["/settings"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <SettingsView />
         <LocationProbe />
       </MemoryRouter>
@@ -53,6 +56,14 @@ function LocationProbe() {
 }
 
 describe("SettingsView", () => {
+  it("opens the requested Work execution section from a settings deep link", async () => {
+    renderSettings(new MockDesktopClient(), "/settings?section=work");
+
+    expect(screen.getByRole("button", { name: "Work execution" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("region", { name: "Work execution" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Review risks and enable" })).toBeEnabled();
+  });
+
   it("exposes labeled section navigation and supports arrow, Home, and End keys", () => {
     renderSettings();
 

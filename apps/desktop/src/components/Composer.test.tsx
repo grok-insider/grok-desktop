@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
 import type { StartRunInput } from "../services/desktopClient";
@@ -23,10 +23,16 @@ function renderComposer(client: MockDesktopClient = new CapturingClient()) {
     <DesktopClientProvider client={client}>
       <MemoryRouter>
         <Composer />
+        <LocationProbe />
       </MemoryRouter>
     </DesktopClientProvider>,
   );
   return client;
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <span className="hidden" data-testid="current-location">{location.pathname}{location.search}</span>;
 }
 
 async function chooseModel(modelId: string) {
@@ -105,6 +111,28 @@ describe("Composer Imagine tools", () => {
 });
 
 describe("Composer model selection", () => {
+  it("routes unavailable Work directly to its settings section", async () => {
+    class NoWorkClient extends CapturingClient {
+      override async getSnapshot() {
+        const snapshot = await super.getSnapshot();
+        return {
+          ...snapshot,
+          capabilities: snapshot.capabilities.map((capability) => capability.id === "work"
+            ? { ...capability, available: false, reason: "Choose an execution mode." }
+            : capability),
+          workExecution: { ...snapshot.workExecution, mode: "limited" as const },
+        };
+      }
+    }
+    const user = userEvent.setup();
+    renderComposer(new NoWorkClient());
+
+    await user.click(await screen.findByRole("tab", { name: "Work" }));
+    await user.click(screen.getByRole("button", { name: "Work settings" }));
+
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/settings?section=work");
+  });
+
   it("binds the official Search preset to the submitted turn", async () => {
     const client = renderComposer() as CapturingClient;
     fireEvent.click(await screen.findByRole("button", { name: "Enable Search" }));
