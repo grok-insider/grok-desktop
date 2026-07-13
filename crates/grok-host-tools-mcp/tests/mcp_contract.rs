@@ -1,11 +1,12 @@
 //! Process contract for the policy-free Host Tools MCP helper.
 
+#![cfg(unix)]
+
 use std::io::{BufRead, Write};
 
 use serde_json::Value;
 
 #[test]
-#[cfg(unix)]
 fn self_test_and_closed_tool_catalog_are_stable() {
     let executable = env!("CARGO_BIN_EXE_grok-host-tools-mcp");
     let self_test = std::process::Command::new(executable)
