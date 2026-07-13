@@ -33,8 +33,9 @@ Security and authority boundaries outrank abstract purity.
   never inherited by a chat or scheduled run.
 - Interrupted non-idempotent side effects become `interrupted_needs_review` and
   are never replayed automatically.
-- Strong local execution is isolated. Without a qualified VM backend, fail
-  closed into Limited Mode.
+- Work execution is bound explicitly to either Isolated Guest or risk-enrolled
+  Host Tools. Isolated Guest is preferred; missing isolation never silently
+  grants host authority. Chat and scheduled runs cannot inherit Host Tools.
 - Wisp is a separately versioned managed integration, not a required runtime
   dependency. Integrations run out of process and cannot inject renderer code.
 
@@ -101,7 +102,7 @@ These are design decisions, not layering failures:
 |-----------|--------------------------|
 | **S**ingle responsibility | Crates and ports split by capability (for example `ArtifactStore` vs `ArtifactOpener` vs `ArtifactContentRetention`). Domain modules own one aggregate or policy area. Electron main owns windows/tray/deep links/daemon lifecycle only. |
 | **O**pen/closed | New platform or storage behavior arrives as adapters behind existing ports. Domain rules stay free of wire formats. Public IPC changes are versioned and ADR’d rather than silently extended. |
-| **L**iskov substitution | Adapters must honor port contracts: fail closed when unqualified, never log secrets, never widen authority. Limited Mode is a valid substitution when the VM backend is absent—not a silent host-exec fallback. |
+| **L**iskov substitution | Adapters must honor port contracts: fail closed when unqualified, never log secrets, never widen authority. A missing VM yields Limited Mode unless the user independently completed Host Tools enrollment; backend failure never creates a grant. |
 | **I**nterface segregation | Prefer small capability-focused ports over generic manager or provider interfaces ([AGENTS.md](../../AGENTS.md)). |
 | **D**ependency inversion | Application code depends on traits; `grok-daemon` injects implementations (`sqlcipher`, vault, xAI, ACP, enrollment, isolation probe). |
 
@@ -124,7 +125,8 @@ These are design decisions, not layering failures:
   effects. Approval records identify action, target, disclosure, scope, and
   expiry.
 - **Fail closed.** Prefer unavailable or review-required outcomes over inventing
-  success, zero usage, or host execution.
+  success, zero usage, or execution authority. Host execution requires a live,
+  versioned grant and cannot arise from backend failure.
 - **Secrets never travel.** No credentials in source, fixtures, renderer state,
   IPC responses, logs, crash reports, model prompts, artifacts, or broad child
   environments.

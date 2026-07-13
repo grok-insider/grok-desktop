@@ -28,9 +28,11 @@ before changing the repository.
   never inherited by a chat or scheduled run.
 - An interrupted non-idempotent side effect becomes `interrupted_needs_review`.
   It is never replayed automatically.
-- Strong local execution is isolated. When the qualified VM backend is absent,
-  fail closed into Limited Mode; never execute untrusted tools directly on the
-  host as a compatibility fallback.
+- Work execution has two explicit backends. Isolated Guest is preferred when a
+  qualified VM backend exists. Host Tools may execute with the desktop user's
+  authority only after versioned, revocable risk enrollment and per-effect
+  approvals. Host Tools is never a silent compatibility fallback, and Chat or
+  scheduled runs never inherit it.
 - Wisp is a separately versioned managed integration, not a required runtime
   dependency. Integrations run out of process and cannot inject renderer code.
 

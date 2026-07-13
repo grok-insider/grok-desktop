@@ -30,5 +30,7 @@
 - Subscription access remains inside official Grok Build ACP.
 - Scheduler definitions remain inactive.
 - Wisp lifecycle mutations remain unavailable.
-- Work remains Limited Mode without qualified isolation.
+- Isolated Work remains unavailable without qualified isolation. Host Work is
+  tracked separately by [plan 07](07-host-tools-opt-in-dual-mode.md) and cannot
+  arise from an isolation failure.
 - Unfinished product surfaces remain visibly unavailable.

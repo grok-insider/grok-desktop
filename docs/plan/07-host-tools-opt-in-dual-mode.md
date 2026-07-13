@@ -4,9 +4,9 @@
 |-------|-------|
 | **Author** | Grok Desktop engineering (draft owner: systems architect) |
 | **Date** | 2026-07-13 |
-| **Status** | Design approved (revision 5) — ready for PR 1 implementation |
+| **Status** | Design approved (revision 6) — ACP feasibility gate first |
 | **Supersedes / amends** | ADR 0003 (partial), ADR 0004 (Work readiness wording), AGENTS.md isolation wording, `docs/architecture/principles.md`, `docs/quality/linux-ga.md` Limited Mode + host-ACP rules, `docs/platform/threat-model.md`, `docs/research/official-grok-surfaces.md` capability routing, capability resolution in `CapabilityResolver` |
-| **Proposed ADR** | [`docs/decisions/0032-dual-mode-work-execution.md`](../decisions/0032-dual-mode-work-execution.md) (next after 0031) |
+| **ADR** | [`docs/decisions/0032-explicit-dual-mode-work-execution.md`](../decisions/0032-explicit-dual-mode-work-execution.md) |
 | **IPC impact** | Protocol epoch **25** (current is **24** in `crates/grok-protocol` / `DaemonRpcClient.ts`) |
 | **Schema impact** | SQLCipher schema **25** (current latest **24** in `crates/grok-sqlcipher/src/schema.rs`) |
 
@@ -104,11 +104,14 @@ Product surfaces reflect Limited Mode:
 
 | Product name (UI/docs) | Internal enum (**new** domain type) | Meaning |
 |------------------------|-------------------------------------|---------|
-| **Limited Mode** | `WorkExecutionMode::Limited` | Default. Work-class tools unavailable. |
-| **Host Tools** | `WorkExecutionMode::HostDirect` | User-enrolled. Tools run on host via Host Work runtime + daemon MCP. |
-| **Isolated Work** | `WorkExecutionMode::IsolatedGuest` | Isolation facts ready. Tools in utility guest. Recommended. |
+| **Limited Mode** | no `WorkExecutionBackend` | Capability state. A Work run cannot start. |
+| **Host Tools** | `WorkExecutionBackend::HostDirect` | User-enrolled. Tools run on host via Host Work runtime + daemon MCP. |
+| **Isolated Work** | `WorkExecutionBackend::IsolatedGuest` | Isolation facts ready. Tools in utility guest. Recommended. |
 
-`WorkExecutionMode` is **introduced by this design** in `grok-domain` (it does not exist today).
+`WorkExecutionBackend` is **introduced by this design** in `grok-domain`. It is
+not a capability-state enum: `Limited` is deliberately absent because no
+started Work run may be bound to a non-executing backend. Runs also gain a
+`RunKind` classification so Chat and scheduled runs cannot carry a Work backend.
 
 **UI badge / banner:**
 
@@ -120,7 +123,7 @@ Product surfaces reflect Limited Mode:
 
 ```text
 // Single definition — see also host_work_runtime_ready() below. No alternate branches.
-fn resolve_mode(facts, policy, flag) -> WorkExecutionMode {
+fn resolve_backend(facts, policy, release_policy) -> Option<WorkExecutionBackend> {
   if facts.strong_isolation_ready && facts.subscription_authenticated {
     return IsolatedGuest;  // preempts Host
   }
@@ -131,7 +134,7 @@ fn resolve_mode(facts, policy, flag) -> WorkExecutionMode {
   {
     return HostDirect;
   }
-  Limited
+  None
 }
 ```
 
@@ -139,10 +142,12 @@ Rules:
 
 1. **Isolated preempts Host** when isolation + subscription ready. Stored Host enrollment may remain; it is not the effective backend.
 2. Isolation loss → Host **only if** Host still effectively enrolled **and** `host_work_runtime_ready`; never auto-enroll.
-3. Renderer cannot select mode.
+3. Renderer cannot select a backend.
 4. **Subscription is required for Host Tools Work** (Key Decision; closed). BYOK never unlocks Host Work / Shell.
 5. **Enrollment alone never yields HostDirect.** After enroll, mode stays Limited until `PrepareHostWorkRuntime` succeeds (see bootstrap).
-6. **`StartWorkRun` requires** `resolve_mode() == HostDirect | IsolatedGuest` — never bootstraps runtime as a side effect of starting a prompt.
+6. **`StartWorkRun` requires** `resolve_backend().is_some()` and atomically
+   persists `RunKind::Work` plus that immutable backend. Chat and scheduled runs
+   reject any Work backend — runtime bootstrap is never a prompt side effect.
 
 #### Capability availability mapping
 
@@ -561,7 +566,8 @@ NewSessionRequest (Host Work):
 
 **Readiness:** use the **single** `host_work_runtime_ready` definition in § Host Work runtime bootstrap — no HostControl-only alternate.
 
-If agent `sandbox.profile=strict` blocks spawning the session MCP child, fail closed `host_tools_runtime_unavailable` (PR 4 spike).
+If agent `sandbox.profile=strict` blocks spawning the session MCP child, the PR
+2 feasibility gate fails closed before schema or UI work begins.
 
 #### Multi-root → session cwd / additional_directories
 
@@ -678,7 +684,8 @@ Renderer --IPC--> Work run use cases
 ```rust
 // New domain types (grok-domain) — added by this design
 
-pub enum WorkExecutionMode { Limited, HostDirect, IsolatedGuest }
+pub enum RunKind { Chat, Work, Scheduled }
+pub enum WorkExecutionBackend { HostDirect, IsolatedGuest }
 
 pub struct HostExecutionPolicy {
     pub revision: u64,
@@ -701,7 +708,7 @@ Default: `active = false`.
 | Guard | Mechanism |
 |-------|-----------|
 | Chat cannot dispatch host tools | `ConversationService` / chat rails constructed **without** `HostWorkExecutor`; type-level: `HostWorkExecutor` only field on `WorkRunExecutor` |
-| Scheduler cannot use Host | `ScheduledGuestDispatcher` trait remains guest-only; `dispatch_resumable` asserts `resolve_mode() != HostDirect` for automations **or** always requires Isolated; tests `scheduler_rejects_host_mode` |
+| Scheduler cannot use Host | `ScheduledGuestDispatcher` remains guest-only and scheduled runs cannot carry a Work backend; test `scheduler_rejects_host_backend` |
 | ACP host Work session not used by Chat | Chat never calls `open_session` on any ACP runtime; HostWorkTools runtime only owned by Work executor |
 | Null backend default | Composition root wires `HostDirectBackend` only into Work executor graph |
 | Tests | `chat_pipeline_cannot_dispatch_host_tools`, `scheduler_rejects_host_mode`, `host_control_boundary_rejects_session_without_host_tools_policy` |
@@ -728,26 +735,28 @@ Tests land in **policy/capability PR**, not a late cleanup PR.
 | Class | Risk | Default scope |
 |-------|------|---------------|
 | fs_read / list | Low | Run or Resource after first grant |
-| fs_write | Elevated/High | Once or Resource |
+| fs_write | Elevated/High | **Once for the exact canonical target** |
 | process_exec | High | **Once** only in v1 |
-| shell-string shapes | — | **Reject at daemon MCP boundary** (never approve) |
 
 #### Process execution policy (concrete — Issue 5)
 
-**v1 decision: (b) any executable with High approval**, not a fixed binary allowlist — with hard gates:
+**v1 decision: any executable with High approval**, not a fixed binary
+allowlist. Process execution is explicitly full host-user authority. Filesystem
+roots do not contain a child process, and interpreter/shell-shape filtering is
+not represented as a security boundary.
 
 | Rule | Spec |
 |------|------|
-| Tool shape | `host_process_exec` accepts **`argv: string[]` only** (min 1). Reject string-shell tools (`command: string`, `shell: true`, `cmd.exe /c`, `sh -c`, PowerShell `-Command`) at MCP schema validation |
+| Tool shape | `host_process_exec` accepts **`argv: string[]` only** (min 1) and never inserts an implicit shell. Explicit shells, interpreters, scripts, and arbitrary binaries are allowed only after the same exact-command approval and full-authority warning |
 | Executable resolution | `argv[0]` must be absolute path **or** resolve via `PATH` search under a **cleared** env; resolved path must `realpath`/`GetFinalPathNameByHandle` and not be a reparse escape to disallowed areas if product later restricts — v1 allows system binaries after approval |
-| Cwd | Required; must be under an enrolled path root after canonicalization |
+| Cwd | Required; must be under an enrolled path root after canonicalization. This scopes the starting directory only, not process I/O |
 | Env | Clear all; reconstruct allowlist only: `PATH` (platform default sanitized), `LANG`/`LC_*`, `HOME`/`USERPROFILE` (user), `TMP`/`TEMP` under system temp — **no** secret-bearing vars, no `XAI_API_KEY`, no Node injection vars (mirror ADR 0005 pinentry spirit) |
 | Argv bounds | Max 64 args; each arg ≤ 8 KiB; total argv bytes ≤ 64 KiB |
 | Timeouts | Default 60s wall; hard max 300s; kill process group on timeout/cancel |
 | Output caps | stdout+stderr combined ≤ 1 MiB retained for tool result; truncate with marker |
 | Network | **No** network namespace isolation in v1 — **accepted residual risk**: child processes have ambient host network. Document in threat model and enroll Step 1 (“programs you approve can use the network as your user”) |
 | Concurrent execs | Max 2 in-flight per run |
-| Windows | No implicit `cmd.exe`; create process with explicit application name; reparse-safe path checks on `argv[0]` |
+| Windows | No implicit `cmd.exe`; create the approved application with exact argv and control the complete process tree |
 
 #### Host v1 scope
 
@@ -757,9 +766,11 @@ Tests land in **policy/capability PR**, not a late cleanup PR.
 | fs list/read/write under roots | Managed browser on host |
 | process exec with gates above | Arbitrary user MCP / `npx` |
 | Enroll/revoke/banner | Host automations |
-| Read-only Host MVP option | Enterprise MDM remote disable |
+| Full read/write/exec v1 | Enterprise MDM remote disable |
 
-**Read-only Host MVP:** product may ship first with only `fs_read` enrollable (disable write/exec classes in UI) to reduce residual risk; architecture still supports write/exec behind the same bridge.
+V1 ships all three classes. Release policy may kill-switch the entire Host Tools
+feature, but must not silently change a durable grant into a misleading partial
+mode.
 
 ---
 
@@ -881,18 +892,24 @@ CREATE TABLE host_execution_commands (
   PRIMARY KEY (scope, idempotency_key)
 ) STRICT;
 
--- Sticky Work backend for mid-run mode + restart recovery (existing runs table)
--- CHECK values: 0=unspecified/legacy, 1=limited(unused for live work), 2=host_direct, 3=isolated_guest
-ALTER TABLE runs ADD COLUMN execution_mode INTEGER NOT NULL DEFAULT 0
-  CHECK (execution_mode IN (0, 1, 2, 3));
+-- Immutable run classification and optional concrete Work backend.
+-- Existing rows migrate to the non-Work kind derived from their owning flow.
+ALTER TABLE runs ADD COLUMN run_kind INTEGER NOT NULL DEFAULT 0
+  CHECK (run_kind IN (0, 1, 2, 3));
+ALTER TABLE runs ADD COLUMN work_backend INTEGER
+  CHECK (work_backend IS NULL OR work_backend IN (1, 2));
 ```
 
-**`runs.execution_mode` ownership (schema 25):**
+**Run classification ownership (schema 25):**
 
-- Set **immutably** at Work run create/start from `resolve_mode()` (HostDirect or IsolatedGuest). Never updated on isolation flap.
-- Legacy/non-Work runs: `0` (unspecified); tool dispatch ignores unless Work.
-- Recovery: interrupted Host-bound run (`execution_mode=2`) stays Host for review / needs_review — **never** auto-migrates to Isolated on restart even if isolation is now ready.
-- Domain: extend `Run` aggregate with `execution_mode: WorkExecutionMode` (or Option for legacy).
+- Set `run_kind` and `work_backend` **immutably** when creating a run. A Work
+  run requires a concrete backend; Chat and Scheduled require `NULL`.
+- Legacy rows migrate to their owning flow's non-Work kind without inventing a
+  backend. Ambiguous legacy rows remain `Unspecified` and cannot dispatch tools.
+- Recovery keeps an interrupted Host-bound run on Host for review and never
+  migrates it to Isolated automatically.
+- Domain extends `Run` with `kind: RunKind` and
+  `work_backend: Option<WorkExecutionBackend>` and validates the combination.
 
 #### Enroll / revoke concurrency
 
@@ -1105,14 +1122,17 @@ Tests for flag override land with policy PR.
 
 ---
 
-## Open Questions
+## Closed product decisions
 
-1. ~~Subscription requirement~~ → **Closed:** required (Key Decision #3).
-2. **Optional wall-clock re-consent (e.g. 90 days)** — default no.
-3. **User preference when both modes available** — design forces Isolated; change needs product.
-4. **Exact typed acknowledgment phrase and localization of the typed string** — product/legal; engineering versions constants.
-5. **Enterprise remote disable** — post-v1 extension point.
-6. **Whether first GA ships read-only Host only** — engineering-ready either way (Alt 8); product timing.
+1. Subscription authentication is required for Host Work.
+2. Consent has no wall-clock expiry. Acknowledgment-version or scope changes
+   require reconsent.
+3. Isolated Guest is preferred for new runs when both backends are ready.
+4. English acknowledgment v1 is exactly `I UNDERSTAND HOST TOOLS CAN CONTROL
+   THIS COMPUTER` after Unicode normalization and surrounding-whitespace trim.
+5. V1 ships filesystem read/write and process execution.
+6. Production enablement is signed release/daemon policy owned. Environment
+   overrides are development-build only.
 
 ---
 
@@ -1122,7 +1142,7 @@ Tests for flag override land with policy PR.
 
 **Title:** Dual-mode Work execution: Isolated Guest and opt-in Host Tools  
 
-**File:** `docs/decisions/0032-dual-mode-work-execution.md`
+**File:** `docs/decisions/0032-explicit-dual-mode-work-execution.md`
 
 **Decision:** Dual mode; HostWorkTools + Host Tools MCP; no silent fallback; subscription required; sticky runs; doc amendments listed above.
 
@@ -1141,7 +1161,7 @@ All rows in Security § Docs table + `docs/decisions/README.md` index + `docs/qu
 | Over-broad roots | High | UX + **daemon** `max_breadth_acknowledged` |
 | Exec ambient network | High | Enroll copy + threat model |
 | Mode thrash / misleading Isolated chrome | Med | Sticky run + Host warning while Host-bound runs exist |
-| Strict sandbox blocks MCP helper | High | PR 4 spike; fail closed runtime_unavailable |
+| Strict sandbox blocks MCP helper | High | ACP feasibility gate before schema/UI; fail closed runtime_unavailable |
 | Resume auth fails after role switch | High | Fail closed; restore HostControl; Setup re-auth; no second silent OAuth |
 | Official ACP host session behavior differs | High | Contract tests; fail closed `host_tools_runtime_unavailable` |
 
@@ -1169,78 +1189,104 @@ All rows in Security § Docs table + `docs/decisions/README.md` index + `docs/qu
 ### PR 1 — ADR 0032 + full documentation amendments
 
 - **Title:** `docs(adr): dual-mode Work Host Tools + Isolated Guest (0032)`
-- **Files:** `docs/decisions/0032-dual-mode-work-execution.md`; amend 0003, 0004, README; `AGENTS.md`; `principles.md`; `linux-ga.md`; `threat-model.md`; `official-grok-surfaces.md`; `implementation-status.md`; `06-open-risks…`; `protocol-and-persistence.md` (**header fix** + forward epoch note)
+- **Files:** ADR 0032; amend 0003, 0004, README; `AGENTS.md`;
+  `principles.md`; `linux-ga.md`; `threat-model.md`;
+  `official-grok-surfaces.md`; `implementation-status.md`;
+  `06-open-risks…`; `protocol-and-persistence.md`
 - **Dependencies:** none
 - **Description:** Policy-only. Three states; HostWorkTools+MCP model; Isolated = only isolation GA path; no host exec code.
 
-### PR 2a — Domain + SQLCipher policy store + runs.execution_mode
+### PR 2 — ACP feasibility gate (must pass before schema or UI)
 
-- **Title:** `feat(sqlcipher): host execution policy schema 25 and runs.execution_mode`
-- **Files:** `grok-domain` policy + `WorkExecutionMode` + `Run.execution_mode`; `grok-sqlcipher` schema 25 STRICT host_execution_* **and** `ALTER TABLE runs ADD execution_mode`; store + migration tests; application port traits for policy store
-- **Dependencies:** PR 1 preferred
-- **Description:** Default host policy inactive. Session boot-id invalidation unit tests. `execution_mode` default 0 for legacy rows; create-run API ready to set Host/Isolated immutably (callers wired in PR 4).
+- **Title:** `test(acp): prove constrained Host Tools session contract`
+- **Files:** ACP adapter contract tests and a non-shipping spike harness
+- **Dependencies:** PR 1
+- **Description:** Against the exact pinned official Grok Build component, prove
+  stdio MCP injection, bounded additional directories, strict-sandbox helper
+  launch, exclusive same-home HostControl/HostWorkTools switching,
+  non-interactive auth resume, and rejection of residual native tools. This PR
+  does not advertise Host Work. Any failed condition stops the track rather
+  than weakening the boundary.
 
-### PR 2b — IPC epoch 25 + capability projection + invariant tests
+### PR 3a — Domain + SQLCipher policy store + run kind/backend binding
+
+- **Title:** `feat(sqlcipher): host policy and immutable Work backend schema 25`
+- **Files:** `grok-domain` policy + `RunKind` + `WorkExecutionBackend`;
+  `grok-sqlcipher` schema 25 host-execution tables and run classification;
+  migration/store tests; application policy ports
+- **Dependencies:** PR 2 must pass
+- **Description:** Default policy inactive. Legacy runs classify safely without
+  inventing a Work backend. A started Work run requires HostDirect or
+  IsolatedGuest; Chat and scheduled runs reject either backend.
+
+### PR 3b — IPC epoch 25 + capability projection + invariant tests
 
 - **Title:** `feat(daemon): host execution enrollment IPC and capability mode projection`
 - **Files:** proto + `PROTOCOL_VERSION=25`; enroll includes `max_breadth_acknowledged`; policy service; `CapabilityResolver` + facts; daemon handler; desktop bridge; snapshot field **`host_bound_run_active`** (clients may also derive from run list); **tests:** default off, enroll/revoke, guest failure ≠ host, flag kill switch, ack mismatch, max-breadth reject without flag, Available still `reason_code=ready`, mode field set
-- **Dependencies:** PR 2a
+- **Dependencies:** PR 3a
 - **Description:** **Do not** set Work Available for Host until PR 4 bridge (use `host_tools_runtime_unavailable` if policy active but runtime not wired).
-
-### PR 3 — Risk-aware Settings UI + banner + UX state matrix
-
-- **Title:** `feat(desktop): Host Tools enrollment UX, prepare CTA, HOST TOOLS indicator`
-- **Files:** Settings enroll + **Prepare / Deactivate** controls; Work panel CTA for `host_tools_runtime_not_prepared`; AppShell chrome derivation; max-breadth checkbox; a11y
-- **Dependencies:** PR 2b (Prepare RPC may stub until PR 4; UI can call and surface busy/unavailable)
-- **Description:** Enrollment + prepare UX; Work Available only after prepare success (PR 4).
 
 ### PR 4 — Host Work execution bridge (HostWorkTools + Stdio helper + daemon IPC)
 
 - **Title:** `feat(acp): PrepareHostWorkRuntime, HostWorkTools resident role, host-tools MCP gate`
 - **Files:** `PrepareHostWorkRuntime` / `DeactivateHostWorkRuntime` IPC; `HostWorkRuntimeService` + **AcpHomeRole mutex**; HostWorkTools boundary; shared home resume; sticky `host_work_auth_ready`; unified `host_work_runtime_ready`; package `grok-host-tools-mcp`; per-run IPC; `HostWorkExecutor` (start only when ready); tests: enroll≠Available; prepare→Available; start without prepare fails; resume fail restores HostControl; no StartWorkRun role-switch; RuntimeBusy exclusive; max 1 Host run
-- **Dependencies:** PR 2b (PR 3 for Prepare button UX)
+- **Dependencies:** PR 3b
 - **Description:** Bootstrap path closes chicken-egg; then session open → helper → gate. **Prerequisite for productive FS.** Contract-test non-interactive resume (external gate).
 
-### PR 5 — Host filesystem read/list
+### PR 5 — Risk-aware Settings UI + persistent warning chrome
+
+- **Title:** `feat(desktop): add explicit Host Tools enrollment UX`
+- **Files:** Settings enroll + Prepare/Deactivate controls; Work setup panel;
+  persistent Host warning; broad-root and full-process-authority disclosures
+- **Dependencies:** PR 4
+- **Description:** UI becomes visible only after the real bridge and readiness
+  path exist; no stub Prepare RPC and no dead advertised capability.
+
+### PR 6 — Host filesystem read/list
 
 - **Title:** `feat(work): HostDirectBackend filesystem read/list`
 - **Files:** `HostDirectBackend` read/list; reparse-safe paths; wire MCP tools; tests escape denied
 - **Dependencies:** PR 4
 - **Description:** First productive Host tools. Optional product: enroll UI defaults to read-only classes.
 
-### PR 6 — Host write + process exec + approvals
+### PR 7 — Host write + process exec + approvals
 
 - **Title:** `feat(work): host write and process exec with approvals`
-- **Files:** write/exec backend; ApprovalService integration; SideEffect journal; spawn policy bounds; shell-shape rejection tests; revoke mid-flight; interrupt → needs_review
-- **Dependencies:** PR 5
+- **Files:** write/exec backend; exact-target/exact-command ApprovalService
+  integration; SideEffect journal; spawn policy bounds; revoke mid-flight;
+  interrupt → needs_review
+- **Dependencies:** PR 6
 - **Description:** Completes Host v1 tool classes. Invariant tests for dispatch gates live here.
 
-### PR 7 — Optional third-party Host MCP or explicit defer
+### PR 8 — Explicitly defer third-party Host MCP
 
 - **Title:** `feat(work): allowlisted extra host MCP` **or** `docs: defer host user-MCP`
-- **Dependencies:** PR 6 if implementing
-- **Description:** Closed allowlist only; no `npx`. Prefer defer.
+- **Dependencies:** PR 7
+- **Description:** Document the defer. V1 exposes only daemon-owned tools; no
+  arbitrary MCP installers or `npx` execution path.
 
-### PR 8 — Optional CDP/e2e smoke (not unit-invariant home)
+### PR 9 — Wisp headless + CDP end-to-end qualification
 
 - **Title:** `test(e2e): Host Tools enroll banner revoke smoke`
 - **Files:** desktop e2e/CDP
-- **Dependencies:** PR 3 + PR 5 minimum
-- **Description:** Unit/IPC no-silent-fallback tests already in PR 2b/4/6 — this PR is UI smoke only.
+- **Dependencies:** PR 5 + PR 7
+- **Description:** Wisp headless covers normal regression; Electron CDP inspects
+  renderer/network/state; workspace 3 is reserved for real-desktop visual QA.
 
 ### Isolated Work track (parallel, not blocking Host)
 
 - Continue existing isolation qualification outside this plan.
-- When guest ready: implement `IsolatedGuestBackend` / guest ACP sessions; preemption tests already in PR 2b (`Isolated preempts Host`).
+- When guest ready: implement `IsolatedGuestBackend` / guest ACP sessions;
+  preemption contracts already exist from PR 3b.
 - Do **not** wait on Host tool PRs; do **not** rewrite Host when guest ships.
 
 ### Merge order
 
 ```text
-PR1 → PR2a → PR2b → PR3
-              ↘ PR4 → PR5 → PR6 → PR7?
-                         ↘ PR8 (e2e)
-// Isolated track parallel after PR2b for preemption-only coupling
+PR1 → PR2 (ACP gate) → PR3a → PR3b → PR4 → PR5 → PR6 → PR7 → PR8
+                                                       ↘ PR9 (e2e)
+// Isolated track remains deferred; preemption contracts land with PR3b.
 ```
 
-**Gate:** No PR 5+ without PR 4 bridge. No Work Available-on-Host without PR 4 readiness fact.
+**Gate:** No schema, public IPC, or UI before PR 2 passes. No Host Work
+availability without PR 4 readiness. No public release before PR 7 and PR 9.

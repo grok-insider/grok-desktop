@@ -2,18 +2,21 @@
 
 - Status: foundation baseline
 - Last reviewed: 2026-07-12
-- Scope: Windows VM service, **Linux QEMU/KVM broker (target)**, NixOS utility
-  guest, managed integrations, and the computer-use channel
+- Scope: opt-in Host Tools, Windows VM service, **Linux QEMU/KVM broker
+  (target)**, NixOS utility guest, managed integrations, and the computer-use
+  channel
 
 Linux full-product contract: [docs/quality/linux-ga.md](../quality/linux-ga.md).
 Linux platform ADRs: [0004](adr/0004-linux-qemu-kvm-managed-execution.md)–[0007](adr/0007-linux-workspace-share-and-host-commit.md).
 
 ## Security objective
 
-Strong Work may process attacker-controlled files, web content, model output,
-tool metadata, and integrations. None of those inputs may acquire ambient host
-authority. When the qualified isolation stack is missing or unhealthy, Grok
-Desktop enters Limited Mode; it does not fall back to host execution.
+Strong Isolated Work may process attacker-controlled input without granting it
+ambient host authority. Host Tools has a different, explicitly accepted threat
+model: approved processes run with the desktop user's authority and may access
+files, credentials, applications, and network resources beyond enrolled file
+roots. Missing or unhealthy isolation never enables Host Tools; only a separate
+versioned enrollment can do so.
 
 This model complements the application authorization model. Approval answers
 whether an action should run. The platform boundary limits what a compromised
@@ -49,6 +52,9 @@ or malicious approved workload can reach.
    and guest-policy permissions.
 6. Host workspace content crosses into the guest read-only. Guest writes stay
    in an overlay until the daemon presents and commits a reviewed diff.
+7. Host Tools is not containment. Enrolled roots constrain daemon-native file
+   tools only. Every child process requires exact-command approval, but an
+   approved process can exercise the full authority of the desktop user.
 
 Local administrators, Windows kernel compromise, hypervisor compromise, and
 physical attacks are outside this boundary. They remain part of enterprise and
@@ -111,11 +117,13 @@ OS hardening rather than claims made by Grok Desktop.
 
 ## Failure behavior
 
-Any identity mismatch, invalid path, unverified image, unsupported protocol,
+Any identity mismatch, invalid path, stale or revoked Host Tools enrollment,
+unverified image, unsupported protocol,
 signature failure, writable mount request, stale observation, wrong application,
 unknown socket purpose, or unavailable backend fails closed. The daemon records
 the reason and exposes Limited Mode. It does not retry a non-idempotent action or
-route it to the host.
+route it to another backend. An uncertain Host Tools side effect becomes
+`interrupted_needs_review` and is never replayed automatically.
 
 An invalid guest-channel MAC, stale boot ID, wrong direction, sequence gap,
 conflicting replay, metadata mismatch, expired deadline, or replay-capacity

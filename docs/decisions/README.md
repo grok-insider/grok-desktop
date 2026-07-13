@@ -70,6 +70,7 @@ when it defines an IPC or schema epoch.
 | [0029](0029-local-usage-summary-ipc.md) | Local usage summary IPC |
 | [0030](0030-signed-public-update-channels.md) | Signed public update channels |
 | [0031](0031-durable-official-xai-search.md) | Durable official xAI Search grants |
+| [0032](0032-explicit-dual-mode-work-execution.md) | Explicit dual-mode Work execution |
 
 ## Platform ADRs
 

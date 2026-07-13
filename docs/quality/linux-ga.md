@@ -14,9 +14,10 @@ exact signed artifacts.
 
 ## Non-negotiable invariants
 
-1. Strong Work, Shell, MCP, managed browser automation, and computer use run
-   only inside a **qualified utility VM**. There is **no** host-exec fallback
-   (bubblewrap/seccomp on the desktop host is not a Work substitute).
+1. Strong Isolated Work, managed browser automation, and computer use run only
+   inside a **qualified utility VM**. There is no automatic host-exec fallback.
+   Separately enrolled Host Tools is an explicit risk-accepted backend and is
+   not evidence of isolation qualification.
 2. Host ACP is authentication and control only. Session prompts and tool
    execution for Work use `isolated_guest` inside the utility guest.
 3. Subscription OAuth is delegated to the official Grok Build component. No
@@ -25,9 +26,9 @@ exact signed artifacts.
    subscription. Configuring a key never implies subscription readiness.
 5. An interrupted non-idempotent side effect becomes
    `interrupted_needs_review` and is never automatically replayed.
-6. When KVM, the privileged broker, the signed guest image, proof-of-possession,
-   or guest health is missing, the product enters **Limited Mode** and keeps
-   Work-class capabilities unavailable with stable reason codes.
+6. When KVM, the privileged broker, signed guest image, proof-of-possession, or
+   guest health is missing, Isolated Work is unavailable. The product remains
+   Limited unless Host Tools was independently enrolled and prepared.
 
 ## Full GA surface bar
 

@@ -39,6 +39,7 @@ renderer, preload, Electron-main, argv, and environment state. See
 | System shell + daemon SoR | — | [0001](../decisions/0001-system-architecture.md) |
 | Grok-only providers | — | [0002](../decisions/0002-grok-only-integrations.md) |
 | Managed execution / Limited Mode | — | [0003](../decisions/0003-managed-execution.md) |
+| Explicit HostDirect / IsolatedGuest Work backends | pending epoch 25 | [0032](../decisions/0032-explicit-dual-mode-work-execution.md) |
 | Credentials + capabilities | — | [0004](../decisions/0004-daemon-owned-credentials-and-capabilities.md) |
 | Native credential enrollment | IPC v2+ (retained in v15) | [0005](../decisions/0005-native-credential-enrollment.md) |
 | Durable direct Chat turns | schema-backed journal | [0006](../decisions/0006-durable-direct-chat-turns.md) |

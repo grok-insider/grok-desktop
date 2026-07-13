@@ -1,5 +1,9 @@
 # ADR 0004: Daemon-owned credentials and capability truth
 
+> Amended by [ADR 0032](0032-explicit-dual-mode-work-execution.md): daemon-owned
+> capability truth may include an independently enrolled Host Tools backend;
+> guest failure itself never enables it.
+
 - Status: Accepted
 - Date: 2026-07-10
 

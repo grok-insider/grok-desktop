@@ -1,5 +1,9 @@
 # ADR 0003: Fail-closed managed execution
 
+> Partially amended by [ADR 0032](0032-explicit-dual-mode-work-execution.md):
+> qualified guests remain mandatory for **Isolated Work**, while separately
+> enrolled Host Tools may execute with explicitly accepted user authority.
+
 - Status: accepted
 - Date: 2026-07-10
 - Updated: 2026-07-12 (Linux host backend series)
@@ -28,7 +32,8 @@ without a general guest NIC.
 
 When the backend cannot be qualified or started, expose Limited Mode and disable
 local tools, filesystem authority, MCP, browser control, and computer use. Do
-not fall back to unrestricted host execution on any OS.
+not fall back to unrestricted host execution on any OS. A user-created Host
+Tools grant is an independent backend selection, not this fallback.
 
 ## Consequences
 
@@ -38,4 +43,3 @@ visible, support enterprise proxy/custom-CA environments, and test recovery of
 the service, guest, and image independently. Linux full product GA additionally
 requires packaging of the broker and virtio guest image per
 [linux-ga.md](../quality/linux-ga.md).
-
