@@ -135,7 +135,7 @@
                   "cmd/grok-integration-runner"
                   "cmd/grok-workspace-mounter"
                 ];
-                vendorHash = "sha256-1phPQmtsDdDoakphLXAPBv+X9zI1fpiw03nOQan/4Hs=";
+                vendorHash = "sha256-QvktaGD/phuMlPA6MiKpXIDFHUzWLU4LCgViuspyXg0=";
 
                 postInstall = ''
                   				  install -Dm0444 ${self}/integrations/schema/computer-use-v1.schema.json \
