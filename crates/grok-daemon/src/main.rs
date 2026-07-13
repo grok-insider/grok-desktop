@@ -12,7 +12,6 @@ use std::{
     fs::File,
     io::{ErrorKind, Read},
     net::SocketAddr,
-    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -21,19 +20,18 @@ use std::{
 #[cfg(all(debug_assertions, feature = "debug-acp-descriptor"))]
 use grok_acp::ExternalGrokComponent;
 use grok_acp::{
-    GrokAcpConfig, GrokAcpRuntime, GrokHomeSpec, MAX_SIGNED_CATALOG_ENVELOPE_BYTES,
-    OfficialGrokCatalogVerifier, TrustedCatalogKey, VerifiedGrokComponent, permission_channel,
+    GrokHomeSpec, MAX_SIGNED_CATALOG_ENVELOPE_BYTES, OfficialGrokCatalogVerifier,
+    TrustedCatalogKey, VerifiedGrokComponent,
 };
 use grok_application::{
-    AgentPermissionDecision, AgentRuntime, AgentRuntimeErrorKind, ApplicationError,
-    ApprovalService, ArtifactContentRetention, ArtifactContentStore, ArtifactOpener,
-    ArtifactService, ArtifactStore, AutomationSchedulerService, AutomationSchedulerStore,
-    CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ChatRailSelection, Clock,
-    ConversationModelFactory, ConversationService, ConversationTurnStore,
-    CredentialEnrollmentService, CredentialMutationStore, CredentialService,
-    DesktopPreferencesService, DesktopPreferencesStore, ExecutionStore, HostExecutionPolicyStore,
-    IdGenerator, IsolationProbe, IsolationProbeError, IsolationRuntime,
-    MAX_ARTIFACT_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
+    AgentRuntimeErrorKind, ApplicationError, ApprovalService, ArtifactContentRetention,
+    ArtifactContentStore, ArtifactOpener, ArtifactService, ArtifactStore,
+    AutomationSchedulerService, AutomationSchedulerStore, CapabilityFacts,
+    ChatModelPreferenceStore, ChatModelService, ChatRailSelection, Clock, ConversationModelFactory,
+    ConversationService, ConversationTurnStore, CredentialEnrollmentService,
+    CredentialMutationStore, CredentialService, DesktopPreferencesService, DesktopPreferencesStore,
+    ExecutionStore, HostExecutionPolicyStore, IdGenerator, IsolationProbe, IsolationProbeError,
+    IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
     MAX_CONVERSATION_RECOVERY_BATCH, MAX_PRIVILEGED_RECOVERY_BATCH,
     ManagedIntegrationLifecycleStore, PrivilegedGatewayError, PrivilegedGuestControlTransport,
     PrivilegedOperationService, PrivilegedOperationStore, RunService, ScheduledGuestDispatcher,
@@ -45,7 +43,8 @@ use grok_artifact_storage::LinuxArtifactContent;
 use grok_artifact_storage::UnavailableArtifactContent;
 use grok_credential_enrollment::NativeCredentialEnrollment;
 use grok_daemon::{
-    AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, serve_connection,
+    AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, GrokAcpRoleFactory,
+    HostWorkRuntime, VerifiedHostToolsHelper, serve_connection,
 };
 use grok_domain::{AutomationSchedulerOwnerId, ChatRail};
 use grok_memory::{
@@ -306,7 +305,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     }
     let daemon = Arc::new(match configured_agent_runtime(runtime_vault).await {
         AgentRuntimeConfiguration::NotConfigured => daemon,
-        AgentRuntimeConfiguration::Available(runtime) => daemon.with_agent_runtime(runtime),
+        AgentRuntimeConfiguration::Available(runtime) => daemon.with_host_work_runtime(runtime),
         AgentRuntimeConfiguration::Unavailable(reason) => {
             daemon.with_unavailable_agent_runtime(reason)
         }
@@ -983,7 +982,7 @@ const fn isolation_probe_reason(error: IsolationProbeError) -> &'static str {
 
 enum AgentRuntimeConfiguration {
     NotConfigured,
-    Available(Arc<dyn AgentRuntime>),
+    Available(Arc<HostWorkRuntime>),
     Unavailable(AgentRuntimeUnavailableReason),
 }
 
@@ -1022,21 +1021,9 @@ async fn start_agent_runtime(
     component: VerifiedGrokComponent,
     grok_home: GrokHomeSpec,
 ) -> AgentRuntimeConfiguration {
-    let (mut permission_host, permission_broker) = permission_channel(
-        NonZeroUsize::new(16).unwrap_or(NonZeroUsize::MIN),
-        Duration::from_mins(1),
-    );
-    tokio::spawn(async move {
-        while let Some(pending) = permission_host.recv().await {
-            let _ = pending.respond(AgentPermissionDecision::Cancelled);
-        }
-    });
-    match GrokAcpRuntime::start(
-        GrokAcpConfig::host_control(component, grok_home),
-        permission_broker,
-    )
-    .await
-    {
+    let factory = Arc::new(GrokAcpRoleFactory::new(component, grok_home));
+    let helper = configured_host_tools_helper();
+    match HostWorkRuntime::start(factory, helper).await {
         Ok(runtime) => {
             info!("official Grok ACP runtime initialized");
             AgentRuntimeConfiguration::Available(Arc::new(runtime))
@@ -1288,6 +1275,39 @@ fn default_grok_home_spec() -> Result<GrokHomeSpec, DynError> {
         directories.data_local_dir().to_path_buf(),
         installation_id,
     )?)
+}
+
+fn configured_host_tools_helper() -> Option<VerifiedHostToolsHelper> {
+    let candidate = if cfg!(debug_assertions) {
+        std::env::var_os("GROK_HOST_TOOLS_MCP_EXECUTABLE")
+            .map(PathBuf::from)
+            .or_else(packaged_host_tools_helper)
+    } else {
+        packaged_host_tools_helper()
+    };
+    let Some(path) = candidate else {
+        warn!("Host Tools helper is not packaged; Host Work remains unavailable");
+        return None;
+    };
+    if let Ok(helper) = VerifiedHostToolsHelper::verify(path) {
+        Some(helper)
+    } else {
+        warn!("Host Tools helper failed identity verification; Host Work remains unavailable");
+        None
+    }
+}
+
+fn packaged_host_tools_helper() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "grok-host-tools-mcp.exe"
+    } else {
+        "grok-host-tools-mcp"
+    };
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(|parent| parent.join(name))
+        .filter(|path| path.is_file())
 }
 
 fn invalid_agent_runtime_configuration() -> AgentRuntimeConfiguration {

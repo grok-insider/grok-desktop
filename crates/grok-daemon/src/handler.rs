@@ -48,6 +48,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedSemaphorePermit, Semaphore, oneshot};
 
+use crate::HostWorkRuntime;
 use crate::transport::MAX_FRAME_BYTES;
 
 const MAX_DISPATCH_DURATION: Duration = Duration::from_mins(1);
@@ -475,6 +476,19 @@ fn host_execution_policy_to_wire(
     }
 }
 
+fn agent_runtime_application_error(error: grok_application::AgentRuntimeError) -> ApplicationError {
+    match error.kind {
+        AgentRuntimeErrorKind::InvalidRequest => ApplicationError::InvalidInput(error.message),
+        AgentRuntimeErrorKind::Authentication => ApplicationError::Unauthorized(error.message),
+        AgentRuntimeErrorKind::ComponentVerification => ApplicationError::Integrity(error.message),
+        AgentRuntimeErrorKind::Cancelled => ApplicationError::Cancelled,
+        AgentRuntimeErrorKind::Process
+        | AgentRuntimeErrorKind::Protocol
+        | AgentRuntimeErrorKind::Permission
+        | AgentRuntimeErrorKind::Unavailable => ApplicationError::Unavailable(error.message),
+    }
+}
+
 fn artifact_task_join_failure() -> ApplicationError {
     ApplicationError::Unavailable("artifact operation task failed".into())
 }
@@ -642,6 +656,7 @@ pub struct Daemon {
     instance_id: String,
     agent_runtime: Option<Arc<dyn AgentRuntime>>,
     agent_runtime_failure: Option<AgentRuntimeUnavailableReason>,
+    host_work_runtime: Option<Arc<HostWorkRuntime>>,
     workspace: Option<Arc<WorkspaceService>>,
     automation_scheduler: Option<Arc<AutomationSchedulerService>>,
     automation_scheduler_lifecycle: AutomationSchedulerLifecycle,
@@ -691,6 +706,7 @@ impl Daemon {
             instance_id,
             agent_runtime: None,
             agent_runtime_failure: None,
+            host_work_runtime: None,
             workspace: None,
             automation_scheduler: None,
             automation_scheduler_lifecycle: AutomationSchedulerLifecycle::DegradedExecutionDisabled,
@@ -844,6 +860,13 @@ impl Daemon {
         self.agent_runtime = Some(runtime);
         self.agent_runtime_failure = None;
         self
+    }
+
+    /// Retains the role-switching official runtime used by Host Work.
+    #[must_use]
+    pub fn with_host_work_runtime(mut self, runtime: Arc<HostWorkRuntime>) -> Self {
+        self.host_work_runtime = Some(runtime.clone());
+        self.with_agent_runtime(runtime)
     }
 
     /// Records a configured runtime that failed before it could be retained.
@@ -1083,12 +1106,12 @@ impl Daemon {
             Some(v1::request::Operation::RevokeHostExecution(request)) => {
                 self.revoke_host_execution(request, idempotency_key).await
             }
-            Some(
-                v1::request::Operation::PrepareHostWorkRuntime(_)
-                | v1::request::Operation::DeactivateHostWorkRuntime(_),
-            ) => Err(ApplicationError::Unavailable(
-                "Host Tools runtime is not composed".into(),
-            )),
+            Some(v1::request::Operation::PrepareHostWorkRuntime(_)) => {
+                self.prepare_host_work_runtime().await
+            }
+            Some(v1::request::Operation::DeactivateHostWorkRuntime(_)) => {
+                self.deactivate_host_work_runtime().await
+            }
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
             }
@@ -1208,6 +1231,14 @@ impl Daemon {
             facts.host_policy_effective = policy.is_effectively_active();
             facts.host_process_execute_enabled =
                 facts.host_policy_effective && policy.tool_classes.process_execute;
+            facts.host_work_runtime_ready = if facts.host_policy_effective {
+                match &self.host_work_runtime {
+                    Some(runtime) => runtime.is_ready().await,
+                    None => false,
+                }
+            } else {
+                false
+            };
         }
         if let Some(isolation) = &self.isolation_runtime {
             // Refresh is best-effort; probe unavailability clears readiness.
@@ -1569,8 +1600,12 @@ impl Daemon {
             .host_execution_policy_store()?
             .get_host_execution_policy()
             .await?;
+        let ready = match &self.host_work_runtime {
+            Some(runtime) => runtime.is_ready().await,
+            None => false,
+        };
         Ok(v1::response::Result::HostExecutionPolicy(
-            host_execution_policy_to_wire(policy, false),
+            host_execution_policy_to_wire(policy, ready),
         ))
     }
 
@@ -1636,6 +1671,43 @@ impl Daemon {
         };
         let policy = store
             .replace_host_execution_policy(policy, request.expected_revision, &command)
+            .await?;
+        if let Some(runtime) = &self.host_work_runtime {
+            let _ = runtime.deactivate().await;
+        }
+        Ok(v1::response::Result::HostExecutionPolicy(
+            host_execution_policy_to_wire(policy, false),
+        ))
+    }
+
+    async fn prepare_host_work_runtime(&self) -> Result<v1::response::Result, ApplicationError> {
+        let runtime = self.host_work_runtime.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("Host Tools runtime is not configured".into())
+        })?;
+        let policy = self
+            .host_execution_policy_store()?
+            .get_host_execution_policy()
+            .await?;
+        runtime
+            .prepare(&policy)
+            .await
+            .map_err(agent_runtime_application_error)?;
+        Ok(v1::response::Result::HostExecutionPolicy(
+            host_execution_policy_to_wire(policy, true),
+        ))
+    }
+
+    async fn deactivate_host_work_runtime(&self) -> Result<v1::response::Result, ApplicationError> {
+        let runtime = self.host_work_runtime.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("Host Tools runtime is not configured".into())
+        })?;
+        runtime
+            .deactivate()
+            .await
+            .map_err(agent_runtime_application_error)?;
+        let policy = self
+            .host_execution_policy_store()?
+            .get_host_execution_policy()
             .await?;
         Ok(v1::response::Result::HostExecutionPolicy(
             host_execution_policy_to_wire(policy, false),
