@@ -839,7 +839,16 @@ mod tests {
                 grok_windows_acl::verify_private_directory(path).expect("verify directory ACL")
             );
         }
-        for name in [".runtime.lock", "config.toml", "requirements.toml"] {
+        let lock = grok_windows_acl::open_private_lock_file(
+            &provisioned.home.join(".runtime.lock"),
+            false,
+        )
+        .expect("open managed lock file");
+        assert!(
+            grok_windows_acl::verify_private_acl(&lock, grok_windows_acl::PrivateObjectKind::File,)
+                .expect("verify lock file ACL")
+        );
+        for name in ["config.toml", "requirements.toml"] {
             let file = secure_open(&provisioned.home.join(name), true, false, false)
                 .expect("open managed file");
             assert!(

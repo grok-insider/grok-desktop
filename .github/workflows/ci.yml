@@ -133,6 +133,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test audited Windows ACL boundary
         run: cargo test -p grok-windows-acl
+      - name: Test Windows ACP isolation boundary
+        run: cargo test -p grok-acp --lib
       - run: cargo test --workspace
       - name: Cross-check audited Windows boundaries on ARM64
         shell: pwsh
