@@ -162,7 +162,7 @@ async function main() {
   }
 }
 
-async function preparePackagingSource(sourceRoot, packageMetadata, updateTrustedKeysJSON) {
+export async function preparePackagingSource(sourceRoot, packageMetadata, updateTrustedKeysJSON) {
   await mkdir(path.join(sourceRoot, "node_modules", "@bufbuild"), { recursive: true });
   await cp(path.join(desktopRoot, "dist"), path.join(sourceRoot, "dist"), { recursive: true, dereference: false, errorOnExist: true });
   await cp(path.join(desktopRoot, "dist-electron"), path.join(sourceRoot, "dist-electron"), { recursive: true, dereference: false, errorOnExist: true });
@@ -188,7 +188,7 @@ async function preparePackagingSource(sourceRoot, packageMetadata, updateTrusted
   await writeFile(path.join(sourceRoot, "package.json"), `${JSON.stringify(packagedMetadata, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-async function assertReleaseBuildExists() {
+export async function assertReleaseBuildExists() {
   for (const relativePath of ["dist/index.html", "dist-electron/electron/main.js", "dist-electron/electron/preload.cjs"]) {
     const metadata = await stat(path.join(desktopRoot, relativePath)).catch(() => undefined);
     if (!metadata?.isFile()) throw new Error("run the production desktop build before packaging");
@@ -198,7 +198,7 @@ async function assertReleaseBuildExists() {
   }
 }
 
-async function hardenElectronExecutable(executable) {
+export async function hardenElectronExecutable(executable) {
   await flipFuses(executable, {
     version: FuseVersion.V1,
     strictlyRequireAllFuses: true,
@@ -227,14 +227,14 @@ async function hardenElectronExecutable(executable) {
   for (const [fuse, value] of expected) if (state[fuse] !== value) throw new Error("packaged Electron fuse verification failed");
 }
 
-async function readableFuseState(executable) {
+export async function readableFuseState(executable) {
   const state = await getCurrentFuseWire(executable);
   return Object.fromEntries(Object.entries(FuseV1Options)
     .filter(([name]) => Number.isNaN(Number(name)))
     .map(([name, index]) => [name, state[index] === FuseState.ENABLE]));
 }
 
-async function signAndVerifyDirectory(root, environment, toolEnvironment) {
+export async function signAndVerifyDirectory(root, environment, toolEnvironment) {
   const signable = (await walkFiles(root)).filter((file) =>
     shouldAuthenticodeSignPackagedFile(root, file));
   if (signable.length === 0) throw new Error("packaged application contains no signable binaries");
@@ -244,7 +244,7 @@ async function signAndVerifyDirectory(root, environment, toolEnvironment) {
   }
 }
 
-async function signArtifact(file, environment, toolEnvironment) {
+export async function signArtifact(file, environment, toolEnvironment) {
   await spawnChecked(environment.signToolPath, [
     "sign",
     "/fd", "sha256",
@@ -257,7 +257,7 @@ async function signArtifact(file, environment, toolEnvironment) {
   ], toolEnvironment);
 }
 
-async function verifySignature(file, environment, toolEnvironment) {
+export async function verifySignature(file, environment, toolEnvironment) {
   await spawnChecked(environment.signToolPath, ["verify", "/pa", "/all", file], toolEnvironment);
   const signerJSON = await spawnChecked(environment.powershellPath, [
     "-NoLogo",
@@ -302,4 +302,7 @@ function spawnChecked(command, arguments_, environment) {
   });
 }
 
-await main();
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  await main();
+}

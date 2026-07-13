@@ -17,8 +17,9 @@ pnpm dev:cdp -- --profile qa-local --port 9250
 Unpackaged launches auto-detect the official `grok` CLI on `PATH` (or honor
 explicit `GROK_ACP_EXECUTABLE` / `GROK_ACP_VERSION` / `GROK_ACP_SHA256`) and
 forward them into the daemon child. Packaged launches never receive those
-overrides; product packages need a release daemon with catalog trust keys plus
-an optional staged `components/grok-acp` layout (see `docs/platform/linux-release.md`).
+overrides; product packages need a release daemon with either catalog trust or
+an exact source-pinned manifest binding plus a staged `components/grok-acp`
+layout (see `docs/platform/linux-release.md`).
 
 The launcher preflights `127.0.0.1:9250`, stores Electron user data under the
 operating system's local state directory, and records the exact launcher and

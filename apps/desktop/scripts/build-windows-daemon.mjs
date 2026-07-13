@@ -1,14 +1,16 @@
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { cp, copyFile, lstat, mkdir, mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
+import { cp, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   inspectDaemonAcpCatalogTrust,
+  inspectDaemonAcpPinnedManifestBytes,
   inspectPortableExecutable,
   parseAcpCatalogTrustedKeys,
   parseStrictBoundedJSON,
+  verifyOfficialGrokPinnedManifestBytes,
 } from "./release-utils.mjs";
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -27,7 +29,8 @@ export function parseDaemonBuildArguments(arguments_) {
   for (let index = 0; index < arguments_.length; index += 2) {
     const option = arguments_[index];
     const value = arguments_[index + 1];
-    if ((option !== "--arch" && option !== "--out") || value === undefined || values[option]) {
+    if (!new Set(["--arch", "--out", "--acp-pinned-manifest"]).has(option) ||
+        value === undefined || values[option]) {
       throw new Error("daemon build requires unique --arch and --out option/value pairs");
     }
     values[option] = value;
@@ -36,7 +39,13 @@ export function parseDaemonBuildArguments(arguments_) {
   if (!values["--out"] || path.basename(values["--out"]).toLowerCase() !== "grok-daemon.exe") {
     throw new Error("--out must name grok-daemon.exe");
   }
-  return { architecture: values["--arch"], output: path.resolve(values["--out"]) };
+  return {
+    architecture: values["--arch"],
+    output: path.resolve(values["--out"]),
+    ...(values["--acp-pinned-manifest"]
+      ? { pinnedManifest: path.resolve(values["--acp-pinned-manifest"]) }
+      : {}),
+  };
 }
 
 async function main() {
@@ -51,9 +60,11 @@ async function main() {
       requiredEnvironment("GROK_WINDOWS_TOOLCHAIN_ENV_JSON", 65_536),
     ),
   );
-  const trust = parseAcpCatalogTrustedKeys(
-    requiredEnvironment("GROK_ACP_CATALOG_TRUSTED_KEYS", 4096),
-  );
+  const trust = options.pinnedManifest
+    ? verifyOfficialGrokPinnedManifestBytes(
+      await readFile(options.pinnedManifest), options.architecture, "windows",
+    )
+    : parseAcpCatalogTrustedKeys(requiredEnvironment("GROK_ACP_CATALOG_TRUSTED_KEYS", 4096));
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "grok-daemon-build-"));
   try {
     const buildLayout = {
@@ -94,7 +105,11 @@ async function main() {
       buildLayout.targetDirectory, rustTargets[options.architecture], "release", "grok-daemon.exe",
     );
     await inspectPortableExecutable(executable, options.architecture);
-    await inspectDaemonAcpCatalogTrust(executable, trust);
+    if (options.pinnedManifest) {
+      inspectDaemonAcpPinnedManifestBytes(await readFile(executable), trust);
+    } else {
+      await inspectDaemonAcpCatalogTrust(executable, trust);
+    }
     const hostToolsHelper = path.join(
       buildLayout.targetDirectory, rustTargets[options.architecture], "release", "grok-host-tools-mcp.exe",
     );
@@ -113,7 +128,7 @@ async function main() {
 
 export function createWindowsDaemonBuildEnvironment(_environment, architecture, layout, trust, toolchain) {
   if (!Object.hasOwn(rustTargets, architecture) || !validBuildLayout(layout) ||
-      !trust?.raw || !trust?.binding || !validToolchain(toolchain)) {
+      !trust?.binding || (!trust.raw && !trust.sourceUrl) || !validToolchain(toolchain)) {
     throw new Error("Windows daemon build configuration is invalid");
   }
   return {
@@ -122,8 +137,10 @@ export function createWindowsDaemonBuildEnvironment(_environment, architecture, 
     CARGO_NET_OFFLINE: "true",
     CARGO_TARGET_DIR: layout.targetDirectory,
     CARGO_TERM_COLOR: "never",
-    GROK_ACP_CATALOG_TRUSTED_KEYS: trust.raw,
-    GROK_ACP_CATALOG_TRUST_BINDING: trust.binding,
+    ...(trust.raw ? {
+      GROK_ACP_CATALOG_TRUSTED_KEYS: trust.raw,
+      GROK_ACP_CATALOG_TRUST_BINDING: trust.binding,
+    } : { GROK_ACP_PINNED_MANIFEST_BINDING: trust.binding }),
     HOME: layout.homeDirectory,
     INCLUDE: toolchain.toolchainEnvironment.includePaths.join(path.win32.delimiter),
     LIB: toolchain.toolchainEnvironment.libraryPaths.join(path.win32.delimiter),

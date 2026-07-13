@@ -25,9 +25,11 @@ import {
   shouldAuthenticodeSignPackagedFile,
   validateReleaseInputs,
   validateSignerIdentity,
+  validateCoreWindowsInputs,
   verifyOfficialGrokCatalog,
   verifyOfficialGrokPinnedManifestBytes,
   verifyPackagedNativeLayout,
+  verifyPackagedCoreWindowsLayout,
   windowsServiceBuildMetadata,
 } from "./release-utils.mjs";
 import {
@@ -123,6 +125,14 @@ test("creates isolated native build environments and deterministic public trust 
   assert.deepEqual(parseDaemonBuildArguments([
     "--arch", "x64", "--out", "stage/grok-daemon.exe",
   ]), { architecture: "x64", output: path.resolve("stage/grok-daemon.exe") });
+  assert.deepEqual(parseDaemonBuildArguments([
+    "--arch", "x64", "--out", "stage/grok-daemon.exe",
+    "--acp-pinned-manifest", "apps/desktop/release/components/grok-build/windows-x64.json",
+  ]), {
+    architecture: "x64",
+    output: path.resolve("stage/grok-daemon.exe"),
+    pinnedManifest: path.resolve("apps/desktop/release/components/grok-build/windows-x64.json"),
+  });
   const daemonBuildRoot = path.resolve(os.tmpdir(), "grok-daemon-build-test");
   const layout = {
     cargoHome: path.join(daemonBuildRoot, "cargo-home"),
@@ -164,6 +174,19 @@ test("creates isolated native build environments and deterministic public trust 
   assert.equal(daemonEnvironment.RUSTFLAGS, undefined);
   assert.equal(daemonEnvironment.CARGO_ENCODED_RUSTFLAGS, undefined);
   assert.equal(daemonEnvironment.Path, undefined);
+  const pinnedEnvironment = createWindowsDaemonBuildEnvironment({}, "x64", layout, {
+    binding: `grok-acp-pinned-manifest-v1:${"a".repeat(64)}`,
+    sourceUrl: "https://x.ai/cli/grok",
+  }, {
+    rustcPath: "C:\\Rust\\bin\\rustc.exe",
+    linkerPath: "C:\\BuildTools\\bin\\link.exe",
+    toolchainEnvironment,
+  });
+  assert.equal(
+    pinnedEnvironment.GROK_ACP_PINNED_MANIFEST_BINDING,
+    `grok-acp-pinned-manifest-v1:${"a".repeat(64)}`,
+  );
+  assert.equal(pinnedEnvironment.GROK_ACP_CATALOG_TRUSTED_KEYS, undefined);
   const daemonBuildSource = await readFile(new URL("./build-windows-daemon.mjs", import.meta.url), "utf8");
   assert.match(daemonBuildSource, /"--locked"[\s\S]*?"--offline"[\s\S]*?"--no-default-features"/);
   assert.match(daemonBuildSource, /"--manifest-path", path\.join\(repositoryRoot, "Cargo\.toml"\)/);
@@ -503,6 +526,44 @@ test("preserves the exact native runtime layout and unsigned input bytes", async
   await assert.rejects(verifyPackagedNativeLayout(
     appDirectory, inputs, "x64", { firstPartyBinariesSigned: true },
   ), /bytes differ/);
+});
+
+test("validates and preserves the minimal source-pinned Windows core layout", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-core-windows-stage-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const component = portableExecutable(0x8664);
+  const manifestValue = {
+    schema: "grok.official-component-pin/v1", name: "grok-build", publisher: "xAI",
+    version: "0.2.99", os: "windows", architecture: "x86_64", executable: "bin/grok.exe",
+    sourceUrl: "https://x.ai/cli/grok-0.2.99-windows-x86_64.exe",
+    sha256: hash(component), size: component.length,
+  };
+  const manifest = Buffer.from(`${JSON.stringify(manifestValue)}\n`);
+  const binding = `grok-acp-pinned-manifest-v1:${hash(manifest)}`;
+  const files = new Map([
+    ["bin/grok-daemon.exe", Buffer.concat([portableExecutable(0x8664), Buffer.from(binding)])],
+    ["bin/grok-host-tools-mcp.exe", portableExecutable(0x8664)],
+    ["bin/components/grok-acp/pinned-component.json", manifest],
+    ["bin/components/grok-acp/bin/grok.exe", component],
+  ]);
+  for (const [relativePath, contents] of files) {
+    const destination = path.join(root, ...relativePath.split("/"));
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, contents);
+  }
+  const inputs = await validateCoreWindowsInputs(root, { architecture: "x64" });
+  const appDirectory = path.join(root, "packaged");
+  await mkdir(path.join(appDirectory, "resources"), { recursive: true });
+  await cp(path.join(root, "bin"), path.join(appDirectory, "resources", "bin"), {
+    recursive: true, dereference: false, errorOnExist: true,
+  });
+  const layout = await verifyPackagedCoreWindowsLayout(appDirectory, inputs, "x64");
+  assert.equal(path.basename(layout.manifest), "pinned-component.json");
+  await writeFile(layout.component, Buffer.concat([component, Buffer.from("tamper")]));
+  await assert.rejects(
+    verifyPackagedCoreWindowsLayout(appDirectory, inputs, "x64", { firstPartyBinariesSigned: true }),
+    /bytes differ/,
+  );
 });
 
 function releaseEnvironment() {

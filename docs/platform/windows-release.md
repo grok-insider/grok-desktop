@@ -1,13 +1,50 @@
 # Windows release pipeline
 
 Windows releases are assembled only on ephemeral, access-controlled Windows 11
-workers. The application ships as architecture-specific x64 and ARM64 MSIX
-packages with the same package identity and publisher. The pipeline does not
-create development certificates or read PFX passwords from the repository.
+workers. The public beta/core train currently ships an x64 MSIX with Chat and
+explicitly enrolled Host Tools Work. ARM64 and the isolated-work train remain
+deferred until their native and guest inputs are qualified. All trains use the
+same package identity and publisher. The pipeline does not create development
+certificates or read PFX passwords from the repository.
+
+## Public core package
+
+The public core job constructs its release input tree on the trusted worker:
+
+```text
+windows-core/x64/
+└── bin/
+    ├── grok-daemon.exe
+    ├── grok-host-tools-mcp.exe
+    └── components/grok-acp/
+        ├── pinned-component.json
+        └── bin/grok.exe
+```
+
+The daemon and Host Tools helper are built from the tagged source. The daemon
+contains the domain-separated SHA-256 binding of the tracked Windows x64
+manifest. The job downloads `grok.exe` only from the exact `https://x.ai/cli/`
+URL in that manifest, verifies its size and SHA-256 digest, and preserves its
+bytes through packaging and first-party signing. The vendor executable is not
+re-signed with the Grok Desktop certificate.
+
+Packaging rejects extra files, links, target mismatches, a daemon without the
+exact manifest binding, or any component byte mismatch. The release record
+labels the package `core-host-tools-beta` and lists isolated Work, media,
+browser automation, and scheduled Work as deferred capabilities. This avoids
+shipping placeholder guest/service inputs or claiming isolation that the
+package does not contain.
+
+The tracked pin and package release record are published beside the MSIX as
+public provenance evidence. Source pinning is governed by ADR 0033; package,
+update-manifest, and MSIX signatures remain required.
+
+## Qualified isolated package (deferred)
 
 ## Package contents
 
-The trusted build stages this exact tree for each architecture:
+The full isolated train retains the following signed input contract for each
+architecture once qualification resumes:
 
 ```text
 release-inputs/windows/<x64|arm64>/

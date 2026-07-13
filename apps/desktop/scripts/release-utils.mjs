@@ -28,6 +28,7 @@ const acpCatalogEnvelopeSchema = "grok.official-component-catalog-envelope/v1";
 const acpCatalogPayloadSchema = "grok.official-component-catalog/v1";
 const acpCatalogSignatureDomain = Buffer.from("grok.desktop.official-component-catalog.v1\0", "utf8");
 const acpCatalogStagePath = "bin/components/grok-acp/catalog.json";
+const acpPinnedManifestStagePath = "bin/components/grok-acp/pinned-component.json";
 const acpComponentStagePath = "bin/components/grok-acp/bin/grok.exe";
 const acpComponentRelativePath = "bin/grok.exe";
 const maxAcpCatalogEnvelopeSize = 512 * 1024;
@@ -67,6 +68,12 @@ const expectedInputLimits = new Map([
   [acpCatalogStagePath, maxAcpCatalogEnvelopeSize],
   [acpComponentStagePath, maxAcpComponentSize],
 ]);
+const coreWindowsInputLimits = new Map([
+  ["bin/grok-daemon.exe", 128 * 1024 * 1024],
+  ["bin/grok-host-tools-mcp.exe", 128 * 1024 * 1024],
+  [acpPinnedManifestStagePath, maxAcpPinnedManifestSize],
+  [acpComponentStagePath, maxAcpComponentSize],
+]);
 
 export function parseReleaseArguments(releaseArguments) {
   const result = {};
@@ -95,6 +102,33 @@ export function normalizeMsixVersion(version) {
 }
 
 export function readReleaseEnvironment(environment) {
+  const base = readCoreWindowsReleaseEnvironment(environment);
+  const releaseMetadataKeys = parseReleaseMetadataKeys(
+    boundedEnvironment(environment, "GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON", 65_536),
+  );
+  const acpCatalogTrust = parseAcpCatalogTrustedKeys(
+    boundedEnvironment(environment, "GROK_ACP_CATALOG_TRUSTED_KEYS", 4096),
+  );
+  const acpProvenanceEvidenceID = boundedEnvironment(
+    environment, "GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID", 128,
+  );
+  const acpRedistributionEvidenceID = boundedEnvironment(
+    environment, "GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID", 128,
+  );
+  if (!evidenceIDPattern.test(acpProvenanceEvidenceID) ||
+      !evidenceIDPattern.test(acpRedistributionEvidenceID)) {
+    throw new Error("official Grok component evidence identifiers are invalid");
+  }
+  return {
+    ...base,
+    releaseMetadataKeys,
+    acpCatalogTrust,
+    acpProvenanceEvidenceID,
+    acpRedistributionEvidenceID,
+  };
+}
+
+export function readCoreWindowsReleaseEnvironment(environment) {
   rejectAmbientSigningSecrets(environment);
   const packageIdentity = boundedEnvironment(environment, "GROK_MSIX_IDENTITY", 50);
   const publisher = boundedEnvironment(environment, "GROK_MSIX_PUBLISHER", 512);
@@ -108,30 +142,13 @@ export function readReleaseEnvironment(environment) {
     boundedEnvironment(environment, "GROK_WINDOWS_SIGN_ARGS_JSON", 8192),
     signerThumbprint,
   );
-  const releaseMetadataKeys = parseReleaseMetadataKeys(
-    boundedEnvironment(environment, "GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON", 65_536),
-  );
   const updateTrustedKeysJSON = boundedEnvironment(
     environment, "GROK_UPDATE_TRUSTED_KEYS_JSON", 65_536,
   );
   parseReleaseMetadataKeys(updateTrustedKeysJSON);
-  const acpCatalogTrust = parseAcpCatalogTrustedKeys(
-    boundedEnvironment(environment, "GROK_ACP_CATALOG_TRUSTED_KEYS", 4096),
-  );
-  const acpProvenanceEvidenceID = boundedEnvironment(
-    environment, "GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID", 128,
-  );
-  const acpRedistributionEvidenceID = boundedEnvironment(
-    environment, "GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID", 128,
-  );
-
   if (!packageIdentityPattern.test(packageIdentity)) throw new Error("GROK_MSIX_IDENTITY is invalid");
   if (!publisher.startsWith("CN=") || hasInvalidXmlCharacters(publisher)) throw new Error("GROK_MSIX_PUBLISHER is invalid");
   if (hasInvalidXmlCharacters(publisherDisplayName)) throw new Error("GROK_MSIX_PUBLISHER_DISPLAY_NAME is invalid");
-  if (!evidenceIDPattern.test(acpProvenanceEvidenceID) ||
-      !evidenceIDPattern.test(acpRedistributionEvidenceID)) {
-    throw new Error("official Grok component evidence identifiers are invalid");
-  }
   const maxVersion = parseWindowsVersion(maxTestedVersion);
   if (compareVersions(maxVersion, [10, 0, 22_000, 0]) < 0) throw new Error("the tested Windows version predates Windows 11");
   if (!path.win32.isAbsolute(signToolPath)) throw new Error("GROK_WINDOWS_SIGNTOOL_PATH must be an absolute Windows path");
@@ -150,11 +167,7 @@ export function readReleaseEnvironment(environment) {
     timestampServer,
     signerThumbprint,
     signingArguments,
-    releaseMetadataKeys,
     updateTrustedKeysJSON,
-    acpCatalogTrust,
-    acpProvenanceEvidenceID,
-    acpRedistributionEvidenceID,
   };
 }
 
@@ -403,6 +416,35 @@ export async function validateReleaseInputs(stageRoot, expected) {
     acpCatalogTrust,
     acpComponent: { ...acpCatalog.component, stagePath: acpComponentStagePath },
   };
+}
+
+export async function validateCoreWindowsInputs(stageRoot, { architecture } = {}) {
+  if (architecture !== "x64") throw new Error("core Windows beta supports only x64");
+  const canonicalRoot = await realpath(stageRoot);
+  const expectedPaths = [...coreWindowsInputLimits.keys()].toSorted();
+  const stagedPaths = await listStageFiles(canonicalRoot);
+  if (stagedPaths.length !== expectedPaths.length ||
+      stagedPaths.some((candidate, index) => candidate !== expectedPaths[index])) {
+    throw new Error("core Windows staging directory contains an unexpected file or directory");
+  }
+  const files = new Map();
+  for (const relativePath of expectedPaths) {
+    files.set(relativePath, await containedRegularFile(
+      canonicalRoot, relativePath, coreWindowsInputLimits.get(relativePath),
+    ));
+  }
+  const manifestBytes = await readFile(files.get(acpPinnedManifestStagePath));
+  const manifest = verifyOfficialGrokPinnedManifestBytes(manifestBytes, architecture, "windows");
+  const componentMetadata = await stat(files.get(acpComponentStagePath));
+  if (componentMetadata.size !== manifest.size ||
+      await sha256File(files.get(acpComponentStagePath)) !== manifest.sha256) {
+    throw new Error("pinned ACP manifest does not match the staged Windows component");
+  }
+  await inspectPortableExecutable(files.get("bin/grok-daemon.exe"), architecture);
+  await inspectPortableExecutable(files.get("bin/grok-host-tools-mcp.exe"), architecture);
+  await inspectPortableExecutable(files.get(acpComponentStagePath), architecture);
+  inspectDaemonAcpPinnedManifestBytes(await readFile(files.get("bin/grok-daemon.exe")), manifest);
+  return { canonicalRoot, files, manifest };
 }
 
 export function releaseInputSigningBytes(manifest) {
@@ -663,6 +705,54 @@ export async function verifyPackagedNativeLayout(
     hostToolsHelper: path.join(resourcesRoot, "bin", "grok-host-tools-mcp.exe"),
     catalog: path.join(resourcesRoot, ...acpCatalogStagePath.split("/")),
     component: path.join(resourcesRoot, ...acpComponentStagePath.split("/")),
+  };
+}
+
+export async function verifyPackagedCoreWindowsLayout(
+  appDirectory, inputs, architecture, { firstPartyBinariesSigned = false } = {},
+) {
+  if (!inputs?.files || !inputs.manifest || architecture !== "x64" ||
+      typeof firstPartyBinariesSigned !== "boolean") {
+    throw new Error("verified core Windows inputs are required for layout validation");
+  }
+  const resourcesRoot = await realpath(path.join(appDirectory, "resources"));
+  const binRoot = await realpath(path.join(resourcesRoot, "bin"));
+  const expectedPaths = [
+    "components/grok-acp/bin/grok.exe",
+    "components/grok-acp/pinned-component.json",
+    "grok-daemon.exe",
+    "grok-host-tools-mcp.exe",
+  ].toSorted();
+  const actualPaths = await listStageFiles(binRoot);
+  if (actualPaths.length !== expectedPaths.length ||
+      actualPaths.some((candidate, index) => candidate !== expectedPaths[index])) {
+    throw new Error("packaged core Windows native layout is invalid");
+  }
+  const stablePaths = [acpPinnedManifestStagePath, acpComponentStagePath];
+  if (!firstPartyBinariesSigned) {
+    stablePaths.push("bin/grok-daemon.exe", "bin/grok-host-tools-mcp.exe");
+  }
+  for (const relativePath of stablePaths) {
+    const packaged = await containedRegularFile(
+      resourcesRoot, relativePath, coreWindowsInputLimits.get(relativePath),
+    );
+    const source = inputs.files.get(relativePath);
+    if (!source || await sha256File(packaged) !== await sha256File(source)) {
+      throw new Error("packaged core Windows bytes differ from verified inputs");
+    }
+  }
+  const daemon = path.join(resourcesRoot, "bin", "grok-daemon.exe");
+  const helper = path.join(resourcesRoot, "bin", "grok-host-tools-mcp.exe");
+  const component = path.join(resourcesRoot, ...acpComponentStagePath.split("/"));
+  await inspectPortableExecutable(daemon, architecture);
+  await inspectPortableExecutable(helper, architecture);
+  await inspectPortableExecutable(component, architecture);
+  inspectDaemonAcpPinnedManifestBytes(await readFile(daemon), inputs.manifest);
+  return {
+    daemon,
+    hostToolsHelper: helper,
+    manifest: path.join(resourcesRoot, ...acpPinnedManifestStagePath.split("/")),
+    component,
   };
 }
 

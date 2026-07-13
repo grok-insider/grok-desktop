@@ -91,17 +91,12 @@ jobs:
             apps/desktop/release/components/grok-build/linux-x64.json
 
   windows:
-    name: Build Windows ${{ matrix.architecture }}
+    name: Build Windows x64 core
     runs-on: [self-hosted, windows, x64]
     timeout-minutes: 90
     environment: stable-windows-signing
-    strategy:
-      fail-fast: false
-      matrix:
-        architecture: [x64, arm64]
     env:
       GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
-      RELEASE_INPUT_ROOT: ${{ vars.GROK_WINDOWS_RELEASE_INPUT_ROOT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -114,23 +109,42 @@ jobs:
         shell: pwsh
         run: |
           if ($env:GITHUB_REF_NAME -ne "v$((Get-Content package.json | ConvertFrom-Json).version)") { throw "tag/version mismatch" }
-          if (-not $env:RELEASE_INPUT_ROOT) { throw "qualified release input root is unavailable" }
           if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
       - run: pnpm build
-      - name: Assemble and sign MSIX
+      - name: Build and stage source-pinned native runtime
         shell: pwsh
         run: |
-          pnpm package:windows -- --arch ${{ matrix.architecture }} --channel stable `
-            --stage (Join-Path $env:RELEASE_INPUT_ROOT ${{ matrix.architecture }})
+          $manifest = "apps/desktop/release/components/grok-build/windows-x64.json"
+          $stage = Join-Path $env:RUNNER_TEMP "grok-windows-core-stage"
+          New-Item -ItemType Directory -Force (Join-Path $stage "bin/components/grok-acp/bin") | Out-Null
+          pnpm --filter @grok-desktop/desktop build:windows-daemon -- `
+            --arch x64 --out (Join-Path $stage "bin/grok-daemon.exe") `
+            --acp-pinned-manifest $manifest
+          $pin = Get-Content -Raw $manifest | ConvertFrom-Json
+          curl.exe --fail --location --proto '=https' --tlsv1.2 `
+            --output (Join-Path $stage "bin/components/grok-acp/bin/grok.exe") $pin.sourceUrl
+          $component = Get-Item (Join-Path $stage "bin/components/grok-acp/bin/grok.exe")
+          if ($component.Length -ne $pin.size) { throw "official Grok component size mismatch" }
+          if ((Get-FileHash -Algorithm SHA256 $component.FullName).Hash.ToLowerInvariant() -ne $pin.sha256) {
+            throw "official Grok component digest mismatch"
+          }
+          Copy-Item $manifest (Join-Path $stage "bin/components/grok-acp/pinned-component.json")
+          "CORE_STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Assemble and sign core MSIX
+        shell: pwsh
+        run: |
+          pnpm --filter @grok-desktop/desktop package:windows-core -- `
+            --arch x64 --channel stable --stage $env:CORE_STAGE
       - uses: actions/upload-artifact@v4
         with:
-          name: release-windows-${{ matrix.architecture }}
+          name: release-windows-x64
           if-no-files-found: error
           retention-days: 3
           path: |
-            out/release/windows/stable/${{ matrix.architecture }}/GrokDesktop-stable-${{ matrix.architecture }}.msix
-            out/release/windows/stable/${{ matrix.architecture }}/GrokDesktop-stable-${{ matrix.architecture }}.appinstaller
-            out/release/windows/stable/${{ matrix.architecture }}/*.json
+            out/release/windows/stable/x64/GrokDesktop-stable-x64.msix
+            out/release/windows/stable/x64/GrokDesktop-stable-x64.appinstaller
+            out/release/windows/stable/x64/*.json
+            apps/desktop/release/components/grok-build/windows-x64.json
 
   publish:
     name: Sign metadata and publish
@@ -174,7 +188,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for target in linux:x64:AppImage win32:x64:msix win32:arm64:msix; do
+          for target in linux:x64:AppImage win32:x64:msix; do
             IFS=: read -r platform architecture extension <<< "$target"
             artifact="release-assets/GrokDesktop-stable-$architecture.$extension"
             manifest="release-assets/GrokDesktop-stable-$platform-$architecture.update.json"
