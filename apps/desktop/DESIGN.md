@@ -165,15 +165,18 @@ Chat/reading measure 65–75ch. Body tracking is default; never tighten body tex
 
 ## 6. Layout Principles
 
-- **Shell grid:** fixed sidebar `250px` (collapsed `72px`) + fluid workspace; topbar 54px.
+- **Shell:** shadcn `Sidebar` (`collapsible="icon"`): fixed sidebar `16rem`
+  (icon rail `3rem`) + fluid `SidebarInset` workspace; topbar 54px. Toggle via
+  `SidebarTrigger` or Ctrl/Cmd+B; open state persists in localStorage.
   Content pages pad `clamp(24px, 3.2vw, 48px)` inline, max-width 1440–1540px centered.
 - Chat transcript column: `min(760px, 100%)` centered — the 65–75ch measure.
 - Text on the sidebar (Sage) must use `--muted-foreground` or stronger —
   `--subtle-foreground` only clears AA on Canvas/Pure surfaces, not on Sage.
 - CSS Grid for page scaffolding; flex for rows. No absolute-position layout hacks; no
   overlapping content zones.
-- Responsive: ≥1120px full shell; ≤1120px sidebar auto-collapses to rail; ≤680px bottom
-  tab bar (existing behavior — preserve). Touch targets: ≥ 34px for primary and
+- Responsive: ≥768px full shell with user-toggled icon rail; <768px the sidebar
+  becomes an off-canvas sheet (shadcn mobile behavior; the Electron window's
+  860px minimum keeps the desktop layout in-product). Touch targets: ≥ 34px for primary and
   standalone controls (44px preferred for hero actions); compact inline/auxiliary
   controls (dialog close, in-card icon actions, segmented tabs, metadata chips) may go
   down to 27px, never smaller. No horizontal page scroll ever.
@@ -185,9 +188,12 @@ Chat/reading measure 65–75ch. Body tracking is default; never tighten body tex
 - Easing: `cubic-bezier(.2, .8, .2, 1)` (existing `--ease`) — ease-out entrances,
   faster exits (~70% of enter).
 - Animate **only** `transform` and `opacity` (+ `background/border-color` transitions).
-  Never animate width/height/top/left. One sanctioned exception: the shell rail
-  collapse transitions `grid-template-columns` (200 ms, one-off structural move).
-  Progress fills scale with `transform: scaleX`, not width.
+  Never animate width/height/top/left. One sanctioned exception: the shadcn
+  sidebar collapse transitions its gap/container width (200 ms linear, one-off
+  structural move). Heavy scrollable content must stay out of per-frame layout
+  during that move — transcripts use `content-visibility: auto` per message so
+  only visible messages reflow. Progress fills scale with `transform: scaleX`,
+  not width.
 - Press feedback within 100 ms: buttons `scale(.98)`; rows tint with Accent Wash.
 - Streaming: blinking caret + status chip; no bouncing dots, no pulse rings taller than the control.
 - `prefers-reduced-motion: reduce` collapses all motion to ≤ 0.01 ms (existing rule — keep).

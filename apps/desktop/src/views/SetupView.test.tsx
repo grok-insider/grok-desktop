@@ -37,7 +37,7 @@ describe("SetupView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to readiness" }));
     expect(screen.getByRole("heading", { name: "Capability readiness" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Readiness/ })).toHaveAttribute("aria-current", "step");
-    expect(screen.getByRole("list")).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByRole("list")).toBeInTheDocument();
 
     fireEvent.click(grokStep);
     expect(screen.getByRole("heading", { name: "Connect Grok Build" })).toBeInTheDocument();

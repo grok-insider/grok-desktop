@@ -409,7 +409,15 @@ export function ConversationView() {
                     (item) => item.userMessageId === message.id || item.assistantMessageId === message.id,
                   );
                   return (
-                    <div className="[&+&]:pt-1" key={message.id}>
+                    /*
+                     * content-visibility keeps off-screen markdown out of
+                     * layout, so container-width changes (sidebar collapse,
+                     * window resize) only reflow the visible messages.
+                     */
+                    <div
+                      className="[content-visibility:auto] [contain-intrinsic-size:auto_160px] [&+&]:pt-1"
+                      key={message.id}
+                    >
                       <MessageBlock
                         message={message}
                         onArtifact={(artifact) => openInspector({ kind: "artifact", value: artifact })}
