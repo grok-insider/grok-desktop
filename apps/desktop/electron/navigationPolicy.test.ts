@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { contentSecurityPolicy } from "../vite.config.js";
 import { denyRendererPermission, isAllowedAppNavigation } from "./navigationPolicy.js";
+import { rendererContentSecurityPolicy } from "./rendererSecurityPolicy.js";
 
 describe("Electron renderer security policy", () => {
   it("allows only hash changes on the exact application document", () => {
@@ -25,5 +26,7 @@ describe("Electron renderer security policy", () => {
     expect(contentSecurityPolicy(false)).not.toContain("style-src 'self' 'unsafe-inline'");
     expect(contentSecurityPolicy(true)).toContain("ws://127.0.0.1:*");
     expect(contentSecurityPolicy(true)).toContain("style-src 'self' 'unsafe-inline'");
+    expect(rendererContentSecurityPolicy(false, "header")).toContain("frame-ancestors 'none'");
+    expect(rendererContentSecurityPolicy(false, "meta")).not.toContain("frame-ancestors");
   });
 });

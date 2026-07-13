@@ -2,11 +2,10 @@ import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { rendererContentSecurityPolicy } from "./electron/rendererSecurityPolicy.js";
 
 export function contentSecurityPolicy(development: boolean): string {
-  const developmentConnect = development ? " ws://127.0.0.1:*" : "";
-  const developmentStyle = development ? " 'unsafe-inline'" : "";
-  return `default-src 'self'; script-src 'self'; style-src 'self'${developmentStyle}; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'${developmentConnect}; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+  return rendererContentSecurityPolicy(development, "header");
 }
 
 export default defineConfig(({ command }) => ({
@@ -16,7 +15,10 @@ export default defineConfig(({ command }) => ({
       order: "pre",
       handler: () => [{
         tag: "meta",
-        attrs: { "http-equiv": "Content-Security-Policy", content: contentSecurityPolicy(command === "serve") },
+        attrs: {
+          "http-equiv": "Content-Security-Policy",
+          content: rendererContentSecurityPolicy(command === "serve", "meta"),
+        },
         injectTo: "head-prepend",
       }],
     },

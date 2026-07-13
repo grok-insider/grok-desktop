@@ -21,7 +21,7 @@ import {
   assertSemanticContrastProbe,
 } from "./electron-cdp-contrast-utils.mjs";
 
-const EXPECTED_PRODUCTION_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const EXPECTED_PRODUCTION_META_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
 const MAX_CDP_MESSAGE_BYTES = 4 * 1024 * 1024;
 
 async function main() {
@@ -98,7 +98,7 @@ async function probeProductionRenderer(webSocketDebuggerUrl, timeoutMs) {
     assertNoUnexpectedConsoleEntries(unexpectedConsoleEntries);
 
     const policy = await probeContentSecurityPolicy(session);
-    if (policy.contentSecurityPolicy !== EXPECTED_PRODUCTION_CSP) {
+    if (policy.contentSecurityPolicy !== EXPECTED_PRODUCTION_META_CSP) {
       throw new Error("renderer is not using the strict production Content Security Policy");
     }
     if (policy.inlineScriptExecuted) {

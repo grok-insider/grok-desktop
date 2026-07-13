@@ -30,6 +30,7 @@ import { denyRendererPermission, isAllowedAppNavigation } from "./navigationPoli
 import { focusPrimaryWindow } from "./instancePolicy.js";
 import { credentialEnrollmentParentWindowToken } from "./nativeWindowHandle.js";
 import { resolveProtocolAsset } from "./protocolAssets.js";
+import { rendererContentSecurityPolicy } from "./rendererSecurityPolicy.js";
 import { resolveDevelopmentServerUrl } from "./developmentServer.js";
 import { resolveTrayIconPath } from "./trayIcon.js";
 import { isTrustedTopLevelAppSender } from "./trustedSenderPolicy.js";
@@ -1037,7 +1038,14 @@ if (primaryInstance) app.whenReady().then(async () => {
       if (!asset) return new Response("Not found", { status: 404, headers: { "X-Content-Type-Options": "nosniff" } });
       return new Response(await readFile(asset.file), {
         status: 200,
-        headers: { "Content-Type": asset.contentType, "Cache-Control": asset.contentType.startsWith("text/html") ? "no-store" : "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" },
+        headers: {
+          "Content-Type": asset.contentType,
+          "Cache-Control": asset.contentType.startsWith("text/html") ? "no-store" : "public, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+          ...(asset.contentType.startsWith("text/html")
+            ? { "Content-Security-Policy": rendererContentSecurityPolicy(false, "header") }
+            : {}),
+        },
       });
     });
   }
