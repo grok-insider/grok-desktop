@@ -243,7 +243,7 @@ impl OfficialGrokCatalogVerifier {
         let selected = selected.ok_or(CatalogVerificationError::WrongPlatform)?;
         let executable =
             resolve_install_relative(&self.install_root, &selected.relative_executable)?;
-        let component = VerifiedGrokComponent::from_catalog(
+        let component = VerifiedGrokComponent::from_managed_manifest(
             executable,
             self.install_root.clone(),
             selected.relative_executable,
@@ -375,13 +375,13 @@ struct ValidatedRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct ComponentPlatform {
-    operating_system: OperatingSystem,
-    architecture: Architecture,
+pub(crate) struct ComponentPlatform {
+    pub(crate) operating_system: OperatingSystem,
+    pub(crate) architecture: Architecture,
 }
 
 impl ComponentPlatform {
-    fn current() -> Result<Self, CatalogVerificationError> {
+    pub(crate) fn current() -> Result<Self, CatalogVerificationError> {
         let operating_system = if cfg!(target_os = "windows") {
             OperatingSystem::Windows
         } else if cfg!(target_os = "linux") {
@@ -404,13 +404,13 @@ impl ComponentPlatform {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum OperatingSystem {
+pub(crate) enum OperatingSystem {
     Windows,
     Linux,
 }
 
 impl OperatingSystem {
-    fn parse(value: &str) -> Result<Self, CatalogVerificationError> {
+    pub(crate) fn parse(value: &str) -> Result<Self, CatalogVerificationError> {
         match value {
             "windows" => Ok(Self::Windows),
             "linux" => Ok(Self::Linux),
@@ -418,7 +418,7 @@ impl OperatingSystem {
         }
     }
 
-    const fn executable_name(self) -> &'static str {
+    pub(crate) const fn executable_name(self) -> &'static str {
         match self {
             Self::Windows => "grok.exe",
             Self::Linux => "grok",
@@ -427,13 +427,13 @@ impl OperatingSystem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Architecture {
+pub(crate) enum Architecture {
     X86_64,
     Aarch64,
 }
 
 impl Architecture {
-    fn parse(value: &str) -> Result<Self, CatalogVerificationError> {
+    pub(crate) fn parse(value: &str) -> Result<Self, CatalogVerificationError> {
         match value {
             "x86_64" => Ok(Self::X86_64),
             "aarch64" => Ok(Self::Aarch64),
@@ -487,7 +487,7 @@ fn validate_key_id(key_id: &str) -> Result<(), CatalogVerificationError> {
     Ok(())
 }
 
-fn validate_relative_path(
+pub(crate) fn validate_relative_path(
     relative: &str,
     executable_name: &str,
 ) -> Result<(), CatalogVerificationError> {
@@ -545,7 +545,7 @@ pub(crate) fn resolve_install_relative(
     Ok(candidate)
 }
 
-fn decode_catalog_digest(value: &str) -> Result<[u8; 32], CatalogVerificationError> {
+pub(crate) fn decode_catalog_digest(value: &str) -> Result<[u8; 32], CatalogVerificationError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -580,7 +580,10 @@ fn signature_message(key_id: &str, payload: &[u8]) -> Result<Vec<u8>, CatalogVer
     Ok(message)
 }
 
-fn ensure_strict_json(data: &[u8], maximum: usize) -> Result<(), CatalogVerificationError> {
+pub(crate) fn ensure_strict_json(
+    data: &[u8],
+    maximum: usize,
+) -> Result<(), CatalogVerificationError> {
     if data.is_empty() || data.len() > maximum {
         return Err(CatalogVerificationError::InvalidJson);
     }

@@ -1,0 +1,1 @@
+{"schema":"grok.official-component-pin/v1","name":"grok-build","publisher":"xAI","version":"0.2.99","os":"windows","architecture":"x86_64","executable":"bin/grok.exe","sourceUrl":"https://x.ai/cli/grok-0.2.99-windows-x86_64.exe","sha256":"092c0e045c5574098d1a057b2d175fce0425fa509d434c4ec9d6daccd6563194","size":137903432}

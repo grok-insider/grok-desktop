@@ -8,6 +8,7 @@ import {
   createSigningToolEnvironment,
   guestImageCatalogSigningBytes,
   inspectDaemonAcpCatalogTrust,
+  inspectDaemonAcpPinnedManifestBytes,
   inspectPortableExecutable,
   inspectServiceGuestCatalogTrust,
   normalizeMsixVersion,
@@ -25,6 +26,7 @@ import {
   validateReleaseInputs,
   validateSignerIdentity,
   verifyOfficialGrokCatalog,
+  verifyOfficialGrokPinnedManifestBytes,
   verifyPackagedNativeLayout,
   windowsServiceBuildMetadata,
 } from "./release-utils.mjs";
@@ -60,6 +62,26 @@ test("normalizes versions and parses explicit release targets", () => {
     architecture: "arm64", channel: "stable", stage: undefined, out: undefined,
   });
   assert.throws(() => parseReleaseArguments(["--arch", "ia32", "--channel", "stable"]), /x64 or arm64/);
+});
+
+test("verifies canonical source-pinned official Grok manifests", () => {
+  const value = {
+    schema: "grok.official-component-pin/v1", name: "grok-build", publisher: "xAI",
+    version: "0.2.99", os: "linux", architecture: "x86_64", executable: "bin/grok",
+    sourceUrl: "https://x.ai/cli/grok-0.2.99-linux-x86_64",
+    sha256: "a".repeat(64), size: 123,
+  };
+  const bytes = Buffer.from(`${JSON.stringify(value)}\n`);
+  const manifest = verifyOfficialGrokPinnedManifestBytes(bytes, "x64", "linux");
+  assert.match(manifest.binding, /^grok-acp-pinned-manifest-v1:[a-f0-9]{64}$/);
+  assert.equal(inspectDaemonAcpPinnedManifestBytes(Buffer.from(manifest.binding), manifest), manifest.binding);
+  assert.throws(() => verifyOfficialGrokPinnedManifestBytes(
+    Buffer.from(`${JSON.stringify({ ...value, sourceUrl: "https://example.com/grok" })}\n`),
+    "x64", "linux",
+  ), /source URL/);
+  assert.throws(() => verifyOfficialGrokPinnedManifestBytes(
+    Buffer.from(` ${JSON.stringify(value)}\n`), "x64", "linux",
+  ), /canonical/);
 });
 
 test("renders stable App Installer metadata with fixed identity and update origin", () => {

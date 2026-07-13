@@ -34,7 +34,26 @@ jobs:
         shell: bash
         run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
       - run: pnpm build
-      - run: nix develop --command cargo build -p grok-daemon --release
+      - name: Build native runtime with tracked official Grok pin
+        shell: bash
+        run: |
+          manifest="apps/desktop/release/components/grok-build/linux-x64.json"
+          binding="grok-acp-pinned-manifest-v1:$(sha256sum "$manifest" | cut -d' ' -f1)"
+          GROK_ACP_PINNED_MANIFEST_BINDING="$binding" \
+            nix develop --command cargo build --locked --release \
+              -p grok-daemon -p grok-host-tools-mcp
+      - name: Acquire exact official Grok Build component
+        shell: bash
+        run: |
+          manifest="apps/desktop/release/components/grok-build/linux-x64.json"
+          source_url="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).sourceUrl' "$manifest")"
+          expected_sha="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).sha256' "$manifest")"
+          expected_size="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).size' "$manifest")"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/grok" "$source_url"
+          test "$(stat --format=%s "$RUNNER_TEMP/grok")" = "$expected_size"
+          echo "$expected_sha  $RUNNER_TEMP/grok" | sha256sum --check --strict
+          chmod 700 "$RUNNER_TEMP/grok"
       - name: Acquire pinned AppImage tools
         shell: bash
         run: |
@@ -53,6 +72,8 @@ jobs:
       - name: Package updateable AppImage
         run: |
           pnpm package:linux -- --arch x64 \
+            --acp-pinned-manifest apps/desktop/release/components/grok-build/linux-x64.json \
+            --acp-component "$RUNNER_TEMP/grok" \
             --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \
             --appimagetool-sha256 "$APPIMAGETOOL_SHA256" \
             --appimageupdatetool "$RUNNER_TEMP/appimageupdatetool.AppImage" \
@@ -67,6 +88,7 @@ jobs:
             out/release/linux/x64/GrokDesktop-stable-x64.AppImage
             out/release/linux/x64/GrokDesktop-stable-x64.AppImage.zsync
             out/release/linux/x64/linux-package.json
+            apps/desktop/release/components/grok-build/linux-x64.json
 
   windows:
     name: Build Windows ${{ matrix.architecture }}

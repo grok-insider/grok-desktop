@@ -15,8 +15,10 @@ import { spawn } from "node:child_process";
 import { packager } from "@electron/packager";
 import {
   inspectDaemonAcpCatalogTrustBytes,
+  inspectDaemonAcpPinnedManifestBytes,
   parseAcpCatalogTrustedKeys,
   verifyOfficialGrokCatalogBytes,
+  verifyOfficialGrokPinnedManifestBytes,
 } from "./release-utils.mjs";
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -44,7 +46,7 @@ export function parseLinuxPackageArguments(argv) {
     if (!option?.startsWith("--") || value === undefined) {
       throw new Error("linux package arguments must be option/value pairs");
     }
-    if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component", "--appimagetool", "--appimagetool-sha256",
+    if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-pinned-manifest", "--acp-component", "--appimagetool", "--appimagetool-sha256",
       "--appimageupdatetool", "--appimageupdatetool-sha256",
       "--update-trust-file", "--host-tools-helper",
       "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
@@ -58,8 +60,15 @@ export function parseLinuxPackageArguments(argv) {
     throw new Error("--arch must be x64 or arm64");
   }
   const acpValues = [values["--acp-catalog"], values["--acp-component"], values["--acp-trust-file"]];
-  if (acpValues.some(Boolean) && !acpValues.every(Boolean)) {
+  if ((values["--acp-catalog"] || values["--acp-trust-file"]) && !acpValues.every(Boolean)) {
     throw new Error("signed ACP staging requires catalog, component, and trust file together");
+  }
+  const pinnedAcpValues = [values["--acp-pinned-manifest"], values["--acp-component"]];
+  if (pinnedAcpValues.some(Boolean) && !pinnedAcpValues.every(Boolean)) {
+    throw new Error("source-pinned ACP staging requires manifest and component together");
+  }
+  if (values["--acp-catalog"] && values["--acp-pinned-manifest"]) {
+    throw new Error("signed and source-pinned ACP staging are mutually exclusive");
   }
   const vmService = values["--vm-service"] ? path.resolve(values["--vm-service"]) : undefined;
   const appimagetool = values["--appimagetool"] ? path.resolve(values["--appimagetool"]) : undefined;
@@ -98,6 +107,9 @@ export function parseLinuxPackageArguments(argv) {
       ? path.resolve(values["--host-tools-helper"])
       : undefined,
     acpCatalog: values["--acp-catalog"] ? path.resolve(values["--acp-catalog"]) : undefined,
+    acpPinnedManifest: values["--acp-pinned-manifest"]
+      ? path.resolve(values["--acp-pinned-manifest"])
+      : undefined,
     acpComponent: values["--acp-component"] ? path.resolve(values["--acp-component"]) : undefined,
     acpTrustFile: values["--acp-trust-file"] ? path.resolve(values["--acp-trust-file"]) : undefined,
     vmService,
@@ -494,6 +506,9 @@ export async function prepareLinuxPackagingSource(sourceRoot, packageMetadata) {
 }
 
 export async function stageVerifiedLinuxAcp(resourcesBin, options, daemonSource, nowUnixSeconds) {
+  if (options.acpPinnedManifest) {
+    return stagePinnedLinuxAcp(resourcesBin, options, daemonSource);
+  }
   if (!options.acpCatalog) return undefined;
   const sources = await openRetainedSources([
     [options.acpTrustFile, "ACP trust file", 4096],
@@ -541,6 +556,52 @@ export async function stageVerifiedLinuxAcp(resourcesBin, options, daemonSource,
       version: catalog.component.version,
       sha256: sourceDigest,
       trustBinding: trust.binding,
+    };
+  } finally {
+    await Promise.all(sources.map((source) => source.handle.close()));
+  }
+}
+
+async function stagePinnedLinuxAcp(resourcesBin, options, daemonSource) {
+  const sources = await openRetainedSources([
+    [options.acpPinnedManifest, "ACP pinned manifest", 8 * 1024],
+    [options.acpComponent, "ACP component", 1024 * 1024 * 1024, true],
+    [daemonSource, "daemon", 128 * 1024 * 1024, true],
+  ]);
+  const [manifestSource, componentSource, daemonSourceHandle] = sources;
+  try {
+    const manifestBytes = await readRetainedSource(manifestSource);
+    const manifest = verifyOfficialGrokPinnedManifestBytes(
+      manifestBytes, options.architecture, "linux",
+    );
+    inspectDaemonAcpPinnedManifestBytes(await readRetainedSource(daemonSourceHandle), manifest);
+    const componentHeader = Buffer.alloc(20);
+    if ((await componentSource.handle.read(componentHeader, 0, 20, 0)).bytesRead !== 20) {
+      throw new Error("ACP component ELF header is truncated");
+    }
+    inspectElfHeader(componentHeader, options.architecture);
+    if (componentSource.identity.size !== BigInt(manifest.size) ||
+        await hashRetainedSource(componentSource) !== manifest.sha256) {
+      throw new Error("pinned ACP manifest does not match the selected Linux component");
+    }
+    const componentRoot = path.join(resourcesBin, "components", "grok-acp");
+    const stagedManifest = path.join(componentRoot, "pinned-component.json");
+    const stagedComponent = path.join(componentRoot, "bin", "grok");
+    await mkdir(path.dirname(stagedComponent), { recursive: true, mode: 0o755 });
+    const manifestDigest = createHash("sha256").update(manifestBytes).digest("hex");
+    await copyRetainedSource(manifestSource, stagedManifest, 0o644, manifestDigest);
+    const componentDigest = await copyRetainedSource(
+      componentSource, stagedComponent, 0o755, manifest.sha256,
+    );
+    await inspectElfExecutable(stagedComponent, options.architecture);
+    verifyOfficialGrokPinnedManifestBytes(await readFile(stagedManifest), options.architecture, "linux");
+    return {
+      manifest: stagedManifest,
+      component: stagedComponent,
+      version: manifest.version,
+      sha256: componentDigest,
+      trustBinding: manifest.binding,
+      sourceUrl: manifest.sourceUrl,
     };
   } finally {
     await Promise.all(sources.map((source) => source.handle.close()));
@@ -682,6 +743,7 @@ async function main() {
         version: stagedAcp.version,
         sha256: stagedAcp.sha256,
         trustBinding: stagedAcp.trustBinding,
+        ...(stagedAcp.sourceUrl ? { sourceUrl: stagedAcp.sourceUrl } : {}),
       } : { staged: false },
       vmService: stagedVmService ? {
         staged: true,

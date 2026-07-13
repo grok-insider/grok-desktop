@@ -22,6 +22,8 @@ const integrationCapabilityPattern = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+$/;
 const integrationBundlePathPattern = /^[A-Za-z0-9._/-]+$/;
 const guestCatalogTrustBindingPrefix = "grok-guest-catalog-trust-v1:";
 const acpCatalogTrustBindingPrefix = "grok-acp-catalog-trust-v1:";
+const acpPinnedManifestBindingPrefix = "grok-acp-pinned-manifest-v1:";
+const acpPinnedManifestSchema = "grok.official-component-pin/v1";
 const acpCatalogEnvelopeSchema = "grok.official-component-catalog-envelope/v1";
 const acpCatalogPayloadSchema = "grok.official-component-catalog/v1";
 const acpCatalogSignatureDomain = Buffer.from("grok.desktop.official-component-catalog.v1\0", "utf8");
@@ -31,6 +33,7 @@ const acpComponentRelativePath = "bin/grok.exe";
 const maxAcpCatalogEnvelopeSize = 512 * 1024;
 const maxAcpCatalogPayloadSize = 256 * 1024;
 const maxAcpComponentSize = 1024 * 1024 * 1024;
+const maxAcpPinnedManifestSize = 8 * 1024;
 const maxGuestImageSize = 128 * 1024 * 1024 * 1024;
 const windowsReservedNames = new Set([
   "CON", "PRN", "AUX", "NUL",
@@ -219,6 +222,59 @@ export function parseAcpCatalogTrustedKeys(raw) {
   }
   const binding = acpCatalogTrustBindingPrefix + createHash("sha256").update(raw, "utf8").digest("hex");
   return { raw, keys, binding };
+}
+
+export function verifyOfficialGrokPinnedManifestBytes(contents, architecture, operatingSystem) {
+  if (!Buffer.isBuffer(contents) || contents.length < 1 || contents.length > maxAcpPinnedManifestSize) {
+    throw new Error("official Grok pinned manifest is not bounded");
+  }
+  let manifest;
+  try { manifest = JSON.parse(contents.toString("utf8")); } catch {
+    throw new Error("official Grok pinned manifest is invalid JSON");
+  }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest) ||
+      `${JSON.stringify(manifest)}\n` !== contents.toString("utf8")) {
+    throw new Error("official Grok pinned manifest must use canonical tracked JSON");
+  }
+  const expectedKeys = [
+    "schema", "name", "publisher", "version", "os", "architecture",
+    "executable", "sourceUrl", "sha256", "size",
+  ];
+  if (Object.keys(manifest).join("\0") !== expectedKeys.join("\0") ||
+      manifest.schema !== acpPinnedManifestSchema || manifest.name !== "grok-build" ||
+      manifest.publisher !== "xAI" ||
+      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version) ||
+      !sha256Pattern.test(manifest.sha256) || !Number.isSafeInteger(manifest.size) ||
+      manifest.size < 1 || manifest.size > maxAcpComponentSize) {
+    throw new Error("official Grok pinned manifest fields are invalid");
+  }
+  const target = {
+    "linux:x64": { os: "linux", architecture: "x86_64", executable: "bin/grok", suffix: "linux-x86_64" },
+    "windows:x64": { os: "windows", architecture: "x86_64", executable: "bin/grok.exe", suffix: "windows-x86_64.exe" },
+  }[`${operatingSystem}:${architecture}`];
+  if (!target || manifest.os !== target.os || manifest.architecture !== target.architecture ||
+      manifest.executable !== target.executable) {
+    throw new Error("official Grok pinned manifest target does not match the package");
+  }
+  let source;
+  try { source = new URL(manifest.sourceUrl); } catch {
+    throw new Error("official Grok pinned manifest source URL is invalid");
+  }
+  if (source.protocol !== "https:" || source.hostname !== "x.ai" || source.port ||
+      source.username || source.password || source.search || source.hash ||
+      source.pathname !== `/cli/grok-${manifest.version}-${target.suffix}`) {
+    throw new Error("official Grok pinned manifest source URL is invalid");
+  }
+  const binding = acpPinnedManifestBindingPrefix + createHash("sha256").update(contents).digest("hex");
+  return { ...manifest, binding };
+}
+
+export function inspectDaemonAcpPinnedManifestBytes(contents, manifest) {
+  if (!Buffer.isBuffer(contents) || !manifest ||
+      !contents.includes(Buffer.from(manifest.binding, "utf8"))) {
+    throw new Error("daemon was not built with the staged pinned ACP manifest binding");
+  }
+  return manifest.binding;
 }
 
 export function serviceGuestCatalogTrust(trustedKeys) {

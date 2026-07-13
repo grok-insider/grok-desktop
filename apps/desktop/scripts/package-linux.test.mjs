@@ -27,6 +27,11 @@ test("parseLinuxPackageArguments defaults arch from host and rejects bad options
   assert.throws(() => parseLinuxPackageArguments(["--nope", "1"]), /unsupported/);
   assert.throws(() => parseLinuxPackageArguments(["--vm-service", "/bin/true"]), /daemon-uid/);
   assert.throws(() => parseLinuxPackageArguments(["--acp-catalog", "/tmp/catalog"]), /requires/);
+  assert.throws(() => parseLinuxPackageArguments(["--acp-pinned-manifest", "/tmp/pin"]), /requires/);
+  assert.throws(() => parseLinuxPackageArguments([
+    "--acp-catalog", "/tmp/catalog", "--acp-trust-file", "/tmp/trust",
+    "--acp-pinned-manifest", "/tmp/pin", "--acp-component", "/tmp/grok",
+  ]), /mutually exclusive/);
   assert.throws(() => parseLinuxPackageArguments(["--appimagetool", "/tmp/tool"]), /sha256/);
   assert.throws(() => parseLinuxPackageArguments(["--appimageupdatetool", "/tmp/update-tool"]), /sha256/);
   assert.equal(parseLinuxPackageArguments([
@@ -141,6 +146,39 @@ test("stages only a signed Linux ACP component and preserves vendor bytes", asyn
     await assert.rejects(() => stageVerifiedLinuxAcp(path.join(root, "second"), {
       architecture, acpCatalog: catalog, acpComponent: component, acpTrustFile: trustFile,
     }, daemon, 1_900_000_000), /changed during staging|does not match/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stages an exact source-pinned Linux ACP component", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-linux-pinned-acp-"));
+  try {
+    const architecture = process.arch === "arm64" ? "arm64" : "x64";
+    if (architecture !== "x64") return;
+    const component = path.join(root, "grok");
+    const componentBytes = elfFixture(architecture);
+    await writeFile(component, componentBytes, { mode: 0o755 });
+    const manifestValue = {
+      schema: "grok.official-component-pin/v1", name: "grok-build", publisher: "xAI",
+      version: "0.2.99", os: "linux", architecture: "x86_64", executable: "bin/grok",
+      sourceUrl: "https://x.ai/cli/grok-0.2.99-linux-x86_64",
+      sha256: createHash("sha256").update(componentBytes).digest("hex"), size: componentBytes.length,
+    };
+    const manifestBytes = Buffer.from(`${JSON.stringify(manifestValue)}\n`);
+    const manifest = path.join(root, "linux-x64.json");
+    await writeFile(manifest, manifestBytes);
+    const binding = `grok-acp-pinned-manifest-v1:${createHash("sha256").update(manifestBytes).digest("hex")}`;
+    const daemon = path.join(root, "grok-daemon");
+    await writeFile(daemon, binding, { mode: 0o755 });
+    const resources = path.join(root, "resources-bin");
+    await mkdir(resources);
+    const staged = await stageVerifiedLinuxAcp(resources, {
+      architecture, acpPinnedManifest: manifest, acpComponent: component,
+    }, daemon, 1_900_000_000);
+    assert.deepEqual(await readFile(staged.component), componentBytes);
+    assert.deepEqual(await readFile(staged.manifest), manifestBytes);
+    assert.equal(staged.trustBinding, binding);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

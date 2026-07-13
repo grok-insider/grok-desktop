@@ -34,11 +34,11 @@ pub struct VerifiedGrokComponent {
     digest: [u8; 32],
     size: u64,
     identity: Arc<Handle>,
-    catalog_location: Option<CatalogLocation>,
+    managed_location: Option<ManagedLocation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CatalogLocation {
+struct ManagedLocation {
     install_root: PathBuf,
     relative_executable: String,
 }
@@ -77,11 +77,11 @@ impl VerifiedGrokComponent {
             digest: expected,
             size,
             identity,
-            catalog_location: None,
+            managed_location: None,
         })
     }
 
-    pub(crate) fn from_catalog(
+    pub(crate) fn from_managed_manifest(
         executable: PathBuf,
         install_root: PathBuf,
         relative_executable: String,
@@ -96,7 +96,7 @@ impl VerifiedGrokComponent {
             digest,
             size: actual_size,
             identity,
-            catalog_location: Some(CatalogLocation {
+            managed_location: Some(ManagedLocation {
                 install_root,
                 relative_executable,
             }),
@@ -122,7 +122,7 @@ impl VerifiedGrokComponent {
     /// Returns [`ComponentVerificationError`] if the component changed after
     /// initial verification.
     pub fn reverify(&self) -> Result<(), ComponentVerificationError> {
-        if let Some(location) = &self.catalog_location {
+        if let Some(location) = &self.managed_location {
             let resolved = crate::catalog::resolve_install_relative(
                 &location.install_root,
                 &location.relative_executable,

@@ -20,8 +20,9 @@ use std::{
 #[cfg(all(debug_assertions, feature = "debug-acp-descriptor"))]
 use grok_acp::ExternalGrokComponent;
 use grok_acp::{
-    GrokHomeSpec, MAX_SIGNED_CATALOG_ENVELOPE_BYTES, OfficialGrokCatalogVerifier,
-    TrustedCatalogKey, VerifiedGrokComponent,
+    GrokHomeSpec, MAX_PINNED_COMPONENT_MANIFEST_BYTES, MAX_SIGNED_CATALOG_ENVELOPE_BYTES,
+    OfficialGrokCatalogVerifier, OfficialGrokPinnedComponentVerifier, TrustedCatalogKey,
+    VerifiedGrokComponent,
 };
 use grok_application::{
     AgentRuntimeErrorKind, ApplicationError, ApprovalService, ArtifactContentRetention,
@@ -69,6 +70,8 @@ type DynError = Box<dyn Error + Send + Sync>;
 
 const ACP_BUILD_KEYS: Option<&str> = option_env!("GROK_ACP_CATALOG_TRUSTED_KEYS");
 const ACP_BUILD_TRUST_BINDING: Option<&str> = option_env!("GROK_ACP_CATALOG_TRUST_BINDING");
+const ACP_BUILD_PINNED_MANIFEST_BINDING: Option<&str> =
+    option_env!("GROK_ACP_PINNED_MANIFEST_BINDING");
 const ACP_BUILD_TRUST_BINDING_PREFIX: &str = "grok-acp-catalog-trust-v1:";
 const WISP_BUILD_KEYS: Option<&str> = option_env!("GROK_WISP_CATALOG_TRUSTED_KEYS");
 const WISP_BUILD_TRUST_BINDING: Option<&str> = option_env!("GROK_WISP_CATALOG_TRUST_BINDING");
@@ -76,6 +79,7 @@ const WISP_BUILD_TRUST_BINDING_PREFIX: &str = "grok-wisp-catalog-trust-v1:";
 const ACP_COMPONENT_DIRECTORY: &str = "components";
 const ACP_COMPONENT_NAME: &str = "grok-acp";
 const ACP_CATALOG_FILE: &str = "catalog.json";
+const ACP_PINNED_MANIFEST_FILE: &str = "pinned-component.json";
 const ACP_CATALOG_WATERMARK_NAME: &str = "grok-acp.catalog-sequence.v1";
 const ACP_CATALOG_WATERMARK_MAGIC: &[u8; 8] = b"GRKACP01";
 const MAX_HOST_WORK_RECOVERY_BATCH: usize = 100;
@@ -1134,20 +1138,23 @@ async fn configured_agent_runtime(vault: Arc<dyn SecretVault>) -> AgentRuntimeCo
         }
     }
 
-    let keys = match configured_catalog_keys() {
-        Ok(Some(keys)) => keys,
-        Ok(None) => return AgentRuntimeConfiguration::NotConfigured,
-        Err(()) => return invalid_agent_runtime_configuration(),
-    };
     let Ok(grok_home) = default_grok_home_spec() else {
         return invalid_agent_runtime_configuration();
     };
-    let Ok((component_root, catalog_path)) = product_component_layout() else {
+    let Ok((component_root, manifest_path)) = product_component_layout() else {
         return unavailable_component_runtime();
     };
-    let Ok(component) =
-        load_managed_component(&component_root, &catalog_path, keys, vault.as_ref())
-    else {
+    let component = match configured_component_trust() {
+        Ok(ComponentTrust::SignedCatalog(keys)) => {
+            load_managed_component(&component_root, &manifest_path, keys, vault.as_ref())
+        }
+        Ok(ComponentTrust::PinnedManifest(binding)) => {
+            load_pinned_component(&component_root, &manifest_path, binding)
+        }
+        Ok(ComponentTrust::NotConfigured) => return AgentRuntimeConfiguration::NotConfigured,
+        Err(()) => return invalid_agent_runtime_configuration(),
+    };
+    let Ok(component) = component else {
         return unavailable_component_runtime();
     };
     start_agent_runtime(component, grok_home, None).await
@@ -1229,6 +1236,23 @@ fn configured_catalog_keys() -> Result<Option<Vec<TrustedCatalogKey>>, ()> {
     )
 }
 
+enum ComponentTrust {
+    SignedCatalog(Vec<TrustedCatalogKey>),
+    PinnedManifest(&'static str),
+    NotConfigured,
+}
+
+fn configured_component_trust() -> Result<ComponentTrust, ()> {
+    if let Some(binding) = ACP_BUILD_PINNED_MANIFEST_BINDING {
+        if ACP_BUILD_KEYS.is_some() || ACP_BUILD_TRUST_BINDING.is_some() {
+            return Err(());
+        }
+        return Ok(ComponentTrust::PinnedManifest(binding));
+    }
+    configured_catalog_keys()
+        .map(|keys| keys.map_or(ComponentTrust::NotConfigured, ComponentTrust::SignedCatalog))
+}
+
 fn catalog_keys_configuration(
     configured: Option<&str>,
     binding: Option<&str>,
@@ -1300,8 +1324,24 @@ fn product_component_layout_from_executable(
     let root = parent
         .join(ACP_COMPONENT_DIRECTORY)
         .join(ACP_COMPONENT_NAME);
-    let catalog = root.join(ACP_CATALOG_FILE);
-    Ok((root, catalog))
+    let manifest_name = if ACP_BUILD_PINNED_MANIFEST_BINDING.is_some() {
+        ACP_PINNED_MANIFEST_FILE
+    } else {
+        ACP_CATALOG_FILE
+    };
+    Ok((root.clone(), root.join(manifest_name)))
+}
+
+fn load_pinned_component(
+    component_root: &Path,
+    manifest_path: &Path,
+    binding: &str,
+) -> Result<VerifiedGrokComponent, ManagedComponentError> {
+    let manifest = read_bounded_file(manifest_path, MAX_PINNED_COMPONENT_MANIFEST_BYTES)?;
+    OfficialGrokPinnedComponentVerifier::new(component_root, binding)
+        .map_err(|_| ManagedComponentError::Verification)?
+        .verify(&manifest)
+        .map_err(|_| ManagedComponentError::Verification)
 }
 
 fn load_managed_component(
@@ -1322,13 +1362,16 @@ fn load_managed_component(
 }
 
 fn read_bounded_catalog(path: &Path) -> Result<Vec<u8>, ManagedComponentError> {
+    read_bounded_file(path, MAX_SIGNED_CATALOG_ENVELOPE_BYTES)
+}
+
+fn read_bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, ManagedComponentError> {
     let metadata = std::fs::symlink_metadata(path).map_err(ManagedComponentError::Io)?;
-    let maximum = u64::try_from(MAX_SIGNED_CATALOG_ENVELOPE_BYTES)
-        .map_err(|_| ManagedComponentError::Verification)?;
+    let maximum_u64 = u64::try_from(maximum).map_err(|_| ManagedComponentError::Verification)?;
     if !metadata.is_file()
         || metadata.file_type().is_symlink()
         || metadata.len() == 0
-        || metadata.len() > maximum
+        || metadata.len() > maximum_u64
     {
         return Err(ManagedComponentError::Verification);
     }
@@ -1336,10 +1379,10 @@ fn read_bounded_catalog(path: &Path) -> Result<Vec<u8>, ManagedComponentError> {
     let expected_len =
         usize::try_from(metadata.len()).map_err(|_| ManagedComponentError::Verification)?;
     let mut bytes = Vec::with_capacity(expected_len);
-    file.take(maximum.saturating_add(1))
+    file.take(maximum_u64.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(ManagedComponentError::Io)?;
-    if bytes.len() != expected_len || bytes.len() > MAX_SIGNED_CATALOG_ENVELOPE_BYTES {
+    if bytes.len() != expected_len || bytes.len() > maximum {
         return Err(ManagedComponentError::Verification);
     }
     Ok(bytes)

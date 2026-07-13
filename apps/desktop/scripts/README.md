@@ -100,11 +100,14 @@ product-only inputs are all-or-nothing:
 
 - `--acp-catalog`, `--acp-component`, and `--acp-trust-file` stage the official
   signed Linux Grok Build component without changing its bytes.
+- `--acp-pinned-manifest` and `--acp-component` stage the exact tracked xAI
+  artifact for a daemon compiled with that manifest's domain-separated digest.
+  This beta route and the signed-catalog route are mutually exclusive.
 - `--vm-service`, `--daemon-uid`, and optional `--service-group` emit the
   root-installed broker binary, systemd unit, and explicit peer-policy file.
-- The supplied daemon must contain the exact ACP public-trust binding and
-  linux-vm-service digest binding. Runtime environment values cannot replace
-  those build bindings.
+- The supplied daemon must contain the exact selected ACP catalog-trust or
+  pinned-manifest binding and linux-vm-service digest binding. Runtime
+  environment values cannot replace those build bindings.
 
 All native inputs are retained through no-follow file handles while identity,
 size, architecture, and digest are checked and streamed into exclusive staging

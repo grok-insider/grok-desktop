@@ -1,0 +1,1 @@
+{"schema":"grok.official-component-pin/v1","name":"grok-build","publisher":"xAI","version":"0.2.99","os":"linux","architecture":"x86_64","executable":"bin/grok","sourceUrl":"https://x.ai/cli/grok-0.2.99-linux-x86_64","sha256":"9fccba400d3808ec34a991892096b34c6f5846b2b118d355001601fd5428445c","size":162066376}
