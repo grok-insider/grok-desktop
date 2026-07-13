@@ -472,7 +472,6 @@ fn atomic_create_file(path: &Path, expected: &[u8]) -> Result<(), GrokHomeError>
             }
         })?;
         sync_directory(parent)?;
-        let file = secure_open(path, true, false, false).map_err(GrokHomeError::Io)?;
         verify_path_is_not_link(path)?;
         verify_regular_file(&file, Some(expected.len() as u64))
     })();

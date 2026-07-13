@@ -131,6 +131,8 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test audited Windows ACL boundary
+        run: cargo test -p grok-windows-acl
       - run: cargo test --workspace
       - name: Cross-check audited Windows boundaries on ARM64
         shell: pwsh

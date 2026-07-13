@@ -273,21 +273,32 @@ pub fn publish_private_file(file: &File, destination: &Path) -> io::Result<()> {
             "publication path is not absolute",
         ));
     }
-    let mut destination = wide_path(destination)?;
-    destination.pop();
+    let destination = wide_path(destination)?;
     let name_bytes = destination
         .len()
+        .checked_sub(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "publication path is empty"))?
         .checked_mul(size_of::<u16>())
         .and_then(|value| u32::try_from(value).ok())
         .ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "publication path is oversized")
         })?;
+    let terminated_name_bytes =
+        destination
+            .len()
+            .checked_mul(size_of::<u16>())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "publication path is oversized")
+            })?;
     let header_bytes = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
     let buffer_bytes = header_bytes
-        .checked_add(name_bytes as usize)
+        .checked_add(terminated_name_bytes)
         .ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "publication path is oversized")
         })?;
+    let buffer_size = u32::try_from(buffer_bytes).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "publication path is oversized")
+    })?;
     let mut buffer = vec![0_usize; buffer_bytes.div_ceil(size_of::<usize>())];
     let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
     unsafe {
@@ -305,7 +316,7 @@ pub fn publish_private_file(file: &File, destination: &Path) -> io::Result<()> {
             raw_handle(file),
             FileRenameInfo,
             information.cast(),
-            u32::try_from(buffer_bytes).unwrap_or(u32::MAX),
+            buffer_size,
         )
     } == 0
     {
