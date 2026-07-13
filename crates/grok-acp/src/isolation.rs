@@ -80,7 +80,6 @@ const FORBIDDEN_HOME_ENTRIES: &[&str] = &[
     "sandbox.toml",
     "mcp_credentials.json",
     "hooks-paths",
-    "skills",
     "plugins",
     "hooks",
     ".claude",
@@ -162,6 +161,7 @@ impl GrokHomeSpec {
             .map_err(|_| GrokHomeError::RuntimeBusy)?;
 
         reject_entries(&home, FORBIDDEN_HOME_ENTRIES)?;
+        verify_optional_runtime_directory(&home.join("skills"))?;
         let launch_directory = home.join("launch");
         ensure_private_directory(&launch_directory)?;
         reject_entries(&launch_directory, FORBIDDEN_LAUNCH_ENTRIES)?;
@@ -189,6 +189,7 @@ impl GrokHomeSpec {
             REQUIREMENTS_TOML.as_bytes(),
         )?;
         reject_entries(&home, FORBIDDEN_HOME_ENTRIES)?;
+        verify_optional_runtime_directory(&home.join("skills"))?;
 
         Ok(ProvisionedGrokHome {
             home,
@@ -357,6 +358,20 @@ fn reject_entries(parent: &Path, names: &[&str]) -> Result<(), GrokHomeError> {
         }
     }
     Ok(())
+}
+
+/// The official Grok component extracts its bundled skills below `GROK_HOME`
+/// during initialization. Treat that directory as runtime-owned state rather
+/// than caller configuration, but accept it only as a private, normal
+/// directory. The daemon-private home remains outside Host Tools authority,
+/// while the managed configuration disables project/vendor compatibility
+/// surfaces and additional caller-supplied skill paths.
+fn verify_optional_runtime_directory(path: &Path) -> Result<(), GrokHomeError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => ensure_existing_private_directory(path, &metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(GrokHomeError::Io(error)),
+    }
 }
 
 fn open_runtime_lock(path: &Path) -> Result<File, GrokHomeError> {
@@ -688,6 +703,51 @@ mod tests {
         assert!(matches!(
             specification.provision(),
             Err(GrokHomeError::UnexpectedConfiguration | GrokHomeError::UnsafeFilesystemObject)
+        ));
+    }
+
+    #[test]
+    fn accepts_private_runtime_owned_skills_across_restart_but_keeps_plugins_forbidden() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let specification = GrokHomeSpec::new(directory.path().join("app-data"), "runtime-state")
+            .expect("specification");
+        let provisioned = specification.provision().expect("first provision");
+        let home = provisioned.home().to_path_buf();
+        drop(provisioned);
+
+        fs::create_dir(home.join("skills")).expect("official runtime skills");
+        fs::write(
+            home.join("skills").join("bundled.md"),
+            b"official runtime asset",
+        )
+        .expect("official runtime skill asset");
+        specification
+            .provision()
+            .expect("runtime-owned skills survive restart");
+
+        fs::create_dir(home.join("plugins")).expect("unmanaged plugins");
+        assert!(matches!(
+            specification.provision(),
+            Err(GrokHomeError::UnexpectedConfiguration)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_link_substituted_for_runtime_owned_skills() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let specification = GrokHomeSpec::new(directory.path().join("app-data"), "linked-skills")
+            .expect("specification");
+        let provisioned = specification.provision().expect("first provision");
+        let home = provisioned.home().to_path_buf();
+        drop(provisioned);
+
+        symlink(directory.path(), home.join("skills")).expect("skills link");
+        assert!(matches!(
+            specification.provision(),
+            Err(GrokHomeError::UnsafeFilesystemObject)
         ));
     }
 

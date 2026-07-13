@@ -1311,7 +1311,7 @@ fn component_error(error: impl std::fmt::Display) -> AgentRuntimeError {
 
 fn isolation_error(_error: impl std::fmt::Display) -> AgentRuntimeError {
     AgentRuntimeError {
-        kind: AgentRuntimeErrorKind::ComponentVerification,
+        kind: AgentRuntimeErrorKind::Unavailable,
         message: "official Grok configuration isolation failed".into(),
         retryable: false,
     }
