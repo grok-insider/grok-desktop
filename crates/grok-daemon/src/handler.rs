@@ -18,7 +18,7 @@ use grok_application::{
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
     DesktopPreferencesService, EditAndBranchConversationTurn, GetUsageSummary,
     GrokBuildAuthService, GrokBuildAuthStatus, HostExecutionPolicyStore, IsolationRuntime,
-    MAX_ARTIFACT_RECOVERY_BATCH, OAuthCancellation, RegenerateConversationTurn,
+    MAX_ARTIFACT_RECOVERY_BATCH, MutationCommand, OAuthCancellation, RegenerateConversationTurn,
     RetryConversationTurn, RunService, SelectChatModel, StartConversationTurn,
     StartedConversationFork, StartedConversationTurn, SuperGrokEnrollmentService,
     SuperGrokEnrollmentStatus, UpdateAutomation, UpdateDesktopPreferences, UpdateProject,
@@ -44,6 +44,7 @@ use grok_protocol::{
     workspace_search_hit_to_wire,
 };
 use prost::Message as _;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedSemaphorePermit, Semaphore, oneshot};
 
@@ -374,6 +375,35 @@ pub enum HandlerError {
 
 fn mutation_key(value: Option<&str>) -> Result<&str, ApplicationError> {
     value.ok_or_else(|| ApplicationError::InvalidInput("idempotency key is required".into()))
+}
+
+fn host_policy_command(
+    scope: &str,
+    key: &str,
+    parts: &[String],
+) -> Result<MutationCommand, ApplicationError> {
+    if scope.is_empty()
+        || scope.len() > 64
+        || key.is_empty()
+        || key.len() > 128
+        || key.chars().any(char::is_control)
+    {
+        return Err(ApplicationError::InvalidInput(
+            "Host Tools mutation identity is invalid".into(),
+        ));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"grok-host-policy-command-v1\0");
+    hasher.update(scope.as_bytes());
+    for part in parts {
+        hasher.update(u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    Ok(MutationCommand {
+        scope: scope.into(),
+        key: key.into(),
+        fingerprint: hasher.finalize().into(),
+    })
 }
 
 fn canonical_host_roots(values: &[String]) -> Result<Vec<PathBuf>, ApplicationError> {
@@ -1549,7 +1579,27 @@ impl Daemon {
         request: v1::EnrollHostExecutionRequest,
         key: Option<&str>,
     ) -> Result<v1::response::Result, ApplicationError> {
-        let _key = mutation_key(key)?;
+        let key = mutation_key(key)?;
+        let mut command_parts = vec![
+            request.expected_revision.to_string(),
+            request.acknowledgment_version.to_string(),
+            request.typed_acknowledgment.clone(),
+            request.filesystem_read.to_string(),
+            request.filesystem_write.to_string(),
+            request.process_execute.to_string(),
+            request.broad_scope_acknowledged.to_string(),
+        ];
+        command_parts.extend(request.path_roots.iter().cloned());
+        let command = host_policy_command("enroll_host_execution_v1", key, &command_parts)?;
+        let store = self.host_execution_policy_store()?;
+        if let Some(policy) = store
+            .resolve_host_execution_policy_mutation(&command)
+            .await?
+        {
+            return Ok(v1::response::Result::HostExecutionPolicy(
+                host_execution_policy_to_wire(policy, false),
+            ));
+        }
         let roots = canonical_host_roots(&request.path_roots)?;
         let broad = roots.iter().any(|root| host_root_is_broad(root));
         if broad && !request.broad_scope_acknowledged {
@@ -1584,9 +1634,8 @@ impl Daemon {
             broad_scope_acknowledged: request.broad_scope_acknowledged,
             updated_at: now,
         };
-        let policy = self
-            .host_execution_policy_store()?
-            .replace_host_execution_policy(policy, request.expected_revision)
+        let policy = store
+            .replace_host_execution_policy(policy, request.expected_revision, &command)
             .await?;
         Ok(v1::response::Result::HostExecutionPolicy(
             host_execution_policy_to_wire(policy, false),
@@ -1598,8 +1647,21 @@ impl Daemon {
         request: v1::RevokeHostExecutionRequest,
         key: Option<&str>,
     ) -> Result<v1::response::Result, ApplicationError> {
-        let _key = mutation_key(key)?;
+        let key = mutation_key(key)?;
+        let command = host_policy_command(
+            "revoke_host_execution_v1",
+            key,
+            &[request.expected_revision.to_string()],
+        )?;
         let store = self.host_execution_policy_store()?;
+        if let Some(policy) = store
+            .resolve_host_execution_policy_mutation(&command)
+            .await?
+        {
+            return Ok(v1::response::Result::HostExecutionPolicy(
+                host_execution_policy_to_wire(policy, false),
+            ));
+        }
         let mut policy = store.get_host_execution_policy().await?;
         if policy.revision != request.expected_revision {
             return Err(ApplicationError::Conflict);
@@ -1608,7 +1670,7 @@ impl Daemon {
         policy.active = false;
         policy.updated_at = self.clock.now();
         let policy = store
-            .replace_host_execution_policy(policy, request.expected_revision)
+            .replace_host_execution_policy(policy, request.expected_revision, &command)
             .await?;
         Ok(v1::response::Result::HostExecutionPolicy(
             host_execution_policy_to_wire(policy, false),
@@ -4832,6 +4894,27 @@ mod tests {
             enrolled.unavailable_reason_code,
             "host_tools_runtime_not_prepared"
         );
+        clock.set(11);
+        let replayed = daemon
+            .handle(request_with_key(
+                request::Operation::EnrollHostExecution(v1::EnrollHostExecutionRequest {
+                    expected_revision: 0,
+                    acknowledgment_version: HOST_ACKNOWLEDGMENT_VERSION,
+                    typed_acknowledgment: grok_domain::HOST_ACKNOWLEDGMENT_PHRASE.into(),
+                    filesystem_read: true,
+                    filesystem_write: true,
+                    process_execute: true,
+                    path_roots: vec![directory.path().to_string_lossy().into_owned()],
+                    broad_scope_acknowledged: false,
+                }),
+                "enroll-host-tools",
+            ))
+            .await
+            .expect("exact enrollment replay");
+        let response::Result::HostExecutionPolicy(replayed) = response_result(replayed) else {
+            panic!("replayed Host policy")
+        };
+        assert_eq!(replayed, enrolled);
 
         let capabilities = daemon
             .handle(request(request::Operation::ResolveCapabilities(

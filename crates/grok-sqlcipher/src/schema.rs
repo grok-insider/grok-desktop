@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 25;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 26;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -148,6 +148,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             23 => migrate_conversation_model_binding_v23(&transaction)?,
             24 => migrate_conversation_search_grant_v24(&transaction)?,
             25 => migrate_host_execution_v25(&transaction)?,
+            26 => transaction.execute_batch(MIGRATION_26)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -236,6 +237,16 @@ fn migrate_host_execution_v25(transaction: &Transaction<'_>) -> Result<(), SqlCi
     }
     Ok(())
 }
+
+const MIGRATION_26: &str = r"
+CREATE TABLE host_execution_commands (
+  scope TEXT NOT NULL CHECK (length(scope) BETWEEN 1 AND 64),
+  idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
+  outcome_json TEXT NOT NULL CHECK (length(outcome_json) BETWEEN 2 AND 65536),
+  PRIMARY KEY (scope, idempotency_key)
+) STRICT;
+";
 
 // Bind a canonical model to each conversation thread. Existing threads are
 // deterministically backfilled from their most recent durable turn; only an
@@ -4072,7 +4083,8 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_evaluation_commands;
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
-                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24,25);
+                 DROP TABLE IF EXISTS host_execution_commands;
+                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24,25,26);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4130,7 +4142,8 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25);
+                 DROP TABLE IF EXISTS host_execution_commands;
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25,26);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4154,7 +4167,8 @@ mod tests {
                  DROP TRIGGER artifact_versions_create_retention;
                  DROP TABLE artifact_removal_commands;
                  DROP TABLE artifact_version_retention;
-                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24,25);
+                 DROP TABLE IF EXISTS host_execution_commands;
+                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24,25,26);
                  PRAGMA user_version=17;
                  PRAGMA foreign_keys=ON;",
             )
@@ -5380,7 +5394,8 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25);
+                 DROP TABLE IF EXISTS host_execution_commands;
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25,26);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;
 
@@ -5424,7 +5439,8 @@ mod tests {
                      VALUES (new.rowid,new.title,new.body);
                  END;
 
-                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24,25);
+                 DROP TABLE IF EXISTS host_execution_commands;
+                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24,25,26);
                  PRAGMA user_version=15;
                  CREATE TRIGGER block_artifact_search_rebuild
                  BEFORE INSERT ON search_documents WHEN new.kind='artifact' BEGIN

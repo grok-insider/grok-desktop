@@ -90,11 +90,18 @@ pub trait HostExecutionPolicyStore: Send + Sync {
     /// Loads the current inactive, active, or revoked policy snapshot.
     async fn get_host_execution_policy(&self) -> Result<HostExecutionPolicy, StoreError>;
 
+    /// Resolves an exact prior enrollment mutation or conflicts on key reuse.
+    async fn resolve_host_execution_policy_mutation(
+        &self,
+        command: &MutationCommand,
+    ) -> Result<Option<HostExecutionPolicy>, StoreError>;
+
     /// Atomically replaces the policy and complete root set.
     async fn replace_host_execution_policy(
         &self,
         policy: HostExecutionPolicy,
         expected_revision: u64,
+        command: &MutationCommand,
     ) -> Result<HostExecutionPolicy, StoreError>;
 }
 

@@ -2354,7 +2354,8 @@ async fn schema_fourteen_forks_migrate_acknowledged_and_restart_after_a_fault() 
                  SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                  WHERE new.state=0;
              END;
-             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22,23,24,25);
+             DROP TABLE IF EXISTS host_execution_commands;
+             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22,23,24,25,26);
              PRAGMA user_version=14;
              CREATE TABLE conversation_fork_delivery_ack_commands(blocker INTEGER) STRICT;",
         )

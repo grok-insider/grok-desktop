@@ -38,6 +38,64 @@ struct StoredExecutionOutcome {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
+struct StoredHostExecutionPolicy {
+    version: u8,
+    revision: u64,
+    active: bool,
+    acknowledgment_version: u32,
+    acknowledged_at: u64,
+    filesystem_read: bool,
+    filesystem_write: bool,
+    process_execute: bool,
+    canonical_roots: Vec<String>,
+    broad_scope_acknowledged: bool,
+    updated_at: u64,
+}
+
+impl From<&HostExecutionPolicy> for StoredHostExecutionPolicy {
+    fn from(policy: &HostExecutionPolicy) -> Self {
+        Self {
+            version: 1,
+            revision: policy.revision,
+            active: policy.active,
+            acknowledgment_version: policy.acknowledgment_version,
+            acknowledged_at: policy.acknowledged_at,
+            filesystem_read: policy.tool_classes.filesystem_read,
+            filesystem_write: policy.tool_classes.filesystem_write,
+            process_execute: policy.tool_classes.process_execute,
+            canonical_roots: policy.canonical_roots.clone(),
+            broad_scope_acknowledged: policy.broad_scope_acknowledged,
+            updated_at: policy.updated_at,
+        }
+    }
+}
+
+impl StoredHostExecutionPolicy {
+    fn into_domain(self) -> Result<HostExecutionPolicy, StoreError> {
+        if self.version != 1 {
+            return Err(StoreError::Internal(
+                "stored Host Tools command version is unsupported".into(),
+            ));
+        }
+        Ok(HostExecutionPolicy {
+            revision: self.revision,
+            active: self.active,
+            acknowledgment_version: self.acknowledgment_version,
+            acknowledged_at: self.acknowledged_at,
+            tool_classes: HostToolClasses {
+                filesystem_read: self.filesystem_read,
+                filesystem_write: self.filesystem_write,
+                process_execute: self.process_execute,
+            },
+            canonical_roots: self.canonical_roots,
+            broad_scope_acknowledged: self.broad_scope_acknowledged,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum StoredExecutionResult {
     Run {
@@ -1731,6 +1789,29 @@ fn load_host_execution_policy(connection: &Connection) -> Result<HostExecutionPo
     Ok(policy)
 }
 
+fn resolve_host_execution_policy_command(
+    connection: &Connection,
+    command: &MutationCommand,
+) -> Result<Option<HostExecutionPolicy>, StoreError> {
+    let prior = connection
+        .query_row(
+            "SELECT request_fingerprint,outcome_json FROM host_execution_commands
+             WHERE scope=?1 AND idempotency_key=?2",
+            params![command.scope, command.key],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(map_sqlite)?;
+    match prior {
+        None => Ok(None),
+        Some((fingerprint, _)) if fingerprint != command.fingerprint => Err(StoreError::Conflict),
+        Some((_, outcome)) => serde_json::from_str::<StoredHostExecutionPolicy>(&outcome)
+            .map_err(|_| StoreError::Internal("stored Host Tools command is invalid".into()))?
+            .into_domain()
+            .map(Some),
+    }
+}
+
 #[async_trait]
 impl HostExecutionPolicyStore for SqlCipherStore {
     async fn get_host_execution_policy(&self) -> Result<HostExecutionPolicy, StoreError> {
@@ -1738,13 +1819,29 @@ impl HostExecutionPolicyStore for SqlCipherStore {
             .await
     }
 
+    async fn resolve_host_execution_policy_mutation(
+        &self,
+        command: &MutationCommand,
+    ) -> Result<Option<HostExecutionPolicy>, StoreError> {
+        let command = command.clone();
+        self.with_store(move |connection| {
+            resolve_host_execution_policy_command(connection, &command)
+        })
+        .await
+    }
+
     async fn replace_host_execution_policy(
         &self,
         policy: HostExecutionPolicy,
         expected_revision: u64,
+        command: &MutationCommand,
     ) -> Result<HostExecutionPolicy, StoreError> {
+        let command = command.clone();
         self.with_store(move |connection| {
             let transaction = begin(connection)?;
+            if let Some(outcome) = resolve_host_execution_policy_command(&transaction, &command)? {
+                return Ok(outcome);
+            }
             let changed = transaction
                 .execute(
                     "UPDATE host_execution_policy SET
@@ -1786,6 +1883,21 @@ impl HostExecutionPolicyStore for SqlCipherStore {
                     )
                     .map_err(map_sqlite)?;
             }
+            let outcome = serde_json::to_string(&StoredHostExecutionPolicy::from(&policy))
+                .map_err(|_| StoreError::Internal("failed to encode Host Tools command".into()))?;
+            transaction
+                .execute(
+                    "INSERT INTO host_execution_commands(
+                        scope,idempotency_key,request_fingerprint,outcome_json
+                     ) VALUES (?1,?2,?3,?4)",
+                    params![
+                        command.scope,
+                        command.key,
+                        command.fingerprint.as_slice(),
+                        outcome
+                    ],
+                )
+                .map_err(map_sqlite)?;
             commit(transaction)?;
             Ok(policy)
         })

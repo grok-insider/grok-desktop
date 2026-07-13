@@ -67,13 +67,32 @@ async fn schema_25_persists_host_policy_and_immutable_work_backend() {
         broad_scope_acknowledged: false,
         updated_at: 10,
     };
+    let enroll_command = MutationCommand {
+        scope: "enroll_host_execution_v1".into(),
+        key: "enroll-policy".into(),
+        fingerprint: [44; 32],
+    };
     store
-        .replace_host_execution_policy(enrolled.clone(), 0)
+        .replace_host_execution_policy(enrolled.clone(), 0, &enroll_command)
         .await
         .expect("enroll");
     assert_eq!(
         store
-            .replace_host_execution_policy(enrolled.clone(), 0)
+            .replace_host_execution_policy(enrolled.clone(), 0, &enroll_command)
+            .await
+            .expect("exact replay"),
+        enrolled
+    );
+    assert_eq!(
+        store
+            .replace_host_execution_policy(
+                enrolled.clone(),
+                0,
+                &MutationCommand {
+                    fingerprint: [45; 32],
+                    ..enroll_command.clone()
+                },
+            )
             .await,
         Err(StoreError::Conflict)
     );

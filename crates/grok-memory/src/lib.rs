@@ -158,6 +158,7 @@ struct State {
     workspace_commands: HashMap<(String, String), CommandRecord>,
     desktop_preferences: DesktopPreferences,
     host_execution_policy: Option<HostExecutionPolicy>,
+    host_execution_commands: HashMap<(String, String), HostExecutionCommandRecord>,
     desktop_preference_commands: HashMap<(String, String), DesktopPreferenceCommandRecord>,
     chat_model_preference: ChatModelPreference,
     chat_model_preference_commands: HashMap<(String, String), ChatModelPreferenceCommandRecord>,
@@ -198,12 +199,38 @@ impl HostExecutionPolicyStore for InMemoryExecutionStore {
             .unwrap_or_else(inactive_host_execution_policy))
     }
 
+    async fn resolve_host_execution_policy_mutation(
+        &self,
+        command: &MutationCommand,
+    ) -> Result<Option<HostExecutionPolicy>, StoreError> {
+        let state = self.state.lock().await;
+        match state
+            .host_execution_commands
+            .get(&(command.scope.clone(), command.key.clone()))
+        {
+            None => Ok(None),
+            Some(record) if record.fingerprint == command.fingerprint => {
+                Ok(Some(record.outcome.clone()))
+            }
+            Some(_) => Err(StoreError::Conflict),
+        }
+    }
+
     async fn replace_host_execution_policy(
         &self,
         policy: HostExecutionPolicy,
         expected_revision: u64,
+        command: &MutationCommand,
     ) -> Result<HostExecutionPolicy, StoreError> {
         let mut state = self.state.lock().await;
+        let command_key = (command.scope.clone(), command.key.clone());
+        if let Some(record) = state.host_execution_commands.get(&command_key) {
+            return if record.fingerprint == command.fingerprint {
+                Ok(record.outcome.clone())
+            } else {
+                Err(StoreError::Conflict)
+            };
+        }
         let current = state
             .host_execution_policy
             .as_ref()
@@ -212,8 +239,21 @@ impl HostExecutionPolicyStore for InMemoryExecutionStore {
             return Err(StoreError::Conflict);
         }
         state.host_execution_policy = Some(policy.clone());
+        state.host_execution_commands.insert(
+            command_key,
+            HostExecutionCommandRecord {
+                fingerprint: command.fingerprint,
+                outcome: policy.clone(),
+            },
+        );
         Ok(policy)
     }
+}
+
+#[derive(Debug, Clone)]
+struct HostExecutionCommandRecord {
+    fingerprint: [u8; 32],
+    outcome: HostExecutionPolicy,
 }
 
 #[derive(Debug, Clone)]

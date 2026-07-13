@@ -8,7 +8,7 @@
 | **Supersedes / amends** | ADR 0003 (partial), ADR 0004 (Work readiness wording), AGENTS.md isolation wording, `docs/architecture/principles.md`, `docs/quality/linux-ga.md` Limited Mode + host-ACP rules, `docs/platform/threat-model.md`, `docs/research/official-grok-surfaces.md` capability routing, capability resolution in `CapabilityResolver` |
 | **ADR** | [`docs/decisions/0032-explicit-dual-mode-work-execution.md`](../decisions/0032-explicit-dual-mode-work-execution.md) |
 | **IPC impact** | Protocol epoch **25** (current is **24** in `crates/grok-protocol` / `DaemonRpcClient.ts`) |
-| **Schema impact** | SQLCipher schema **25** (current latest **24** in `crates/grok-sqlcipher/src/schema.rs`) |
+| **Schema impact** | SQLCipher schema **25** binds run/backend and policy; schema **26** adds the durable Host enrollment command journal |
 
 ---
 
