@@ -34,8 +34,9 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ALL_ACCESS,
         FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, FileRenameInfo, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
+        SetFileInformationByHandle, WRITE_DAC, WRITE_OWNER,
     },
     System::{
         Pipes::GetNamedPipeClientProcessId,
@@ -235,7 +236,7 @@ fn open_file(
         access |= GENERIC_WRITE;
     }
     if create_new {
-        access |= WRITE_DAC | WRITE_OWNER;
+        access |= WRITE_DAC | WRITE_OWNER | windows_sys::Win32::Storage::FileSystem::DELETE;
     }
     let handle = unsafe {
         CreateFileW(
@@ -253,6 +254,64 @@ fn open_file(
         )
     };
     file_from_handle(handle)
+}
+
+/// Atomically publishes an open private file under a new absolute path.
+///
+/// The operation renames the object identified by `file` without replacing an
+/// existing destination. Keeping publication handle-based prevents a path
+/// substitution between content verification and publication.
+///
+/// # Errors
+///
+/// Returns an operating-system error when the destination is invalid, already
+/// exists, or cannot be created on the same volume as the open file.
+pub fn publish_private_file(file: &File, destination: &Path) -> io::Result<()> {
+    if !destination.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "publication path is not absolute",
+        ));
+    }
+    let mut destination = wide_path(destination)?;
+    destination.pop();
+    let name_bytes = destination
+        .len()
+        .checked_mul(size_of::<u16>())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "publication path is oversized")
+        })?;
+    let header_bytes = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let buffer_bytes = header_bytes
+        .checked_add(name_bytes as usize)
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "publication path is oversized")
+        })?;
+    let mut buffer = vec![0_usize; buffer_bytes.div_ceil(size_of::<usize>())];
+    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    unsafe {
+        (*information).Anonymous.ReplaceIfExists = false;
+        (*information).RootDirectory = null_mut();
+        (*information).FileNameLength = name_bytes;
+        std::ptr::copy_nonoverlapping(
+            destination.as_ptr(),
+            (*information).FileName.as_mut_ptr(),
+            destination.len(),
+        );
+    }
+    if unsafe {
+        SetFileInformationByHandle(
+            raw_handle(file),
+            FileRenameInfo,
+            information.cast(),
+            u32::try_from(buffer_bytes).unwrap_or(u32::MAX),
+        )
+    } == 0
+    {
+        return Err(last_error());
+    }
+    Ok(())
 }
 
 /// Reapplies the exact owner-only protected DACL through an existing handle.
@@ -650,15 +709,15 @@ mod tests {
     }
 
     #[test]
-    fn publishes_and_removes_a_private_file_while_its_handle_is_open() {
+    fn publishes_a_private_file_by_its_open_handle() {
         let root = tempfile::tempdir().expect("tempdir");
         let temporary = root.path().join("managed.tmp");
         let published = root.path().join("managed.toml");
         let file = open_private_file(&temporary, false, true, true).expect("create file");
 
-        std::fs::hard_link(&temporary, &published).expect("publish hard link");
-        std::fs::remove_file(&temporary).expect("remove temporary name");
+        publish_private_file(&file, &published).expect("publish file");
 
+        assert!(!temporary.exists());
         assert!(published.is_file());
         assert!(file_has_single_link(&file).expect("published link count"));
         assert!(verify_private_acl(&file, PrivateObjectKind::File).expect("verify file"));

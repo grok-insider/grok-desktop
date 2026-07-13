@@ -464,14 +464,13 @@ fn atomic_create_file(path: &Path, expected: &[u8]) -> Result<(), GrokHomeError>
         set_private_file_permissions(&file)?;
         file.write_all(expected).map_err(GrokHomeError::Io)?;
         file.sync_all().map_err(GrokHomeError::Io)?;
-        fs::hard_link(&temporary, path).map_err(|error| {
+        atomic_publish_file(&file, &temporary, path).map_err(|error| {
             if error.kind() == io::ErrorKind::AlreadyExists {
                 GrokHomeError::UnexpectedConfiguration
             } else {
                 GrokHomeError::Io(error)
             }
         })?;
-        fs::remove_file(&temporary).map_err(GrokHomeError::Io)?;
         sync_directory(parent)?;
         let file = secure_open(path, true, false, false).map_err(GrokHomeError::Io)?;
         verify_path_is_not_link(path)?;
@@ -481,6 +480,17 @@ fn atomic_create_file(path: &Path, expected: &[u8]) -> Result<(), GrokHomeError>
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+#[cfg(windows)]
+fn atomic_publish_file(file: &File, _temporary: &Path, path: &Path) -> io::Result<()> {
+    grok_windows_acl::publish_private_file(file, path)
+}
+
+#[cfg(not(windows))]
+fn atomic_publish_file(_file: &File, temporary: &Path, path: &Path) -> io::Result<()> {
+    fs::hard_link(temporary, path)?;
+    fs::remove_file(temporary)
 }
 
 fn verify_path_is_not_link(path: &Path) -> Result<(), GrokHomeError> {
