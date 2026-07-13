@@ -286,6 +286,23 @@ export interface ConversationTurnDetail {
   retryEligibility: ConversationRetryEligibility;
 }
 
+export interface WorkTurnDetail {
+  runId: string;
+  state: RunState;
+  revision: number;
+  createdAtUnixMs: number;
+  updatedAtUnixMs: number;
+  approval?: {
+    id: string;
+    revision: number;
+    action: string;
+    target: string;
+    dataSummary: string;
+    risk: "low" | "elevated" | "high" | "critical";
+    expiresAtUnixMs: number;
+  };
+}
+
 export interface ConversationDetail {
   id: string;
   title: string;
@@ -297,6 +314,7 @@ export interface ConversationDetail {
   lineage: ConversationThreadLineage;
   messages: ConversationMessage[];
   turns: ConversationTurnDetail[];
+  workTurns?: WorkTurnDetail[];
 }
 
 export interface MediaCreation {

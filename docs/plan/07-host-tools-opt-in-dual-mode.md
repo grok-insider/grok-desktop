@@ -76,6 +76,42 @@ Still open by design or external qualification:
   with an explicit private `XDG_RUNTIME_DIR`; Chrome DevTools MCP attached to
   its loopback CDP target without taking focus from the user's desktop.
 
+### Multi-turn Work conversation completion (2026-07-13)
+
+Host Work now behaves as a conversation rather than a one-shot Activity item:
+
+- Starting Work navigates directly to the durable conversation. Activity
+  remains the cross-run monitor, not the primary interaction surface.
+- A Work thread may contain multiple sequential HostDirect runs. At most one
+  run may be active, and an `interrupted_needs_review` run must be resolved
+  before another turn starts.
+- Every follow-up is dispatched through `StartHostWork`; the daemon rejects an
+  unprivileged Chat turn for any thread already owned by Host Work.
+- The daemon constructs each fresh official ACP session with bounded prior
+  active user/assistant messages, the canonical enrolled root, available tool
+  names, exact-approval behavior, and the new user request. Tool authority is
+  never stored in or inherited from transcript text.
+- Conversation projections include every bounded Host Work run for the thread.
+  The renderer keeps planning/running state, exact approval action/target/data,
+  allow/deny, cancellation, and terminal results inline with the transcript.
+- Work-only threads do not expose Chat model, search, retry, regenerate, edit,
+  or branch controls.
+
+Local acceptance used the persistent `qa-local` Electron profile on the
+loopback CDP endpoint in an off-screen wlroots compositor. The first turn
+requested `host_process_exec` for `pwd`, paused on the inline exact approval,
+and returned `/home/friend/dev/test-work` after one-time approval. A second
+turn in the same thread recalled that exact path, invoked
+`host_filesystem_list`, and completed on the conversation route. The production
+CDP security/accessibility/responsive probe also passed. This acceptance run
+also exposed a stale pre-approval run revision at terminal completion: the
+assistant result was durable but the run became failed. Completion now reloads
+the authoritative post-approval revision; a repeated approved `pwd` turn
+finished as `completed` at revision 5, with a regression test that simulates
+the approval revision changes. Wisp MCP could not
+create its own nested compositor in this particular agent process because its
+server lacked `XDG_RUNTIME_DIR`; no visible workspace or user focus was used.
+
 ---
 
 ## Design baseline (pre-implementation)

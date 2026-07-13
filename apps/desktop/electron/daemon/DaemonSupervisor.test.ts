@@ -922,7 +922,7 @@ describe("conversation fork response validation", () => {
 });
 
 describe("conversation numeric response validation", () => {
-  it("accepts only a completed Host Work aggregate with its exact persisted outcome", () => {
+  it("accepts multi-turn Host Work aggregates and preserved legacy Chat follow-ups", () => {
     const thread: DaemonThread = {
       id: "thread-work",
       projectId: "project-1",
@@ -977,14 +977,61 @@ describe("conversation numeric response validation", () => {
       [],
       metadata,
       { ...run, state: "failed", revision: 1 },
-    )).toThrow("Work conversation aggregate is invalid");
+    )).not.toThrow();
+    const legacyChatUser: DaemonMessage = {
+      ...user,
+      id: "message-legacy-chat-user",
+      sequence: 2,
+      content: "Legacy Chat follow-up",
+      createdAtUnixMs: 2,
+      updatedAtUnixMs: 2,
+    };
+    const legacyChatAssistant: DaemonMessage = {
+      ...assistant,
+      id: "message-legacy-chat-assistant",
+      sequence: 3,
+      content: "Legacy Chat response",
+      createdAtUnixMs: 3,
+      updatedAtUnixMs: 3,
+    };
+    const legacyChatTurnWire = validConversationTurn();
+    legacyChatTurnWire.userMessage = {
+      ...legacyChatTurnWire.userMessage!,
+      id: legacyChatUser.id,
+      threadId: thread.id,
+      sequence: BigInt(legacyChatUser.sequence),
+      content: legacyChatUser.content,
+      createdAtUnixMs: BigInt(legacyChatUser.createdAtUnixMs),
+      updatedAtUnixMs: BigInt(legacyChatUser.updatedAtUnixMs),
+    };
+    legacyChatTurnWire.assistantMessage = {
+      ...legacyChatTurnWire.assistantMessage!,
+      id: legacyChatAssistant.id,
+      threadId: thread.id,
+      sequence: BigInt(legacyChatAssistant.sequence),
+      content: legacyChatAssistant.content,
+      createdAtUnixMs: BigInt(legacyChatAssistant.createdAtUnixMs),
+      updatedAtUnixMs: BigInt(legacyChatAssistant.updatedAtUnixMs),
+    };
+    legacyChatTurnWire.run = {
+      ...legacyChatTurnWire.run!,
+      threadId: thread.id,
+      projectId: thread.projectId,
+    };
+    expect(() => validateConversationAggregate(
+      thread,
+      [user, legacyChatUser, legacyChatAssistant],
+      [mapConversationTurn(legacyChatTurnWire)],
+      metadata,
+      { ...run, state: "failed", revision: 1 },
+    )).not.toThrow();
     expect(() => validateConversationAggregate(
       thread,
       [user, assistant],
       [mapConversationTurn(validConversationTurn())],
       metadata,
       run,
-    )).toThrow("Work conversation aggregate is invalid");
+    )).toThrow("invalid Chat turn");
     expect(() => validateConversationAggregate(
       thread,
       [user, assistant],
@@ -1729,7 +1776,7 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
       },
     });
     expect(protocol.getConversationForkMetadata).toHaveBeenCalledWith("thread-child");
-    expect(protocol.listHostWorkRuns).toHaveBeenCalledWith(2, "thread-child");
+    expect(protocol.listHostWorkRuns).toHaveBeenCalledWith(100, "thread-child");
   });
 
   it("does not reinterpret an ambiguous fork transport failure", async () => {

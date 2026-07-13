@@ -209,7 +209,7 @@ describe("ElectronDesktopClient", () => {
           messages: [user, assistant],
           turns: [],
           forkMetadata: conversationForkMetadata(thread),
-          workRun,
+          workRuns: [{ run: workRun }],
         };
       }
       throw new Error(`unexpected request ${request.kind}`);
@@ -228,6 +228,65 @@ describe("ElectronDesktopClient", () => {
         turns: [],
       },
     });
+  });
+
+  it("routes follow-up messages in a Work conversation through Host Work", async () => {
+    const thread = conversationThread();
+    const firstRun: DaemonRun = {
+      id: "run-work-first",
+      projectId: thread.projectId,
+      threadId: thread.id,
+      state: "completed",
+      revision: 3,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+      kind: "work",
+      workBackend: "host_direct",
+    };
+    const secondRun: DaemonRun = {
+      ...firstRun,
+      id: "run-work-second",
+      state: "planning",
+      revision: 1,
+      createdAtUnixMs: 3,
+      updatedAtUnixMs: 3,
+    };
+    let workRuns = [{ run: firstRun }];
+    const bootstrap = bootstrapResponse();
+    if (bootstrap.kind !== "daemon.bootstrap") throw new Error("expected bootstrap");
+    bootstrap.workExecutionMode = "host_direct";
+    bootstrap.hostWorkRuntimeReady = true;
+    bootstrap.capabilities = bootstrap.capabilities.map((capability) => capability.id === "work"
+      ? { ...capability, available: true, availability: "available", reasonCode: "ready", reason: "Available." }
+      : capability);
+    const bridge = fakeBridge(async (request) => {
+      if (request.kind === "daemon.bootstrap") return bootstrap;
+      if (request.kind === "daemon.getConversation") {
+        return {
+          kind: "daemon.conversation",
+          thread,
+          messages: [],
+          turns: [],
+          forkMetadata: conversationForkMetadata(thread),
+          workRuns,
+        };
+      }
+      if (request.kind === "daemon.startHostWork") {
+        expect(request).toMatchObject({
+          projectId: thread.projectId,
+          threadId: thread.id,
+          prompt: "Run pwd",
+        });
+        workRuns = [{ run: firstRun }, { run: secondRun }];
+        return { kind: "daemon.hostWork", work: { run: secondRun } };
+      }
+      throw new Error(`unexpected request ${request.kind}`);
+    });
+    const client = new ElectronDesktopClient(bridge);
+    await client.getConversation(thread.id);
+
+    await expect(client.sendConversationMessage(thread.id, "Run pwd", []))
+      .resolves.toEqual({ status: "success", value: { messageId: secondRun.id, turnId: secondRun.id } });
   });
 
   it("keeps Automations limited even if an inconsistent daemon reports it available", async () => {

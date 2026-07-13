@@ -55,6 +55,7 @@ import type {
   ConversationDetail,
   ConversationMessage,
   ConversationTurnDetail,
+  WorkTurnDetail,
 } from "../services/desktopClient";
 import { copyToClipboard } from "../utils/clipboard";
 
@@ -93,6 +94,7 @@ export function ConversationView() {
   const transcriptViewport = useRef<HTMLDivElement | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const [followingLatest, setFollowingLatest] = useState(true);
+  const [workAction, setWorkAction] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -139,6 +141,7 @@ export function ConversationView() {
   }, [inspector]);
 
   const activeTurn = newestActiveTurn(conversation?.turns ?? []);
+  const activeWorkTurn = newestActiveWorkTurn(conversation?.workTurns ?? []);
   const newestBranchSource = conversation ? newestCompletedAssistant(conversation) : undefined;
   const newestMessage = conversation?.messages.at(-1);
 
@@ -160,7 +163,7 @@ export function ConversationView() {
   };
 
   const send = async () => {
-    if (!prompt.trim() || sending || retryingTurnId || activeTurn) return;
+    if (!prompt.trim() || sending || retryingTurnId || activeTurn || activeWorkTurn) return;
     setSending(true);
     setNotice(null);
     try {
@@ -177,6 +180,36 @@ export function ConversationView() {
       });
     } finally {
       setSending(false);
+    }
+  };
+
+  const cancelWork = async (runId: string) => {
+    if (workAction) return;
+    setWorkAction(`cancel:${runId}`);
+    setNotice(null);
+    try {
+      await client.cancelHostWork(runId);
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Work could not be cancelled." });
+    } finally {
+      setWorkAction("");
+    }
+  };
+
+  const decideWork = async (turn: WorkTurnDetail, approved: boolean) => {
+    if (!turn.approval || workAction) return;
+    setWorkAction(`${approved ? "approve" : "deny"}:${turn.approval.id}`);
+    setNotice(null);
+    try {
+      await client.decideHostWorkApproval({
+        approvalId: turn.approval.id,
+        expectedRevision: turn.approval.revision,
+        approved,
+      });
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "The approval decision failed." });
+    } finally {
+      setWorkAction("");
     }
   };
 
@@ -345,7 +378,7 @@ export function ConversationView() {
             {conversation.projectName} · {conversation.mode === "work" ? "Work" : "Chat"}
           </p>
         </div>
-        <Select
+        {conversation.mode === "chat" ? <Select
           value={conversation.id}
           onValueChange={(value) => {
             if (value !== conversation.id) navigate(`/conversations/${value}`);
@@ -370,8 +403,8 @@ export function ConversationView() {
               </SelectItem>
             ))}
           </SelectContent>
-        </Select>
-        <Button
+        </Select> : <Badge variant="info">Work</Badge>}
+        {conversation.mode === "chat" ? <Button
           aria-busy={newestBranchSource ? forkingMessageId === newestBranchSource.message.id : undefined}
           aria-label="New branch from latest completed response"
           className="max-[680px]:size-[34px] max-[680px]:px-0"
@@ -386,7 +419,7 @@ export function ConversationView() {
             ? <LoaderCircle className="animate-spin motion-reduce:animate-none" size={14} />
             : <Sparkles size={14} />}
           <span className="max-[680px]:sr-only">New branch</span>
-        </Button>
+        </Button> : null}
         <IconButton label="No additional conversation actions available" disabled>
           <MoreHorizontal size={18} />
         </IconButton>
@@ -472,6 +505,14 @@ export function ConversationView() {
           </div>
 
           <div className="mx-auto w-full max-w-[760px] px-4 pb-4 pt-2 max-[680px]:px-2">
+            {conversation.mode === "work" && activeWorkTurn ? (
+              <WorkTurnPanel
+                action={workAction}
+                onCancel={() => void cancelWork(activeWorkTurn.runId)}
+                onDecide={(approved) => void decideWork(activeWorkTurn, approved)}
+                turn={activeWorkTurn}
+              />
+            ) : null}
             <div
               className="rounded-xl border border-input bg-card p-2 shadow-overlay transition-[border-color,box-shadow] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring"
             >
@@ -487,6 +528,7 @@ export function ConversationView() {
                     && !event.shiftKey
                     && !event.nativeEvent.isComposing
                     && !activeTurn
+                    && !activeWorkTurn
                   ) {
                     event.preventDefault();
                     void send();
@@ -498,7 +540,7 @@ export function ConversationView() {
                 value={prompt}
               />
               <div className="flex items-center justify-between border-t border-border pt-2">
-                <IconButton
+                {conversation.mode === "chat" ? <IconButton
                   aria-pressed={searchEnabled}
                   className={cn(searchEnabled && "border-border bg-muted text-foreground")}
                   disabled={sending || Boolean(activeTurn)}
@@ -507,7 +549,7 @@ export function ConversationView() {
                   title="Allow this reply to use official xAI web and X search"
                 >
                   <Globe2 size={17} />
-                </IconButton>
+                </IconButton> : <span className="px-1 font-mono text-label text-warning">HOST TOOLS</span>}
                 {activeTurn ? (
                   <Button
                     aria-busy={cancellingTurnId === activeTurn.id}
@@ -522,11 +564,22 @@ export function ConversationView() {
                   >
                     <Square fill="currentColor" size={15} />
                   </Button>
+                ) : activeWorkTurn && activeWorkTurn.state !== "interrupted_needs_review" ? (
+                  <Button
+                    aria-label="Cancel Host Work"
+                    disabled={Boolean(workAction)}
+                    onClick={() => void cancelWork(activeWorkTurn.runId)}
+                    size="icon"
+                    title="Cancel this Host Work turn"
+                    variant="outline"
+                  >
+                    <Square fill="currentColor" size={15} />
+                  </Button>
                 ) : (
                   <Button
                     aria-busy={sending}
                     aria-label="Send reply"
-                    disabled={!prompt.trim() || sending || Boolean(retryingTurnId)}
+                    disabled={!prompt.trim() || sending || Boolean(retryingTurnId) || Boolean(activeWorkTurn)}
                     onClick={() => void send()}
                     size="icon"
                     title={sending ? "Submitting the durable Grok request" : "Send reply"}
@@ -578,6 +631,68 @@ export function ConversationView() {
         returnFocus={forkDialogReturnFocus}
       />
     </>
+  );
+}
+
+function WorkTurnPanel({
+  turn,
+  action,
+  onCancel,
+  onDecide,
+}: {
+  turn: WorkTurnDetail;
+  action: string;
+  onCancel(): void;
+  onDecide(approved: boolean): void;
+}) {
+  const pending = turn.approval;
+  const label = pending
+    ? "Exact approval required"
+    : turn.state === "queued" || turn.state === "planning"
+      ? "Planning Host Work"
+      : turn.state === "running"
+        ? "Running with Host Tools"
+        : turn.state === "interrupted_needs_review"
+          ? "Manual review required"
+          : "Host Work is active";
+  return (
+    <section
+      className={cn(
+        "mb-2 rounded-lg border p-3",
+        pending || turn.state === "interrupted_needs_review"
+          ? "border-warning/30 bg-warning-soft"
+          : "border-info/25 bg-info-soft",
+      )}
+      data-work-state={turn.state}
+      role={pending || turn.state === "interrupted_needs_review" ? "alert" : "status"}
+    >
+      <div className="flex items-start gap-2.5">
+        <CircleAlert className={cn("mt-0.5 shrink-0", pending ? "text-warning" : "text-info")} size={17} />
+        <div className="min-w-0 flex-1">
+          <strong className="text-body font-semibold text-foreground">{label}</strong>
+          {pending ? (
+            <>
+              <p className="m-0 mt-1 font-mono text-body-sm break-words text-foreground">{pending.action}: {pending.target}</p>
+              <p className="m-0 mt-1 text-body-sm text-muted-foreground">{pending.dataSummary}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Badge variant="warning">{pending.risk} risk</Badge>
+                <Button disabled={Boolean(action)} onClick={() => onDecide(true)} size="sm">Allow once</Button>
+                <Button disabled={Boolean(action)} onClick={() => onDecide(false)} size="sm" variant="outline">Deny</Button>
+              </div>
+            </>
+          ) : (
+            <p className="m-0 mt-1 text-body-sm text-muted-foreground">
+              {turn.state === "interrupted_needs_review"
+                ? "A potentially non-idempotent side effect will not be replayed automatically. Review it in Activity."
+                : "Grok can inspect the enrolled workspace and will pause before commands or writes that need approval."}
+            </p>
+          )}
+        </div>
+        {!pending && turn.state !== "interrupted_needs_review" ? (
+          <Button disabled={Boolean(action)} onClick={onCancel} size="sm" variant="outline">Cancel</Button>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -1036,6 +1151,12 @@ function newestActiveTurn(turns: ConversationTurnDetail[]): ConversationTurnDeta
     if (turn.state === "reserved" || turn.state === "provider_started") return turn;
   }
   return undefined;
+}
+
+function newestActiveWorkTurn(turns: WorkTurnDetail[]): WorkTurnDetail | undefined {
+  return turns.findLast((turn) => (
+    turn.state !== "completed" && turn.state !== "failed" && turn.state !== "cancelled"
+  ));
 }
 
 function newestCompletedAssistant(

@@ -181,8 +181,8 @@ export class MockDesktopClient implements DesktopClient {
         { label: "Deliver result", state: "waiting" },
       ],
     });
+    const title = input.prompt.slice(0, 80);
     if (input.mode === "chat") {
-      const title = input.prompt.slice(0, 80);
       this.snapshot.threads.unshift({
         id: threadId,
         title,
@@ -230,6 +230,31 @@ export class MockDesktopClient implements DesktopClient {
         }
         this.emitConversation(threadId);
       }, 120);
+    } else {
+      this.snapshot.threads.unshift({
+        id: threadId,
+        title,
+        projectName: project?.name ?? "No project",
+        preview: input.prompt,
+        updatedAt: "Now",
+        mode: "work",
+      });
+      const now = Date.now();
+      this.conversations.set(threadId, {
+        id: threadId,
+        title,
+        projectName: project?.name ?? "No project",
+        mode: "work",
+        branchName: "Main",
+        branchCount: 1,
+        branches: [{ threadId, label: "Main", title, kind: "main", forkDepth: 0, current: true }],
+        lineage: { origin: "original", rootThreadId: threadId, forkDepth: 0 },
+        messages: [
+          { id: `${threadId}-user`, role: "user", content: input.prompt, state: "complete", createdAt: "Now", citations: [], attachments: [] },
+        ],
+        turns: [],
+        workTurns: [{ runId, state: "planning", revision: 1, createdAtUnixMs: now, updatedAtUnixMs: now }],
+      });
     }
     this.emit();
     return { runId, threadId };
@@ -497,6 +522,31 @@ export class MockDesktopClient implements DesktopClient {
     if (!conversation) return { status: "unavailable", reason: "Conversation not found." };
     const userId = `message-${Date.now()}`;
     conversation.messages.push({ id: userId, role: "user", content, state: "complete", createdAt: "Now", citations: [], attachments: attachments.map((item) => ({ ...item, state: "ready", detail: "Ready" })) });
+    if (conversation.mode === "work") {
+      const runId = `${userId}-run`;
+      const now = Date.now();
+      conversation.workTurns ??= [];
+      conversation.workTurns.push({ runId, state: "running", revision: 2, createdAtUnixMs: now, updatedAtUnixMs: now });
+      this.emitConversation(threadId);
+      setTimeout(() => {
+        const turn = conversation.workTurns?.find((item) => item.runId === runId);
+        if (!turn || turn.state !== "running") return;
+        conversation.messages.push({
+          id: `${userId}-response`,
+          role: "assistant",
+          content: "I completed the sample Host Work turn within the enrolled workspace.",
+          state: "complete",
+          createdAt: "Now",
+          citations: [],
+          attachments: [],
+        });
+        turn.state = "completed";
+        turn.revision = 3;
+        turn.updatedAtUnixMs = Date.now();
+        this.emitConversation(threadId);
+      }, 120);
+      return success({ messageId: userId, turnId: runId });
+    }
     const assistantId = `${userId}-response`;
     const turnId = `${userId}-turn`;
     const previous = conversation.turns.at(-1);

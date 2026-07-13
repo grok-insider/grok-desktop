@@ -159,8 +159,8 @@ describe("Grok Desktop shell", () => {
     fireEvent.change(screen.getByLabelText("Message Grok"), { target: { value: "Prepare a launch readiness report" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Activity" })).toBeInTheDocument());
-    expect(await screen.findAllByText("Prepare a launch readiness report")).not.toHaveLength(0);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Prepare a launch readiness report" })).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Activity" })).not.toBeInTheDocument();
   });
 
   it("exposes project sections as keyboard-accessible tabs", async () => {

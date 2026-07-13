@@ -14,7 +14,6 @@ import type {
   DaemonHostWorkSnapshot,
   DaemonMessage,
   DaemonProject,
-  DaemonRun,
   DaemonStatus,
   DaemonThread,
   DaemonWorkExecutionMode,
@@ -629,6 +628,9 @@ export class ElectronDesktopClient implements DesktopClient {
       throw new Error("invalid Host Work cancellation response");
     }
     this.installHostWork([response.work], true, false);
+    if (this.conversationListeners.has(response.work.run.threadId)) {
+      await this.reloadConversationAfterExecution(response.work.run.threadId);
+    }
     this.scheduleHostWorkRefresh();
   }
 
@@ -986,7 +988,8 @@ export class ElectronDesktopClient implements DesktopClient {
     if (attachments.length > 0) {
       return unavailable("Attachments are not connected to the durable Chat execution path.");
     }
-    const capability = this.snapshot.capabilities.find((item) => item.id === "chat");
+    const isWork = [...this.hostWork.values()].some((item) => item.run.threadId === threadId);
+    const capability = this.snapshot.capabilities.find((item) => item.id === (isWork ? "work" : "chat"));
     if (!capability?.available) {
       return unavailable(capability?.reason ?? GROK_EXECUTION_UNAVAILABLE_REASON, "configuration_required");
     }
@@ -995,6 +998,25 @@ export class ElectronDesktopClient implements DesktopClient {
     }
     const thread = this.threads.get(threadId);
     if (!thread) return unavailable("The conversation is no longer available.");
+    if (isWork) {
+      const response = await this.bridge.request({
+        kind: "daemon.startHostWork",
+        projectId: thread.projectId,
+        threadId: thread.id,
+        prompt: validatedPrompt(content),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (response.kind !== "daemon.hostWork") {
+        return unavailable("The Host Work turn could not be started.");
+      }
+      this.installHostWork([response.work], true, false);
+      await this.reloadConversationAfterExecution(thread.id);
+      this.scheduleHostWorkRefresh();
+      return {
+        status: "success",
+        value: { messageId: response.work.run.id, turnId: response.work.run.id },
+      };
+    }
     const turn = await this.startConversationTurn(
       thread,
       validatedPrompt(content),
@@ -1519,6 +1541,7 @@ export class ElectronDesktopClient implements DesktopClient {
     for (const familyThread of response.forkMetadata.familyThreads) {
       this.threads.set(familyThread.id, familyThread);
     }
+    this.installHostWork(response.workRuns ?? [], false, false);
     this.canonicalConversationMessages.set(
       threadId,
       response.messages.map((message) => structuredClone(message)),
@@ -1530,7 +1553,7 @@ export class ElectronDesktopClient implements DesktopClient {
       response.turns,
       response.forkMetadata,
       this.projects.get(response.thread.projectId)?.name ?? "Unknown project",
-      response.workRun,
+      response.workRuns ?? [],
     );
     const reconciled = this.reconcileConversationProjections(conversation);
     for (const turn of reconciled.turns) {
@@ -2020,7 +2043,15 @@ export class ElectronDesktopClient implements DesktopClient {
   private async refreshHostWork(): Promise<void> {
     const response = await this.bridge.request({ kind: "daemon.listHostWorkRuns", limit: 50 });
     if (response.kind !== "daemon.hostWorkList") throw new Error("invalid Host Work list response");
-    this.installHostWork(response.items);
+    this.installHostWork(response.items, true, false);
+    const subscribedThreads = new Set(
+      response.items
+        .map((item) => item.run.threadId)
+        .filter((threadId) => this.conversationListeners.has(threadId)),
+    );
+    await Promise.all(
+      [...subscribedThreads].map((threadId) => this.reloadConversationAfterExecution(threadId)),
+    );
     this.scheduleHostWorkRefresh();
   }
 
@@ -2391,7 +2422,7 @@ function mapConversation(
   turns: DaemonConversationTurn[],
   forkMetadata: DaemonConversationForkMetadata,
   projectName: string,
-  workRun?: DaemonRun,
+  workRuns: DaemonHostWorkSnapshot[] = [],
 ): ConversationDetail {
   const citationsByMessage = new Map<string, ConversationDetail["messages"][number]["citations"]>();
   for (const turn of turns) {
@@ -2449,7 +2480,7 @@ function mapConversation(
     id: thread.id,
     title: thread.title,
     projectName,
-    mode: workRun ? "work" : "chat",
+    mode: workRuns.length > 0 ? "work" : "chat",
     branchName: currentBranch.label,
     branchCount: branches.length,
     branches,
@@ -2467,6 +2498,26 @@ function mapConversation(
         attachments: [],
       })),
     turns: turns.map(mapConversationTurnDetail),
+    workTurns: workRuns
+      .toSorted((left, right) => left.run.createdAtUnixMs - right.run.createdAtUnixMs || left.run.id.localeCompare(right.run.id))
+      .map((item) => ({
+        runId: item.run.id,
+        state: item.run.state,
+        revision: item.run.revision,
+        createdAtUnixMs: item.run.createdAtUnixMs,
+        updatedAtUnixMs: item.run.updatedAtUnixMs,
+        ...(item.pendingApproval ? {
+          approval: {
+            id: item.pendingApproval.id,
+            revision: item.pendingApproval.revision,
+            action: item.pendingApproval.action.action,
+            target: item.pendingApproval.action.target,
+            dataSummary: item.pendingApproval.action.dataSummary,
+            risk: item.pendingApproval.action.risk,
+            expiresAtUnixMs: item.pendingApproval.expiresAtUnixMs,
+          },
+        } : {}),
+      })),
   };
 }
 

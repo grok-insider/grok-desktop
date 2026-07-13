@@ -146,6 +146,39 @@ function childConversation(id: string, kind: "branch" | "edit_and_branch" | "reg
 }
 
 describe("ConversationView", () => {
+  it("shows and decides exact Host Work approvals inline", async () => {
+    const client = new ConversationClient(async () => success(conversation({
+      mode: "work",
+      workTurns: [{
+        runId: "run-work",
+        state: "awaiting_approval",
+        revision: 3,
+        createdAtUnixMs: 1,
+        updatedAtUnixMs: 2,
+        approval: {
+          id: "approval-work",
+          revision: 1,
+          action: "host_process_exec",
+          target: '["pwd"]',
+          dataSummary: "Run in /workspace with a 30000 ms limit",
+          risk: "high",
+          expiresAtUnixMs: 60_000,
+        },
+      }],
+    })));
+    const decide = vi.spyOn(client, "decideHostWorkApproval");
+    renderConversation(client);
+
+    expect(await screen.findByText("Exact approval required")).toBeInTheDocument();
+    expect(screen.getByText(/host_process_exec.*pwd/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(decide).toHaveBeenCalledWith({
+      approvalId: "approval-work",
+      expectedRevision: 1,
+      approved: true,
+    });
+  });
+
   it("renders an accessible transcript skeleton while the durable conversation loads", () => {
     const client = new ConversationClient(() => new Promise(() => undefined));
     const { container } = renderConversation(client);

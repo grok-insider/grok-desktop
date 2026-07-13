@@ -108,8 +108,8 @@ export function Composer() {
       setPrompt("");
       if (mode === "chat") setModelOverride(undefined);
       setAnnouncement(mode === "work" ? "Work started" : "Conversation started");
-      if (mode === "work") navigate(`/activity?run=${runId}`);
-      else navigate(`/conversations/${threadId}`);
+      void runId;
+      navigate(`/conversations/${threadId}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The request could not be started.");
     } finally {

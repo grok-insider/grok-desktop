@@ -1947,6 +1947,17 @@ impl Daemon {
         let conversation = self.conversation.clone().ok_or_else(|| {
             ApplicationError::Unavailable("conversation execution is not configured".into())
         })?;
+        let thread_id = ThreadId::new(&request.thread_id)?;
+        if !self
+            .runs
+            .list_host_work(1, Some(&thread_id))
+            .await?
+            .is_empty()
+        {
+            return Err(ApplicationError::InvalidState(
+                "Work conversations cannot dispatch unprivileged Chat turns".into(),
+            ));
+        }
         let key = mutation_key(key)?;
         // Blank optional model_id is absent, not an override. Clients that coerce
         // missing overrides to "" would otherwise Conflict against a bound model.

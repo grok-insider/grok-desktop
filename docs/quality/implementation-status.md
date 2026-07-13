@@ -106,6 +106,15 @@ Architecture principles:
   approval for writes and processes, persist intent before side effects, and
   recover uncertain mutations as `interrupted_needs_review`. Chat and scheduled
   runs cannot inherit this authority; missing isolation never creates a grant.
+- Host Work conversations support multiple sequential durable HostDirect runs
+  in one thread. Follow-ups receive bounded prior active user/assistant context
+  in a fresh official ACP session, while the daemon prevents Chat dispatch on a
+  Host Work-owned thread and prevents a new turn while another is active or
+  needs interruption review. The desktop opens Work in its conversation,
+  projects exact approvals and cancellation inline, and reserves Activity for
+  cross-run monitoring. Terminal completion reloads the run after any approval
+  transitions so it commits against the authoritative revision rather than
+  misclassifying a successful approved turn as failed.
 - IPC v4 bounded resumable long polling over durable per-run audit events,
   including strict cursor validation, dedicated reconnecting Electron
   connections, and process/subscriber concurrency limits. This is not provider

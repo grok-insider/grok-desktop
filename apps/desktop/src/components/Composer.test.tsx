@@ -111,6 +111,18 @@ describe("Composer Imagine tools", () => {
 });
 
 describe("Composer model selection", () => {
+  it("opens a new Work run in its conversation instead of Activity", async () => {
+    const client = renderComposer() as CapturingClient;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "Work" }));
+    fireEvent.change(screen.getByLabelText("Message Grok"), { target: { value: "Inspect this workspace" } });
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(screen.getByTestId("current-location").textContent).toMatch(/^\/conversations\/thread-/));
+    expect(screen.getByTestId("current-location")).not.toHaveTextContent("/activity");
+    expect(client.starts.at(-1)).toMatchObject({ mode: "work", prompt: "Inspect this workspace" });
+  });
+
   it("routes unavailable Work directly to its settings section", async () => {
     class NoWorkClient extends CapturingClient {
       override async getSnapshot() {
