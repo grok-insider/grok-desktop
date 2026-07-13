@@ -407,6 +407,7 @@ export interface Request {
     | { $case: "revokeHostExecution"; value: RevokeHostExecutionRequest }
     | { $case: "prepareHostWorkRuntime"; value: PrepareHostWorkRuntimeRequest }
     | { $case: "deactivateHostWorkRuntime"; value: DeactivateHostWorkRuntimeRequest }
+    | { $case: "startHostWork"; value: StartHostWorkRequest }
     | undefined;
 }
 
@@ -448,6 +449,7 @@ export interface Response {
     /** Epoch 23: local completed-turn usage aggregate. */
     { $case: "usageSummary"; value: UsageSummary }
     | { $case: "hostExecutionPolicy"; value: HostExecutionPolicy }
+    | { $case: "hostWorkResult"; value: HostWorkResult }
     | undefined;
 }
 
@@ -624,6 +626,17 @@ export interface PrepareHostWorkRuntimeRequest {
 }
 
 export interface DeactivateHostWorkRuntimeRequest {
+}
+
+export interface StartHostWorkRequest {
+  projectId: string;
+  threadId: string;
+  prompt: string;
+}
+
+export interface HostWorkResult {
+  run: Run | undefined;
+  assistantText: string;
 }
 
 export interface HostExecutionPolicy {
@@ -1694,6 +1707,9 @@ export const Request: MessageFns<Request> = {
       case "deactivateHostWorkRuntime":
         DeactivateHostWorkRuntimeRequest.encode(message.operation.value, writer.uint32(570).fork()).join();
         break;
+      case "startHostWork":
+        StartHostWorkRequest.encode(message.operation.value, writer.uint32(578).fork()).join();
+        break;
     }
     return writer;
   },
@@ -2299,6 +2315,14 @@ export const Request: MessageFns<Request> = {
           };
           continue;
         }
+        case 72: {
+          if (tag !== 578) {
+            break;
+          }
+
+          message.operation = { $case: "startHostWork", value: StartHostWorkRequest.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2818,6 +2842,15 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "startHostWork": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "startHostWork",
+            value: StartHostWorkRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2931,6 +2964,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "hostExecutionPolicy":
         HostExecutionPolicy.encode(message.result.value, writer.uint32(282).fork()).join();
+        break;
+      case "hostWorkResult":
+        HostWorkResult.encode(message.result.value, writer.uint32(290).fork()).join();
         break;
     }
     return writer;
@@ -3233,6 +3269,14 @@ export const Response: MessageFns<Response> = {
           message.result = { $case: "hostExecutionPolicy", value: HostExecutionPolicy.decode(reader, reader.uint32()) };
           continue;
         }
+        case 36: {
+          if (tag !== 290) {
+            break;
+          }
+
+          message.result = { $case: "hostWorkResult", value: HostWorkResult.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3485,6 +3529,12 @@ export const Response: MessageFns<Response> = {
             $case: "hostExecutionPolicy",
             value: HostExecutionPolicy.fromPartial(object.result.value),
           };
+        }
+        break;
+      }
+      case "hostWorkResult": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = { $case: "hostWorkResult", value: HostWorkResult.fromPartial(object.result.value) };
         }
         break;
       }
@@ -5410,6 +5460,134 @@ export const DeactivateHostWorkRuntimeRequest: MessageFns<DeactivateHostWorkRunt
   },
   fromPartial(_: DeepPartial<DeactivateHostWorkRuntimeRequest>): DeactivateHostWorkRuntimeRequest {
     const message = createBaseDeactivateHostWorkRuntimeRequest();
+    return message;
+  },
+};
+
+function createBaseStartHostWorkRequest(): StartHostWorkRequest {
+  return { projectId: "", threadId: "", prompt: "" };
+}
+
+export const StartHostWorkRequest: MessageFns<StartHostWorkRequest> = {
+  encode(message: StartHostWorkRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.projectId !== "") {
+      writer.uint32(10).string(message.projectId);
+    }
+    if (message.threadId !== "") {
+      writer.uint32(18).string(message.threadId);
+    }
+    if (message.prompt !== "") {
+      writer.uint32(26).string(message.prompt);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): StartHostWorkRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseStartHostWorkRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.projectId = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.threadId = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.prompt = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<StartHostWorkRequest>): StartHostWorkRequest {
+    return StartHostWorkRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<StartHostWorkRequest>): StartHostWorkRequest {
+    const message = createBaseStartHostWorkRequest();
+    message.projectId = object.projectId ?? "";
+    message.threadId = object.threadId ?? "";
+    message.prompt = object.prompt ?? "";
+    return message;
+  },
+};
+
+function createBaseHostWorkResult(): HostWorkResult {
+  return { run: undefined, assistantText: "" };
+}
+
+export const HostWorkResult: MessageFns<HostWorkResult> = {
+  encode(message: HostWorkResult, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.run !== undefined) {
+      Run.encode(message.run, writer.uint32(10).fork()).join();
+    }
+    if (message.assistantText !== "") {
+      writer.uint32(18).string(message.assistantText);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): HostWorkResult {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseHostWorkResult();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.run = Run.decode(reader, reader.uint32());
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.assistantText = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<HostWorkResult>): HostWorkResult {
+    return HostWorkResult.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<HostWorkResult>): HostWorkResult {
+    const message = createBaseHostWorkResult();
+    message.run = (object.run !== undefined && object.run !== null) ? Run.fromPartial(object.run) : undefined;
+    message.assistantText = object.assistantText ?? "";
     return message;
   },
 };

@@ -44,7 +44,7 @@ use grok_artifact_storage::UnavailableArtifactContent;
 use grok_credential_enrollment::NativeCredentialEnrollment;
 use grok_daemon::{
     AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, GrokAcpRoleFactory,
-    HostWorkRuntime, VerifiedHostToolsHelper, serve_connection,
+    HostWorkRuntime, HostWorkService, VerifiedHostToolsHelper, serve_connection,
 };
 use grok_domain::{AutomationSchedulerOwnerId, ChatRail};
 use grok_memory::{
@@ -273,14 +273,14 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         None
     };
     let mut daemon = Daemon::new(
-        runs,
+        runs.clone(),
         approvals,
         credentials.clone(),
         clock.clone(),
         startup_nonce.value,
         instance_id,
     )
-    .with_workspace(workspace)
+    .with_workspace(workspace.clone())
     .with_automation_scheduler(automation_scheduler, automation_scheduler_lifecycle)
     .with_artifacts(
         artifacts,
@@ -305,7 +305,19 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
     }
     let daemon = Arc::new(match configured_agent_runtime(runtime_vault).await {
         AgentRuntimeConfiguration::NotConfigured => daemon,
-        AgentRuntimeConfiguration::Available(runtime) => daemon.with_host_work_runtime(runtime),
+        AgentRuntimeConfiguration::Available(runtime) => {
+            let service = Arc::new(HostWorkService::new(
+                runtime.clone(),
+                stores.host_execution_policy.clone(),
+                stores.execution.clone(),
+                runs,
+                workspace,
+                host_tools_endpoint_base()?,
+            ));
+            daemon
+                .with_host_work_runtime(runtime)
+                .with_host_work_service(service)
+        }
         AgentRuntimeConfiguration::Unavailable(reason) => {
             daemon.with_unavailable_agent_runtime(reason)
         }
@@ -1275,6 +1287,20 @@ fn default_grok_home_spec() -> Result<GrokHomeSpec, DynError> {
         directories.data_local_dir().to_path_buf(),
         installation_id,
     )?)
+}
+
+fn host_tools_endpoint_base() -> Result<PathBuf, DynError> {
+    let directories = directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
+        .ok_or("operating system did not provide a local application data directory")?;
+    let path = directories.data_local_dir().join("host-tools-runtime");
+    std::fs::create_dir_all(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(path)
 }
 
 fn configured_host_tools_helper() -> Option<VerifiedHostToolsHelper> {

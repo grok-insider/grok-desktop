@@ -84,6 +84,7 @@ message Request {
     RevokeHostExecutionRequest revoke_host_execution = 69;
     PrepareHostWorkRuntimeRequest prepare_host_work_runtime = 70;
     DeactivateHostWorkRuntimeRequest deactivate_host_work_runtime = 71;
+    StartHostWorkRequest start_host_work = 72;
   }
 }
 
@@ -127,6 +128,7 @@ message Response {
     // Epoch 23: local completed-turn usage aggregate.
     UsageSummary usage_summary = 34;
     HostExecutionPolicy host_execution_policy = 35;
+    HostWorkResult host_work_result = 36;
   }
 }
 
@@ -301,6 +303,17 @@ message RevokeHostExecutionRequest {
 
 message PrepareHostWorkRuntimeRequest {}
 message DeactivateHostWorkRuntimeRequest {}
+
+message StartHostWorkRequest {
+  string project_id = 1;
+  string thread_id = 2;
+  string prompt = 3;
+}
+
+message HostWorkResult {
+  Run run = 1;
+  string assistant_text = 2;
+}
 
 message HostExecutionPolicy {
   uint64 revision = 1;

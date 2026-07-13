@@ -94,6 +94,23 @@ impl HostToolBridge {
         })
     }
 
+    /// Fails closed until the audited Windows named-pipe peer verifier is
+    /// composed.
+    #[cfg(not(unix))]
+    pub fn start(
+        _base: &Path,
+        _run_id: RunId,
+        _policy_revision: u64,
+        _helper: VerifiedHostToolsHelper,
+        _policies: Arc<dyn HostExecutionPolicyStore>,
+        _executions: Arc<dyn ExecutionStore>,
+        _filesystem: Arc<dyn HostFilesystemReader>,
+    ) -> Result<Self, StoreError> {
+        Err(StoreError::Unavailable(
+            "Host Tools platform endpoint unavailable".into(),
+        ))
+    }
+
     /// Returns the private endpoint locator passed to the packaged helper.
     #[must_use]
     pub fn endpoint(&self) -> &str {

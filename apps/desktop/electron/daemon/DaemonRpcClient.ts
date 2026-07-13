@@ -35,8 +35,8 @@ import {
   type SuperGrokEnrollmentStatus,
 } from "../generated/daemon/v1/daemon.js";
 
-// Epoch twenty-one adds daemon-owned SuperGrok enrollment while preserving epoch twenty fail-closed surfaces.
-export const PROTOCOL_VERSION = 25;
+// Epoch twenty-six adds daemon-owned Host Work dispatch while preserving older fail-closed surfaces.
+export const PROTOCOL_VERSION = 26;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;

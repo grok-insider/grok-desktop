@@ -3,6 +3,7 @@
 mod handler;
 mod host_tool_bridge;
 mod host_work_runtime;
+mod host_work_service;
 mod managed_integration;
 mod transport;
 
@@ -13,6 +14,7 @@ pub use host_tool_bridge::HostToolBridge;
 pub use host_work_runtime::{
     GrokAcpRoleFactory, HostWorkRoleFactory, HostWorkRuntime, VerifiedHostToolsHelper,
 };
+pub use host_work_service::{HostWorkOutcome, HostWorkService};
 pub use managed_integration::{
     IntegrationRecord, ManagedIntegrationAction, ManagedIntegrationError,
     ManagedIntegrationService, ManagedIntegrationState, VerifiedManifest,

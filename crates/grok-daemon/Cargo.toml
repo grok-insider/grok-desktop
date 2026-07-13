@@ -13,6 +13,7 @@ debug-linux-vm-service = []
 [dependencies]
 async-trait.workspace = true
 directories.workspace = true
+futures-util.workspace = true
 grok-acp = { path = "../grok-acp", version = "0.1.0" }
 grok-artifact-storage = { path = "../grok-artifact-storage", version = "0.1.0" }
 grok-application = { path = "../grok-application", version = "0.1.0" }

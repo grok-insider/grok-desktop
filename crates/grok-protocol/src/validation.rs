@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 25);
+        assert_eq!(PROTOCOL_VERSION, 26);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -1143,5 +1143,45 @@ mod tests {
             v1::Run::decode(run.encode_to_vec().as_slice()).expect("decode bound Work run"),
             run
         );
+    }
+
+    #[test]
+    fn epoch_twenty_six_host_work_request_and_result_round_trip() {
+        let start = v1::StartHostWorkRequest {
+            project_id: "project-1".into(),
+            thread_id: "thread-1".into(),
+            prompt: "Inspect the workspace".into(),
+        };
+        let mut envelope = request();
+        envelope.payload = Some(v1::envelope::Payload::Request(v1::Request {
+            operation: Some(v1::request::Operation::StartHostWork(start.clone())),
+        }));
+        let decoded = v1::Envelope::decode(envelope.encode_to_vec().as_slice())
+            .expect("decode Host Work request");
+        let Some(v1::envelope::Payload::Request(request)) = decoded.payload else {
+            panic!("request payload");
+        };
+        assert!(matches!(
+            request.operation,
+            Some(v1::request::Operation::StartHostWork(value)) if value == start
+        ));
+
+        let result = v1::HostWorkResult {
+            run: Some(v1::Run {
+                kind: v1::RunKind::Work as i32,
+                work_backend: v1::WorkExecutionBackend::HostDirect as i32,
+                ..v1::Run::default()
+            }),
+            assistant_text: "Workspace inspected".into(),
+        };
+        let response = v1::Response {
+            result: Some(v1::response::Result::HostWorkResult(result.clone())),
+        };
+        let decoded = v1::Response::decode(response.encode_to_vec().as_slice())
+            .expect("decode Host Work result");
+        assert!(matches!(
+            decoded.result,
+            Some(v1::response::Result::HostWorkResult(value)) if value == result
+        ));
     }
 }

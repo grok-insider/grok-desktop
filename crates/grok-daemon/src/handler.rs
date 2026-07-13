@@ -40,20 +40,21 @@ use grok_protocol::{
     desktop_preferences_to_wire, event_to_wire, import_artifact_from_wire,
     imported_artifact_to_wire, message_to_wire, missed_run_policy_from_wire,
     open_artifact_from_wire, overlap_policy_from_wire, project_to_wire, remove_artifact_from_wire,
-    removed_artifact_to_wire, thread_to_wire, usage_summary_to_wire, v1, validate_envelope,
-    workspace_search_hit_to_wire,
+    removed_artifact_to_wire, run_to_wire, thread_to_wire, usage_summary_to_wire, v1,
+    validate_envelope, workspace_search_hit_to_wire,
 };
 use prost::Message as _;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedSemaphorePermit, Semaphore, oneshot};
 
-use crate::HostWorkRuntime;
 use crate::transport::MAX_FRAME_BYTES;
+use crate::{HostWorkRuntime, HostWorkService};
 
 const MAX_DISPATCH_DURATION: Duration = Duration::from_mins(1);
 const MAX_CREDENTIAL_ENROLLMENT_DURATION: Duration = Duration::from_mins(2);
 const MAX_CONVERSATION_DISPATCH_DURATION: Duration = Duration::from_secs(50);
+const MAX_HOST_WORK_DISPATCH_DURATION: Duration = Duration::from_mins(5);
 const CONVERSATION_CLEANUP_GRACE: Duration = Duration::from_secs(2);
 const CONVERSATION_RECONCILIATION_RETRY: Duration = Duration::from_millis(100);
 const MAX_CONVERSATION_RECONCILIATION_ATTEMPTS: usize = 5;
@@ -539,6 +540,7 @@ const fn operation_dispatch_limit(operation: &v1::request::Operation) -> Duratio
         | v1::request::Operation::RegenerateConversationTurn(_) => {
             MAX_CONVERSATION_DISPATCH_DURATION
         }
+        v1::request::Operation::StartHostWork(_) => MAX_HOST_WORK_DISPATCH_DURATION,
         v1::request::Operation::PollRunEvents(_)
         | v1::request::Operation::PollConversationTurnEvents(_) => {
             MAX_RUN_EVENT_POLL_DISPATCH_DURATION
@@ -657,6 +659,7 @@ pub struct Daemon {
     agent_runtime: Option<Arc<dyn AgentRuntime>>,
     agent_runtime_failure: Option<AgentRuntimeUnavailableReason>,
     host_work_runtime: Option<Arc<HostWorkRuntime>>,
+    host_work_service: Option<Arc<HostWorkService>>,
     workspace: Option<Arc<WorkspaceService>>,
     automation_scheduler: Option<Arc<AutomationSchedulerService>>,
     automation_scheduler_lifecycle: AutomationSchedulerLifecycle,
@@ -707,6 +710,7 @@ impl Daemon {
             agent_runtime: None,
             agent_runtime_failure: None,
             host_work_runtime: None,
+            host_work_service: None,
             workspace: None,
             automation_scheduler: None,
             automation_scheduler_lifecycle: AutomationSchedulerLifecycle::DegradedExecutionDisabled,
@@ -867,6 +871,13 @@ impl Daemon {
     pub fn with_host_work_runtime(mut self, runtime: Arc<HostWorkRuntime>) -> Self {
         self.host_work_runtime = Some(runtime.clone());
         self.with_agent_runtime(runtime)
+    }
+
+    /// Adds the productive Host Work orchestration service.
+    #[must_use]
+    pub fn with_host_work_service(mut self, service: Arc<HostWorkService>) -> Self {
+        self.host_work_service = Some(service);
+        self
     }
 
     /// Records a configured runtime that failed before it could be retained.
@@ -1111,6 +1122,9 @@ impl Daemon {
             }
             Some(v1::request::Operation::DeactivateHostWorkRuntime(_)) => {
                 self.deactivate_host_work_runtime().await
+            }
+            Some(v1::request::Operation::StartHostWork(request)) => {
+                self.start_host_work(request, idempotency_key).await
             }
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
@@ -1712,6 +1726,28 @@ impl Daemon {
         Ok(v1::response::Result::HostExecutionPolicy(
             host_execution_policy_to_wire(policy, false),
         ))
+    }
+
+    async fn start_host_work(
+        &self,
+        request: v1::StartHostWorkRequest,
+        key: Option<&str>,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let service = self.host_work_service.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("Host Work service is not configured".into())
+        })?;
+        let outcome = service
+            .execute(
+                &request.project_id,
+                &request.thread_id,
+                &request.prompt,
+                mutation_key(key)?,
+            )
+            .await?;
+        Ok(v1::response::Result::HostWorkResult(v1::HostWorkResult {
+            run: Some(run_to_wire(outcome.run)),
+            assistant_text: outcome.assistant_text,
+        }))
     }
 
     async fn revoke_host_execution(

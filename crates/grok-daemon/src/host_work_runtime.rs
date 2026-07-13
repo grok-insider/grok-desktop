@@ -274,6 +274,12 @@ impl HostWorkRuntime {
         self.state.lock().await.role == Role::Work
     }
 
+    /// Returns the retained helper identity only after composition verified it.
+    #[must_use]
+    pub fn helper(&self) -> Option<VerifiedHostToolsHelper> {
+        self.helper.clone()
+    }
+
     async fn current(&self) -> Result<Arc<dyn AgentRuntime>, AgentRuntimeError> {
         self.state
             .lock()
