@@ -524,7 +524,7 @@ mod tests {
         let peer = peer.canonicalize().unwrap_or(peer);
 
         let mut child = spawn_vm_service(&socket, image_root.path(), &peer);
-        wait_for_socket(&mut child, &socket, Duration::from_secs(60));
+        wait_for_socket(&mut child, &socket, Duration::from_mins(1));
 
         // Ensure ALLOWED_DAEMON matches SO_PEERCRED peer of this test process.
         let transport = LinuxVmServiceGuestTransport::new(
