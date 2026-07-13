@@ -93,7 +93,11 @@ import {
   resolveDevelopmentAcpDescriptor,
 } from "./developmentAcpDescriptor.js";
 
-const STARTUP_TIMEOUT_MS = 10_000;
+// Daemon composition probes the optional official ACP runtime with a bounded
+// 15-second initialization window before binding IPC. Keep the supervisor's
+// deadline above that boundary so an unavailable Work runtime degrades the
+// daemon instead of making every core capability look like a startup failure.
+const STARTUP_TIMEOUT_MS = 25_000;
 const CONNECT_ATTEMPT_TIMEOUT_MS = 500;
 const RETRY_DELAY_MS = 100;
 const MAX_UNEXPECTED_RESTARTS_PER_MINUTE = 3;

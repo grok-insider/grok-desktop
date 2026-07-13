@@ -182,6 +182,8 @@ pub enum AgentPermissionDecision {
 pub enum AgentRuntimeErrorKind {
     /// External component failed verification.
     ComponentVerification,
+    /// Daemon-owned runtime configuration could not be secured or validated.
+    ConfigurationIsolation,
     /// Agent process could not start or exited unexpectedly.
     Process,
     /// Agent emitted malformed or incompatible ACP messages.

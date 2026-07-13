@@ -32,6 +32,8 @@ export function grokBuildAgentRuntimeDetail(runtime?: {
       return "Grok Build agent configuration is invalid. Check development GROK_ACP_* overrides (executable, version, sha256) or rebuild with the signed managed catalog trust keys.";
     case "component_verification_failed":
       return "Official Grok Build component verification failed. Reinstall the signed component or refresh the development grok binary descriptor.";
+    case "agent_configuration_isolation_failed":
+      return "The isolated Grok Build configuration was changed or could not be secured. Restore the managed configuration or recreate the managed runtime.";
     case "agent_process_unavailable":
       return "The official Grok Build agent process could not be started or exited early.";
     case "agent_protocol_unavailable":

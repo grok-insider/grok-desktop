@@ -82,6 +82,32 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn reports_configuration_isolation_failure_after_managed_home_tampering() {
+    let fixture = Fixture::compile();
+    let (runtime, _host) = fixture.runtime(Duration::from_secs(1)).await;
+    runtime.shutdown().await.expect("shutdown initial runtime");
+    std::fs::write(
+        fixture.home.home_path().join("config.toml"),
+        b"[models]\ndefault = \"unmanaged\"\n",
+    )
+    .expect("tamper with managed configuration");
+
+    let (_host, broker) = permission_channel(
+        NonZeroUsize::new(2).expect("nonzero"),
+        Duration::from_secs(1),
+    );
+    let config = GrokAcpConfig::isolated_guest(
+        fixture.component.clone(),
+        vec![fixture.root.clone()],
+        fixture.home.clone(),
+    );
+    let error = GrokAcpRuntime::start(config, broker)
+        .await
+        .expect_err("tampered configuration must fail closed");
+    assert_eq!(error.kind, AgentRuntimeErrorKind::ConfigurationIsolation);
+}
+
+#[tokio::test]
 async fn host_control_runtime_authenticates_but_rejects_sessions() {
     let fixture = Fixture::compile();
     let (host, broker) = permission_channel(

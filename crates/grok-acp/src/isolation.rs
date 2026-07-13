@@ -36,6 +36,13 @@ rules = false
 agents = false
 mcps = false
 hooks = false
+
+[marketplace]
+official_marketplace_auto_installed = true
+
+[[marketplace.sources]]
+name = "xAI Official"
+git = "https://github.com/xai-org/plugin-marketplace.git"
 "#;
 
 const REQUIREMENTS_TOML: &str = r#"# Managed by Grok Desktop. Manual changes make the runtime unavailable.
@@ -707,12 +714,17 @@ mod tests {
     }
 
     #[test]
-    fn accepts_private_runtime_owned_skills_across_restart_but_keeps_plugins_forbidden() {
+    fn accepts_canonical_official_runtime_state_across_restart() {
         let directory = tempfile::tempdir().expect("tempdir");
         let specification = GrokHomeSpec::new(directory.path().join("app-data"), "runtime-state")
             .expect("specification");
         let provisioned = specification.provision().expect("first provision");
         let home = provisioned.home().to_path_buf();
+        assert!(
+            fs::read_to_string(home.join("config.toml"))
+                .expect("managed configuration")
+                .contains("git = \"https://github.com/xai-org/plugin-marketplace.git\"")
+        );
         drop(provisioned);
 
         fs::create_dir(home.join("skills")).expect("official runtime skills");
@@ -724,11 +736,33 @@ mod tests {
         specification
             .provision()
             .expect("runtime-owned skills survive restart");
+    }
+
+    #[test]
+    fn rejects_unmanaged_plugins_and_modified_marketplace_configuration() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let specification = GrokHomeSpec::new(directory.path().join("app-data"), "runtime-state")
+            .expect("specification");
+        let provisioned = specification.provision().expect("first provision");
+        let home = provisioned.home().to_path_buf();
+        drop(provisioned);
 
         fs::create_dir(home.join("plugins")).expect("unmanaged plugins");
         assert!(matches!(
             specification.provision(),
             Err(GrokHomeError::UnexpectedConfiguration)
+        ));
+
+        fs::remove_dir(home.join("plugins")).expect("remove unmanaged plugins");
+        let config = home.join("config.toml");
+        let modified = CONFIG_TOML.replace(
+            "https://github.com/xai-org/plugin-marketplace.git",
+            "https://example.invalid/untrusted-marketplace.git",
+        );
+        fs::write(config, modified).expect("modify marketplace source");
+        assert!(matches!(
+            specification.provision(),
+            Err(GrokHomeError::UnexpectedConfiguration | GrokHomeError::UnsafeFilesystemObject)
         ));
     }
 

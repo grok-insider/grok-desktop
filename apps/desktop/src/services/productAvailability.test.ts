@@ -34,5 +34,8 @@ describe("productAvailability", () => {
     expect(
       grokBuildAgentRuntimeDetail({ reasonCode: "component_verification_failed" }),
     ).toMatch(/verification failed/i);
+    expect(
+      grokBuildAgentRuntimeDetail({ reasonCode: "agent_configuration_isolation_failed" }),
+    ).toMatch(/configuration was changed or could not be secured/i);
   });
 });

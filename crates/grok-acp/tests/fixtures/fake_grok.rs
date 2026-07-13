@@ -2,7 +2,7 @@ use std::io::{self, BufRead, Write};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args != ["--no-auto-update", "agent", "stdio"] {
+    if args != ["agent", "stdio"] {
         std::process::exit(64);
     }
     let grok_home = std::env::var_os("GROK_HOME").expect("GROK_HOME");

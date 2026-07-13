@@ -105,6 +105,7 @@ fn map_runtime(error: crate::AgentRuntimeError) -> ApplicationError {
         AgentRuntimeErrorKind::Authentication => ApplicationError::Unauthorized(error.message),
         AgentRuntimeErrorKind::InvalidRequest => ApplicationError::InvalidInput(error.message),
         AgentRuntimeErrorKind::ComponentVerification
+        | AgentRuntimeErrorKind::ConfigurationIsolation
         | AgentRuntimeErrorKind::Process
         | AgentRuntimeErrorKind::Protocol
         | AgentRuntimeErrorKind::Permission

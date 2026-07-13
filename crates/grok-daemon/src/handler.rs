@@ -494,7 +494,8 @@ fn agent_runtime_application_error(error: grok_application::AgentRuntimeError) -
         AgentRuntimeErrorKind::Authentication => ApplicationError::Unauthorized(error.message),
         AgentRuntimeErrorKind::ComponentVerification => ApplicationError::Integrity(error.message),
         AgentRuntimeErrorKind::Cancelled => ApplicationError::Cancelled,
-        AgentRuntimeErrorKind::Process
+        AgentRuntimeErrorKind::ConfigurationIsolation
+        | AgentRuntimeErrorKind::Process
         | AgentRuntimeErrorKind::Protocol
         | AgentRuntimeErrorKind::Permission
         | AgentRuntimeErrorKind::Unavailable => ApplicationError::Unavailable(error.message),
@@ -3216,6 +3217,7 @@ fn runtime_probe_to_wire(probe: AgentRuntimeProbe) -> v1::AgentRuntimeHealth {
 const fn runtime_error_code(kind: AgentRuntimeErrorKind) -> &'static str {
     match kind {
         AgentRuntimeErrorKind::ComponentVerification => "component_verification_failed",
+        AgentRuntimeErrorKind::ConfigurationIsolation => "agent_configuration_isolation_failed",
         AgentRuntimeErrorKind::Process => "agent_process_unavailable",
         AgentRuntimeErrorKind::Protocol => "agent_protocol_unavailable",
         AgentRuntimeErrorKind::InvalidRequest => "agent_request_invalid",

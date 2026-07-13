@@ -611,7 +611,7 @@ fn spawn_component(
     }
     let mut command = CommandWrap::with_new(component.executable(), |command| {
         command
-            .args(["--no-auto-update", "agent", "stdio"])
+            .args(["agent", "stdio"])
             .current_dir(grok_home.launch_directory())
             .env_clear()
             .envs(isolated_environment(grok_home))
@@ -1311,7 +1311,7 @@ fn component_error(error: impl std::fmt::Display) -> AgentRuntimeError {
 
 fn isolation_error(_error: impl std::fmt::Display) -> AgentRuntimeError {
     AgentRuntimeError {
-        kind: AgentRuntimeErrorKind::Unavailable,
+        kind: AgentRuntimeErrorKind::ConfigurationIsolation,
         message: "official Grok configuration isolation failed".into(),
         retryable: false,
     }
