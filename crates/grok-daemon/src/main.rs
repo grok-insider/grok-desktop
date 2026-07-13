@@ -1663,7 +1663,7 @@ async fn stores() -> Result<Stores, DynError> {
             let path = std::path::PathBuf::from(path);
             let artifact_content_base = absolute_parent(&path)?;
             let store = SqlCipherStore::open(path, provider).await?;
-            let vault = os_vault()?;
+            let vault = debug_configured_vault()?;
             info!("using debug-configured persistent SQLCipher execution store");
             Ok(Stores::from_store(
                 Arc::new(store.clone()),
@@ -1719,6 +1719,14 @@ fn absolute_parent(path: &Path) -> Result<PathBuf, DynError> {
 fn os_vault() -> Result<Arc<dyn SecretVault>, DynError> {
     let installation_id = installation_id()?;
     Ok(Arc::new(OsVault::new(&installation_id)?))
+}
+
+fn debug_configured_vault() -> Result<Arc<dyn SecretVault>, DynError> {
+    match std::env::var_os("GROK_DAEMON_TEST_EPHEMERAL_VAULT") {
+        None => os_vault(),
+        Some(value) if value == "1" => Ok(Arc::new(InMemorySecretVault::new())),
+        Some(_) => Err("GROK_DAEMON_TEST_EPHEMERAL_VAULT must be exactly 1".into()),
+    }
 }
 
 fn default_database_path() -> Result<std::path::PathBuf, DynError> {

@@ -25,11 +25,6 @@ use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command, time::Instant};
 const DATABASE_KEY: [u8; 32] = [67; 32];
 const STARTUP_NONCE: [u8; 32] = [9; 32];
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
-// These tests launch full daemon processes that share process-external test
-// resources (including the installation namespace). Keep their lifecycle
-// sequential while still allowing the rest of the Rust test suite to run in
-// parallel.
-static PROCESS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InitialState {
@@ -236,6 +231,7 @@ fn daemon_command(path: &Path, address: SocketAddr) -> Command {
     command
         .env("GROK_DATABASE_PATH", path)
         .env("GROK_DATABASE_KEY_HEX", hex::encode(DATABASE_KEY))
+        .env("GROK_DAEMON_TEST_EPHEMERAL_VAULT", "1")
         .env("GROK_DAEMON_DEV_TCP_ADDR", address.to_string())
         .env("GROK_DAEMON_STARTUP_NONCE_STDIN", "1")
         .env("GROK_INSTALLATION_ID", "conversation-startup-recovery-test")
@@ -343,7 +339,6 @@ async fn assert_recovery_state(path: &Path, seeded: &[SeededTurn], terminal_coun
 
 #[tokio::test]
 async fn exact_conversation_recovery_bound_serves_without_provider_redispatch() {
-    let _process_test_guard = PROCESS_TEST_LOCK.lock().await;
     let directory = tempfile::tempdir().expect("temporary daemon database directory");
     let path = directory.path().join("conversation-recovery-max.db");
     let seeded = seed_incomplete_turns(&path, MAX_CONVERSATION_RECOVERY_BATCH).await;
@@ -363,7 +358,6 @@ async fn exact_conversation_recovery_bound_serves_without_provider_redispatch() 
 
 #[tokio::test]
 async fn oversized_conversation_recovery_blocks_ipc_then_later_startup_continues() {
-    let _process_test_guard = PROCESS_TEST_LOCK.lock().await;
     let directory = tempfile::tempdir().expect("temporary daemon database directory");
     let path = directory.path().join("conversation-recovery-overflow.db");
     let seeded = seed_incomplete_turns(&path, MAX_CONVERSATION_RECOVERY_BATCH + 1).await;
