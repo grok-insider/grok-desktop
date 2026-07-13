@@ -35,7 +35,7 @@ the design sections below preserve the decisions and contracts that led to it.
 | ADR and invariants | Complete | ADR 0032, AGENTS, architecture principles, threat model |
 | ACP feasibility boundary | Complete | constrained HostWorkTools role, exclusive ACP-home ownership, fail-closed runtime preparation |
 | Durable policy | Complete | SQLCipher schemas 25–26; versioned enrollment, roots, tool classes, revision and replay journal |
-| Capability and IPC | Complete | protocol epochs 25–28; daemon-owned `work_execution_mode`, readiness, run list and approval projection |
+| Capability and IPC | Complete | protocol epochs 25–28; daemon-owned `work_execution_backend`, readiness, authoritative active-run state, run list and approval projection |
 | Host bridge | Complete | packaged stdio MCP helper, authenticated per-run daemon bridge, bounded framing and peer/run binding |
 | Filesystem tools | Complete | capability-rooted list/read plus reparse-aware write validation |
 | Mutating tools | Complete | exact write/process approval, intent-before-effect journal, bounded argv/environment/output, interruption review |
@@ -60,6 +60,9 @@ e4d0f39 feat(sqlcipher): journal host enrollment mutations
 202663c feat(work): secure and package host tools bridge
 18b3c0a feat(desktop): expose explicit host tools work mode
 94d2f17 fix(security): enforce frame policy in protocol headers
+e082917 fix(nix): refresh guest runner module hash
+a4ca0ab docs(work): reconcile host tools implementation
+d268147 fix(work): close host authority state gaps
 ```
 
 Still open by design or external qualification:
@@ -69,10 +72,9 @@ Still open by design or external qualification:
 - Exact signed Windows x64/ARM64 installers still require the documented native
   Windows workers; Linux cross-compilation is not release evidence.
 - Third-party Host MCP installers and host computer-use remain out of scope.
-- The current host could not start Wisp's native nested compositor because its
-  MCP service lacked `XDG_RUNTIME_DIR`. Headless Wisp renderer QA and production
-  Electron CDP qualification passed. Future native GUI runs must use Wisp's
-  hidden compositor and CDP so they never take focus from the user's desktop.
+- Native production Electron now runs successfully in Wisp's hidden compositor
+  with an explicit private `XDG_RUNTIME_DIR`; Chrome DevTools MCP attached to
+  its loopback CDP target without taking focus from the user's desktop.
 
 ---
 
@@ -127,7 +129,7 @@ Product surfaces at the design baseline reflected Limited Mode:
 1. Three stable product states: **Limited Mode**, **Host Tools**, **Isolated Work**.
 2. **Conscious risk enrollment** before any host tool execution.
 3. A concrete **Host Tools agent/runtime model** that maps Grok Build Work sessions → policy → approvals → host ops without silent guest fallback.
-4. Parallel backends behind one product UI, with **dedicated `work_execution_mode` projection** (not overloaded `reason_code`).
+4. Parallel backends behind one product UI, with **dedicated `work_execution_backend` projection** (not overloaded `reason_code`).
 5. Structural non-inheritance: Chat and scheduled automations cannot dispatch Host tools.
 6. Daemon authority: policy, path validation, approvals, effect journaling, secrets.
 7. Incremental PRs with **no-silent-fallback tests early** and **execution bridge before FS tools**.
@@ -172,12 +174,11 @@ started Work run may be bound to a non-executing backend. Runs also gain a
 
 ```text
 // Single definition — see also host_work_runtime_ready() below. No alternate branches.
-fn resolve_backend(facts, policy, release_policy) -> Option<WorkExecutionBackend> {
+fn resolve_backend(facts, policy) -> Option<WorkExecutionBackend> {
   if facts.strong_isolation_ready && facts.subscription_authenticated {
     return IsolatedGuest;  // preempts Host
   }
-  if flag.enabled
-     && policy.is_effectively_active(now, daemon_boot_id)
+  if policy.is_effectively_active()
      && facts.subscription_authenticated
      && facts.host_work_runtime_ready
   {
@@ -204,18 +205,15 @@ Rules:
 |------------|---------------|----------------|---------|
 | Work | `subscription && strong_isolation_ready` | `subscription && host_policy_effective && host_work_runtime_ready` | Unavailable |
 | Shell | same as Work | `host_policy.tool_process_exec` (+ Work host path) | Unavailable |
-| Mcp | `strong_isolation_ready` (reason `mcp_sandbox_unavailable` when not) | deferred: Unavailable with `mcp_sandbox_unavailable` until Host MCP PR; then policy `tool_mcp` | Unavailable |
+| Mcp | `strong_isolation_ready` (reason `mcp_sandbox_unavailable` when not) | **Unavailable**: the packaged Host Tools transport is internal and does not grant arbitrary MCP capability | Unavailable |
 | BrowserAutomation / ComputerUse | isolation + respective facts | **Unavailable** | Unavailable |
 
 **Projection rules:**
 
 - When Available: keep `reason_code = "ready"` and human `reason` describing **where** tools run (string only; not a branch key).
-- Backend discrimination uses dedicated IPC fields: `work_execution_mode` + `HostExecutionPolicySnapshot` — **never** Available-time reason codes like `work_backend_host`.
+- Backend discrimination uses the dedicated `work_execution_backend` capability field plus `GetHostExecutionPolicy` — **never** Available-time reason codes like `work_backend_host`.
 - New **Unavailable** reason codes only:
   - `host_tools_not_enrolled`
-  - `host_tools_policy_expired`
-  - `host_tools_revoked`
-  - `host_tools_runtime_unavailable`
   - `host_tools_runtime_not_prepared` — enrolled + HostControl authenticated, but `PrepareHostWorkRuntime` not yet succeeded this daemon lifetime (or deactivated and not re-prepared)
   - `host_tools_runtime_unavailable` — helper/package/IPC factory missing or HostWorkTools cannot compose
   - `host_tools_auth_resume_failed` — prepare/role switch: non-interactive authenticate failed
@@ -229,12 +227,12 @@ Rules:
 | Evaluation point | Behavior |
 |------------------|----------|
 | Capability snapshot / UI refresh | Recompute effective mode from live isolation + policy |
-| **New** Work run start | Bind `run.execution_mode` durably to resolved mode at start; refuse start if Limited |
+| **New** Work run start | Bind `run.work_backend` durably to the resolved backend at start; refuse start if Limited |
 | **Every host tool dispatch** | Re-check: policy still effective, verified runtime/helper still bound, run’s bound mode still allowed. Deny with stable reason if not |
-| Isolation becomes ready mid Host run | **Sticky run mode**: in-flight Host run keeps `HostDirect` until terminal (durable `runs.execution_mode`); **new** runs become Isolated. **Chrome:** while any non-terminal run is Host-bound, keep **HOST TOOLS** warning chrome even if global effective mode is Isolated (see § Persistent indicator). Notice: “Isolated Work is ready — new sessions use the protected guest. This session still runs on this computer.” |
+| Isolation becomes ready mid Host run | **Sticky run mode**: in-flight Host run keeps `HostDirect` until terminal (durable `runs.work_backend`); **new** runs become Isolated. **Chrome:** while any non-terminal run is Host-bound, keep **HOST TOOLS** warning chrome even if global effective mode is Isolated (see § Persistent indicator). Notice: “Isolated Work is ready — new sessions use the protected guest. This session still runs on this computer.” |
 | Isolation lost mid Isolated run | Existing isolation/interrupt paths; do **not** migrate the run to Host mid-flight. New runs may use Host if enrolled |
 | Policy revoked mid Host run | Cancel in-flight tool dispatches; non-idempotent effects → `interrupted_needs_review`; run fails closed |
-| Daemon restart mid Host run | Recover bound mode from `runs.execution_mode`; Host-bound interrupted runs stay Host for review — **never** auto-migrate to Isolated |
+| Daemon restart mid Host run | Recover bound mode from `runs.work_backend`; Host-bound interrupted runs stay Host for review — **never** auto-migrate to Isolated |
 | Isolation probe thrash | Mode may flip on snapshots; **sticky per-run** prevents tool mid-call backend swap. Metrics: `work_mode_transition_total{from,to}` |
 
 ```mermaid
@@ -311,9 +309,9 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 **Step 2 scope:**
 
 - Path roots via **main-process folder chooser**; daemon re-canonicalizes and may reject (see enroll errors).
-- Tool classes: v1 `fs_read`, `fs_write`, `process_exec` (MCP enrollable only when Host MCP ships).
-- Session-bound vs durable expiry.
-- **Max-breadth confirm** (mandatory UX **and** daemon gate): if any root is filesystem root (`/` or drive root `X:\`) or the user’s home directory, UI requires checkbox “I am granting access to my entire home/drive” **and** enroll request must set `max_breadth_acknowledged = true` (included in request fingerprint). Daemon **rejects** broad roots when the flag is false (`InvalidInput` / `host_tools_max_breadth_required`). UI-only check is never sufficient.
+- Tool classes: v1 `fs_read`, `fs_write`, `process_exec`. The packaged MCP helper is an internal transport, not an enrollable fourth class.
+- Consent is durable until explicit revoke. There is no wall-clock or daemon-session expiry in v1; an acknowledgment-version change makes the grant ineffective until re-enrollment.
+- **Broad-scope confirm** (mandatory UX **and** daemon gate): if any root is filesystem root (`/` or drive root `X:\`) or the user’s home directory, UI requires checkbox “I am granting access to my entire home/drive” **and** enroll request must set `broad_scope_acknowledged = true` (included in the request fingerprint). Daemon rejects broad roots when the flag is false. UI-only checking is never sufficient.
 
 **Step 3 typed acknowledgment:**
 
@@ -330,7 +328,7 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 | `active`, not prepared | Limited | yes | no | No Host warning banner; Settings/Work: **Prepare Host Tools runtime**; reason `host_tools_runtime_not_prepared` |
 | `active` | IsolatedGuest | yes | yes | Badge ISOLATED; Settings: Host enrollment “saved, not active (Isolated preferred)”. If Host-bound run still live → HOST TOOLS warning (chrome derivation) |
 | `active` + sticky Host run | IsolatedGuest (global) | yes | yes | Banner: **HOST TOOLS — active session on this computer**; dual plan string |
-| `expired` / `needs_reconsent` | Limited | yes | no | Settings: Re-enable; Work Unavailable |
+| stale acknowledgment / `needs_reconsent` | Limited | yes | no | Settings: Re-enable; Work Unavailable |
 | `active` + verified helper unavailable | Limited | yes | no | reason `host_tools_runtime_not_prepared` |
 | any | Limited | yes | no | Plan “Limited mode” only when Host not effective **and** no Host-bound active run |
 | daemon offline | n/a | n/a | n/a | Plan “Connecting” / degraded — **never** show HOST badge |
@@ -344,12 +342,12 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 | root missing / not directory | Highlight path; “Choose another folder” |
 | root is symlink that escapes or is denied private dir | “This folder can’t be used” |
 | empty tool classes | Disable Continue on step 2 |
-| `host_tools_max_breadth_required` | Highlight roots; force max-breadth checkbox + re-submit |
-| feature disabled | Block enroll; explain |
+| broad root without acknowledgment | Highlight roots; force broad-scope checkbox + re-submit |
+| verified helper unavailable | Keep Work unavailable; explain that the signed Host Tools runtime is missing |
 
 **Folder picker:** Electron main `dialog.showOpenDialog({ properties: ['openDirectory'] })` only supplies **candidates**. Daemon `EnrollHostExecution` is authoritative: exists, is directory, canonicalize, reject reparse-escape, reject daemon private paths (DB, vault, guest images, integration staging).
 
-**Typed phrase / IME:** v1 ships a single exact Unicode NFC-normalized English phrase; comparison is exact after NFC. Localization of the **required typed string** is deferred (Open Question); UI chrome may be localized without changing the typed constant until a new ack version.
+**Typed phrase / IME:** v1 ships one exact English phrase. The daemon trims surrounding whitespace and otherwise compares the phrase exactly. Localization of the **required typed string** requires a new acknowledgment version; UI chrome may be localized independently.
 
 **Banner a11y:** `role="status"` + `aria-live="polite"` for appearance; Disable control is a real `<button>`; warning colors meet DESIGN.md contrast notes for Clay on soft surfaces.
 
@@ -360,7 +358,7 @@ Shell chrome must **not** show pure Isolated branding while host privilege remai
 ```text
 display_host_warning =
   effective_mode == HostDirect
-  OR exists non-terminal run with bound execution_mode == HostDirect
+  OR exists non-terminal run with bound work_backend == HostDirect
 
 display_mode_label =
   if display_host_warning && effective_mode == IsolatedGuest:
@@ -453,9 +451,9 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 | Auth materials | Owned by the official Grok Build component **under that single home** after a successful HostControl `authenticate`. Daemon never copies `auth.json` / tokens (product invariant). |
 | HostControl role | Default when Host Work runtime is **not** prepared/active: authenticate-only, empty workspace roots (today). |
 | Switch → HostWorkTools | **Only via `PrepareHostWorkRuntime`** (or internal re-prepare), **never** as a side effect of `StartWorkRun`. Steps under **role mutex**: (1) require policy effective + HostControl authenticated; (2) shutdown HostControl + drop lock; (3) provision same home as HostWorkTools; (4) start agent; (5) non-interactive `authenticate` resume. |
-| Resume success | Set sticky **`host_work_auth_ready = true`** (process lifetime); keep HostWorkTools role **resident** (warm pool — see idle policy); rebind subscription fact source to HostWorkTools; then `host_work_runtime_ready` becomes true. |
-| Resume failure | **Fail closed:** `host_tools_auth_resume_failed`. Tear down HostWorkTools; restore HostControl; `host_work_auth_ready = false`; UI: Setup re-auth then Prepare again. Never open Host Work unauthenticated. |
-| Switch ← HostControl | Via **`DeactivateHostWorkRuntime`**, Host policy revoke, verified helper/runtime loss, or effective mode permanently leaves Host path without prepared runtime needs. Shutdown HostWorkTools; re-provision HostControl; **sticky `host_work_auth_ready` cleared** (must Prepare again). |
+| Resume success | Retain the authenticated method daemon-side for this process; keep HostWorkTools **resident** (warm pool — see idle policy); then `host_work_runtime_ready` becomes true. No authentication material or separate auth-ready bit is projected to the renderer. |
+| Resume failure | **Fail closed:** tear down HostWorkTools, attempt to restore HostControl, leave runtime readiness false, and require Setup re-auth then Prepare again. Never open Host Work unauthenticated. |
+| Switch ← HostControl | Via **`DeactivateHostWorkRuntime`**, Host policy revoke/re-enroll, verified helper/runtime loss, or daemon exit. Shutdown HostWorkTools and re-provision HostControl; a later Work run requires Prepare again. |
 | What “session state” means | ACP session ids / prompts / MCP helpers die with process or run end. Auth materials the **component** keeps under the shared home may remain for a future Prepare resume — daemon never exports them. |
 | Concurrent roles | **Forbidden**. All provision/start/shutdown under a **daemon `AcpHomeRole` mutex** so `capability_facts` / Prepare / Deactivate / Setup auth cannot double-provision (`RuntimeBusy`). |
 | Auth fact rebind | `subscription_authenticated` is read from the **current role owner**’s last successful authenticate (HostControl or HostWorkTools). While HostWorkTools is resident and authed, Setup interactive auth is busy (`host_tools_runtime_busy`) until Deactivate. |
@@ -469,9 +467,9 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 
 | RPC | Purpose |
 |-----|---------|
-| `PrepareHostWorkRuntime` | Idempotent (key + fingerprint). Performs role switch + non-interactive resume under role mutex. On success: HostWorkTools resident, `host_work_auth_ready=true`, capabilities refresh → HostDirect + Work Available. |
-| `DeactivateHostWorkRuntime` | Inverse: stop HostWorkTools, restore HostControl, clear `host_work_auth_ready`, capabilities → Limited (if isolation still down) with `host_tools_runtime_not_prepared`. |
-| `GetHostWorkRuntimeStatus` | Optional thin read: role, `host_work_auth_ready`, last error reason_code (also on policy snapshot). |
+| `PrepareHostWorkRuntime` | Performs the serialized role switch + non-interactive resume. On success: HostWorkTools resident and capabilities refresh → HostDirect + Work Available. |
+| `DeactivateHostWorkRuntime` | Inverse: stop HostWorkTools, restore HostControl, capabilities → Limited (if isolation is still down) with `host_tools_runtime_not_prepared`. |
+| Runtime status | `GetHostExecutionPolicy.runtime_prepared` and `ResolveCapabilitiesResponse.host_work_runtime_ready` are the public projections. |
 
 **When UI calls Prepare:**
 
@@ -481,7 +479,7 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 
 **Preconditions for Prepare:** policy effective; roots non-empty; packaged helper path verified; IPC factory ready; HostControl currently authenticated (or restore HostControl first if orphaned); no non-terminal Host-bound run requiring opposite transition mid-flight.
 
-**Post-success warm policy:** HostWorkTools **stays up** after Prepare (resident warm runtime) so `host_work_runtime_ready` remains true and the user can start Work without another switch. Idle timeout does **not** auto-deactivate solely to flip Available off (avoids thrash). Optional later: soft idle after N hours with sticky `host_work_auth_ready` only if product accepts re-Prepare without clearing sticky — **v1: no silent auto-deactivate**; only explicit Deactivate, revoke, flag off, or daemon exit.
+**Post-success warm policy:** HostWorkTools **stays up** after Prepare (resident warm runtime) so `host_work_runtime_ready` remains true and the user can start Work without another switch. V1 has no silent idle deactivation; only explicit Deactivate, revoke/re-enroll, runtime loss, or daemon exit removes readiness.
 
 **Return to HostControl-only auth management:** user (or Settings) calls **DeactivateHostWorkRuntime**, or revoke Host policy. Then Setup Grok Build authenticate works on HostControl again.
 
@@ -503,7 +501,7 @@ sequenceDiagram
     D->>HWT: provision same GROK_HOME + start
     D->>HWT: authenticate resume (non-interactive)
     alt ok
-        D->>D: host_work_auth_ready=true; rebind auth facts
+        D->>D: retain authenticated method; runtime ready
         D-->>UI: prepared; Work Available HostDirect
         U->>UI: Start Work turn
         UI->>D: StartWorkRun (mode already HostDirect)
@@ -541,18 +539,15 @@ flowchart LR
 
 fn host_work_runtime_ready(facts) -> bool {
   facts.host_tools_runtime_composable
-  && facts.host_policy_effective          // active, ack version, boot/session valid
+  && facts.host_policy_effective          // active, current ack version, non-empty scope
   && facts.host_roots_non_empty
   && facts.packaged_helper_path_verified
   && facts.host_tools_ipc_factory_ready
-  && facts.host_work_auth_ready           // sticky true only after successful Prepare resume
   && facts.host_work_tools_role_up        // HostWorkTools currently owns shared home
   && facts.host_work_tools_subscription_ok // that process's authenticate succeeded
 }
 
-// Derived sticky facts (daemon memory; not renderer-authored):
-// host_work_auth_ready: set true only by successful PrepareHostWorkRuntime resume;
-//   cleared by Deactivate, revoke, feature off, failed resume, daemon restart.
+// Derived facts are daemon memory, never renderer-authored.
 // host_work_tools_role_up: true iff current AcpHomeRole == HostWorkTools with live process.
 ```
 
@@ -647,14 +642,14 @@ sequenceDiagram
     Note over ACP: Prepare already succeeded; HostWorkTools resident
     U->>UI: Start Work turn
     UI->>D: StartWorkRun (idempotent)
-    D->>D: resolve_mode must be HostDirect; persist runs.execution_mode=HostDirect
+    D->>D: resolve backend must be HostDirect; persist runs.work_backend=HostDirect
     D->>D: create per-run IPC path bound to run_id
     D->>ACP: open_session(cwd, additional_directories, mcp_servers Stdio)
     ACP->>Ag: NewSessionRequest
     Ag->>H: spawn absolute helper (stdio MCP)
     H->>D: connect per-run UDS/pipe peer-auth → inherit run_id
     D->>ACP: prompt(user text)
-    Ag->>H: tools/call host_fs_read|…
+    Ag->>H: tools/call host_filesystem_read|…
     H->>Gate: forward op
     Gate->>Gate: policy class + path under roots
     alt write or exec
@@ -679,9 +674,9 @@ Closed tool names only (helper rejects all others before daemon):
 
 | Tool | Class | Bounds |
 |------|-------|--------|
-| `host_fs_list` | `fs_read` | Max **500** entries per call; names only + type; no recursive unlimited walk (depth default 1, max 3) |
-| `host_fs_read` | `fs_read` | Default max **1 MiB** bytes returned; hard max **8 MiB** (reject above hard max); binary → base64 only under hard max |
-| `host_fs_write` | `fs_write` | Max write **8 MiB** per call; approval + effect |
+| `host_filesystem_list` | `fs_read` | Max **500** entries per call; one directory level only; name, type, and size |
+| `host_filesystem_read` | `fs_read` | Default max **1 MiB** for text; caller-selectable binary read hard max **8 MiB** (reject above hard max) |
+| `host_filesystem_write` | `fs_write` | Max write **8 MiB** per call; approval + effect |
 | `host_process_exec` | `process_exec` | argv array only; approval + effect; exec bounds in § Process execution |
 
 #### Residual agent-native tools and sandbox
@@ -695,7 +690,7 @@ Closed tool names only (helper rejects all others before daemon):
 
 | Concern | Existing type / service |
 |---------|-------------------------|
-| Run lifecycle | `Run` / `ExecutionStore`; **new** durable `execution_mode` column |
+| Run lifecycle | `Run` / `ExecutionStore`; durable `work_backend` column |
 | Approvals | `ApprovalService`, `RequestedAction`, `ApprovalRisk` |
 | Effects | `SideEffectService`, `EffectKind::{FileWrite,ProcessExecution}` |
 | ACP events | `AgentEvent`, `AgentToolCall` |
@@ -740,13 +735,11 @@ pub struct HostExecutionPolicy {
     pub revision: u64,
     pub active: bool,
     pub acknowledgment_version: u32,
-    pub acknowledged_at_unix_ms: u64,
-    pub expires_at_unix_ms: Option<u64>,
-    pub session_bound: bool,
-    pub daemon_boot_id: Option<[u8; 16]>, // set when session_bound
+    pub acknowledged_at: UnixMillis,
     pub tool_classes: HostToolClasses,
-    pub path_roots: Vec<String>, // canonical absolute
-    pub updated_at_unix_ms: u64,
+    pub canonical_roots: Vec<String>, // canonical absolute
+    pub broad_scope_acknowledged: bool,
+    pub updated_at: UnixMillis,
 }
 ```
 
@@ -828,7 +821,7 @@ mode.
 ```rust
 #[async_trait]
 pub trait WorkToolBackend: Send + Sync {
-    fn mode(&self) -> WorkExecutionMode;
+    fn backend(&self) -> WorkExecutionBackend;
     async fn list_dir(&self, req: PathReq) -> Result<DirListing, ApplicationError>;
     async fn read_file(&self, req: PathReq) -> Result<FileBytes, ApplicationError>;
     async fn write_file(&self, req: WriteReq) -> Result<(), ApplicationError>;
@@ -849,37 +842,34 @@ pub trait WorkToolBackend: Send + Sync {
 Dedicated fields (Issue 3 — **required**, not optional):
 
 ```protobuf
-enum WorkExecutionMode {
-  WORK_EXECUTION_MODE_UNSPECIFIED = 0;
-  WORK_EXECUTION_MODE_LIMITED = 1;
-  WORK_EXECUTION_MODE_HOST_DIRECT = 2;
-  WORK_EXECUTION_MODE_ISOLATED_GUEST = 3;
-}
-
-message HostExecutionPolicySnapshot {
-  bool active = 1;
-  bool effective = 2;
-  uint32 acknowledgment_version = 3;
-  uint32 required_acknowledgment_version = 4;
-  bool session_bound = 5;
-  optional uint64 expires_at_unix_ms = 6;
-  repeated string path_roots = 7;
-  HostToolClasses tool_classes = 8;
-  uint64 revision = 9;
-  string enrollment_state = 10; // disabled|active|expired|needs_reconsent
-  bool host_work_runtime_ready = 11;
-  bool host_work_auth_ready = 12;
-  string runtime_role = 13; // host_control | host_work_tools
-  string runtime_reason_code = 14; // e.g. host_tools_runtime_not_prepared
+enum WorkExecutionBackend {
+  WORK_EXECUTION_BACKEND_UNSPECIFIED = 0; // Limited: no executable backend
+  WORK_EXECUTION_BACKEND_HOST_DIRECT = 1;
+  WORK_EXECUTION_BACKEND_ISOLATED_GUEST = 2;
 }
 
 message ResolveCapabilitiesResponse {
   repeated CapabilityStatus statuses = 1;
-  WorkExecutionMode work_execution_mode = 2;
-  HostExecutionPolicySnapshot host_execution = 3;
-  // True if any non-terminal Work run has bound execution_mode=HostDirect (chrome derivation).
-  // Canonical name: host_bound_run_active (do not invent active_host_bound_runs).
+  WorkExecutionBackend work_execution_backend = 2;
+  bool host_work_runtime_ready = 3;
+  // True when any non-terminal Work run is durably HostDirect.
   bool host_bound_run_active = 4;
+}
+
+message HostExecutionPolicy {
+  uint64 revision = 1;
+  bool active = 2;
+  uint32 acknowledgment_version = 3;
+  uint32 required_acknowledgment_version = 4;
+  uint64 acknowledged_at_unix_ms = 5;
+  bool filesystem_read = 6;
+  bool filesystem_write = 7;
+  bool process_execute = 8;
+  repeated string path_roots = 9;
+  bool broad_scope_acknowledged = 10;
+  uint64 updated_at_unix_ms = 11;
+  bool runtime_prepared = 12;
+  string unavailable_reason_code = 13;
 }
 ```
 
@@ -888,11 +878,14 @@ Dedicated mutations: `GetHostExecutionPolicy`, `EnrollHostExecution`, `RevokeHos
 ```ts
 // Canonical IPC / client field: hostBoundRunActive (proto host_bound_run_active).
 // Clients may also derive from the run list as defense in depth; daemon field is authoritative for chrome.
-limitedMode: workExecutionMode === "limited" && !hostBoundRunActive
-workExecutionMode: "limited" | "host_direct" | "isolated_guest"
+workExecution: {
+  mode: "limited" | "host_direct" | "isolated_guest"
+  hostWorkRuntimeReady: boolean
+  hostBoundRunActive: boolean
+}
+limitedMode: workExecution.mode === "limited" && !workExecution.hostBoundRunActive
 hostToolsEffective: boolean           // global effective == HostDirect
-hostBoundRunActive: boolean          // sticky Host run → keep warning chrome
-displayHostWarning: boolean          // hostToolsEffective || hostBoundRunActive
+displayHostWarning: boolean          // hostToolsEffective || workExecution.hostBoundRunActive
 ```
 
 Readiness checks: split or extend “Protected Work” into Isolated vs Host Tools CTAs.
@@ -912,35 +905,29 @@ parity tests enforce the shared constant.
 
 ```sql
 CREATE TABLE host_execution_policy (
-  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
   active INTEGER NOT NULL CHECK (active IN (0, 1)),
   acknowledgment_version INTEGER NOT NULL CHECK (acknowledgment_version >= 0),
   acknowledged_at_unix_ms INTEGER NOT NULL CHECK (acknowledged_at_unix_ms >= 0),
-  expires_at_unix_ms INTEGER CHECK (expires_at_unix_ms IS NULL OR expires_at_unix_ms > 0),
-  session_bound INTEGER NOT NULL CHECK (session_bound IN (0, 1)),
-  daemon_boot_id BLOB CHECK (daemon_boot_id IS NULL OR length(daemon_boot_id) = 16),
-  tool_fs_read INTEGER NOT NULL CHECK (tool_fs_read IN (0, 1)),
-  tool_fs_write INTEGER NOT NULL CHECK (tool_fs_write IN (0, 1)),
-  tool_process_exec INTEGER NOT NULL CHECK (tool_process_exec IN (0, 1)),
-  tool_mcp INTEGER NOT NULL CHECK (tool_mcp IN (0, 1)),
-  revision INTEGER NOT NULL CHECK (revision >= 0),
-  updated_at_unix_ms INTEGER NOT NULL CHECK (updated_at_unix_ms >= 0)
+  tool_filesystem_read INTEGER NOT NULL CHECK (tool_filesystem_read IN (0, 1)),
+  tool_filesystem_write INTEGER NOT NULL CHECK (tool_filesystem_write IN (0, 1)),
+  tool_process_execute INTEGER NOT NULL CHECK (tool_process_execute IN (0, 1)),
+  broad_scope_acknowledged INTEGER NOT NULL CHECK (broad_scope_acknowledged IN (0, 1)),
+  updated_at_unix_ms INTEGER NOT NULL CHECK (updated_at_unix_ms >= acknowledged_at_unix_ms)
 ) STRICT;
 
-CREATE TABLE host_execution_path_roots (
-  root_id INTEGER PRIMARY KEY,
-  canonical_path TEXT NOT NULL CHECK (length(canonical_path) BETWEEN 1 AND 4096),
-  ordinal INTEGER NOT NULL CHECK (ordinal >= 0 AND ordinal < 8),
-  UNIQUE (ordinal),
-  UNIQUE (canonical_path)
+CREATE TABLE host_execution_roots (
+  ordinal INTEGER PRIMARY KEY CHECK (ordinal BETWEEN 0 AND 7),
+  canonical_path TEXT NOT NULL UNIQUE
+    CHECK (length(canonical_path) BETWEEN 1 AND 4096 AND instr(canonical_path, char(0)) = 0)
 ) STRICT;
 
 CREATE TABLE host_execution_commands (
   scope TEXT NOT NULL CHECK (length(scope) BETWEEN 1 AND 64),
   idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
   request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
-  result_active INTEGER NOT NULL CHECK (result_active IN (0, 1)),
-  result_revision INTEGER NOT NULL,
+  outcome_json TEXT NOT NULL CHECK (length(outcome_json) BETWEEN 2 AND 65536),
   PRIMARY KEY (scope, idempotency_key)
 ) STRICT;
 
@@ -949,7 +936,10 @@ CREATE TABLE host_execution_commands (
 ALTER TABLE runs ADD COLUMN run_kind INTEGER NOT NULL DEFAULT 0
   CHECK (run_kind IN (0, 1, 2, 3));
 ALTER TABLE runs ADD COLUMN work_backend INTEGER
-  CHECK (work_backend IS NULL OR work_backend IN (1, 2));
+  CHECK (
+    (run_kind = 2 AND work_backend IN (1, 2)) OR
+    (run_kind != 2 AND work_backend IS NULL)
+  );
 ```
 
 **Run classification ownership (schema 25):**
@@ -966,15 +956,15 @@ ALTER TABLE runs ADD COLUMN work_backend INTEGER
 #### Enroll / revoke concurrency
 
 - **`expected_revision` required** on enroll and revoke (same pattern as `UpdateDesktopPreferencesRequest`).
-- **Single transaction:** update singleton → `DELETE FROM host_execution_path_roots` → insert new roots → insert command journal row with SHA-256 fingerprint of canonical request bytes (includes `max_breadth_acknowledged`).
+- **Single transaction:** update singleton → `DELETE FROM host_execution_roots` → insert new roots → insert command journal row with SHA-256 fingerprint of canonical request bytes (includes `broad_scope_acknowledged`).
 - Enroll is **full replace** of roots and tool classes (no delta enrollment API). Scope expansion = full enroll with new revision + typed ack again.
 - Idempotency: same key + same fingerprint → replay result; same key + different fingerprint → conflict.
 
-#### Session boot id
+#### Consent lifetime
 
-- On daemon start: generate `daemon_boot_id = random 16 bytes` (process lifetime).
-- If policy `session_bound = 1` and stored `daemon_boot_id` ≠ current → treat as inactive (`effective` false); startup may rewrite `active=0` in one transaction or lazy-invalidate on read.
-- Durable grants store `daemon_boot_id = NULL`.
+- V1 enrollment is durable until explicit revoke.
+- There is no wall-clock expiry or daemon-boot binding.
+- A changed `HOST_ACKNOWLEDGMENT_VERSION` makes an older grant ineffective and requires a full replacement enrollment.
 
 #### Migration
 
@@ -987,7 +977,7 @@ Insert singleton `active=0`, revision 0. Never backfill active host grants.
 | Service | Methods |
 |---------|---------|
 | `HostExecutionPolicyService` | `get`, `enroll`, `revoke`, `effective_snapshot` |
-| `HostWorkRuntimeService` | `prepare`, `deactivate`, `status`; owns role mutex + sticky `host_work_auth_ready` |
+| `HostWorkRuntimeService` | `prepare`, `deactivate`, `is_ready`; owns the serialized role switch |
 | `HostWorkExecutor` | `start_run` (requires ready); permission/MCP loop; cancel |
 | `HostToolGate` | `authorize_and_execute` |
 | `WorkToolBackend` | list/read/write/exec |
@@ -996,17 +986,16 @@ Insert singleton `active=0`, revision 0. Never backfill active host grants.
 
 | RPC | Notes |
 |-----|-------|
-| `PrepareHostWorkRuntime` | Idempotency key; no renderer-authored readiness facts; returns status + refreshed capabilities |
-| `DeactivateHostWorkRuntime` | Idempotency key; restores HostControl |
-| `GetHostWorkRuntimeStatus` | Optional; fields also on `HostExecutionPolicySnapshot` |
+| `PrepareHostWorkRuntime` | No renderer-authored readiness facts; returns refreshed `HostExecutionPolicy` |
+| `DeactivateHostWorkRuntime` | Restores HostControl and returns refreshed `HostExecutionPolicy` |
+| Status reads | `GetHostExecutionPolicy` and `ResolveCapabilities` |
 
 ### EnrollHostExecution request (conceptual)
 
 ```text
 expected_revision, acknowledgment_version, typed_acknowledgment,
-session_bound, expires_at_unix_ms?,
 tool_classes, path_roots[],
-max_breadth_acknowledged,   // bool — required true if any root is home or drive/fs root
+broad_scope_acknowledged,   // bool — required true if any root is home or drive/fs root
 idempotency_key
 ```
 
@@ -1017,7 +1006,7 @@ Validation (daemon, authoritative):
 - phrase + `acknowledgment_version == HOST_ACKNOWLEDGMENT_VERSION`
 - ≥1 tool class; ≥1 root when any fs_* or `process_exec` (cwd) enabled
 - each root: exists, directory, canonicalize, not private daemon paths
-- **max-breadth:** classify each root as `normal` | `home` | `filesystem_root`; if any is `home` or `filesystem_root`, require `max_breadth_acknowledged == true` else reject `host_tools_max_breadth_required`. Fingerprint includes the bool so replaying without it conflicts.
+- **broad scope:** classify each root as `normal` | `home` | `filesystem_root`; if any is `home` or `filesystem_root`, require `broad_scope_acknowledged == true`. The fingerprint includes the bool so replaying a different acknowledgment conflicts.
 - Drive/fs root (`/` or `X:\`) may be further restricted later by enterprise flag; v1 allows only with ack true.
 
 ### Capability reason strings
@@ -1031,8 +1020,8 @@ Validation (daemon, authoritative):
 
 | Item | Change |
 |------|--------|
-| SQLCipher | Schema **25**: host_execution_* tables **and** `runs.execution_mode` |
-| Domain | **New** `WorkExecutionMode`, `HostExecutionPolicy`, `HOST_ACKNOWLEDGMENT_VERSION`; `Run.execution_mode` |
+| SQLCipher | Schema **25**: host_execution_* tables **and** `runs.work_backend` |
+| Domain | `WorkExecutionBackend`, `HostExecutionPolicy`, `HOST_ACKNOWLEDGMENT_VERSION`; `Run.work_backend` |
 | Application | `CapabilityFacts` host fields; HostWorkExecutor; gate tests; create-run sets mode |
 | Run record | Immutable sticky mode for flap + restart recovery |
 | Chronicle | Records the epoch-25/schema-25 foundation, schema-26 journal, and epoch-27/28 execution projections |
@@ -1102,8 +1091,8 @@ ADR 0032 and PR 1 amend **all** of:
 
 | Threat | Control |
 |--------|---------|
-| Enroll without understanding | Multi-step + typed ack + **daemon** max-breadth flag |
-| Renderer forges broad roots | `max_breadth_acknowledged` in fingerprint; reject without |
+| Enroll without understanding | Multi-step + typed ack + **daemon** broad-scope flag |
+| Renderer forges broad roots | `broad_scope_acknowledged` in fingerprint; reject without |
 | Prompt injection → host steal | Roots, approvals, MCP closed set, Chat non-inheritance |
 | Agent ambient tools bypass MCP | Permission Cancel; OS I/O only via helper→gate |
 | Helper binary swap | Fixed package path + peer identity + re-verify |
@@ -1120,7 +1109,7 @@ ADR 0032 and PR 1 amend **all** of:
 
 | Event / metric | Fields (non-secret) |
 |----------------|---------------------|
-| `host_execution_enrolled` / `revoked` | `revision`, `enrollment_state`, `session_bound`, `root_count`, `tool_classes` bitset — **no full paths in default logs** |
+| `host_execution_enrolled` / `revoked` | `revision`, active/current-ack state, `root_count`, `tool_classes` bitset — **no full paths in default logs** |
 | `work_mode_transition` | `mode_from`, `mode_to`, `reason_code` |
 | `host_tool_denied` | `reason_code` (`path_escape`, `class_disabled`, `policy_inactive`, `shell_shape_rejected`, …) |
 | `host_tool_effect` | `effect_id`, `approval_id`, `kind`, `outcome` |
@@ -1143,12 +1132,11 @@ keeps production enablement owned by signed release policy.
 
 **Kill-switch matrix:**
 
-| verified packaged helper | DB active | session-bound vs boot | effective |
-|---------------------------|-----------|-----------------------|-----------|
-| absent/invalid | 1 | any | **false** (runtime cannot prepare) |
-| present | 1 | session mismatch | false |
-| present | 1 | ack version stale | false (`needs_reconsent`) |
-| present | 1 | valid | true if subscription + runtime prepared |
+| verified packaged helper | DB active | acknowledgment | effective |
+|---------------------------|-----------|----------------|-----------|
+| absent/invalid | 1 | current | **false** (runtime cannot prepare) |
+| present | 1 | stale | false (`needs_reconsent`) |
+| present | 1 | current | true if subscription + runtime prepared |
 | present | 0 | — | false |
 
 Tests cover absent/invalid helper, inactive policy, stale acknowledgment, and
@@ -1158,16 +1146,16 @@ unprepared runtime behavior.
 
 ## Key Decisions
 
-1. **Three states** — Limited / Host Tools / Isolated Work; new domain `WorkExecutionMode`.
+1. **Three states** — Limited / Host Tools / Isolated Work; domain `WorkExecutionBackend` has only executable backends, while absence means Limited.
 2. **Host agent model** — HostWorkTools ACP + **packaged Stdio MCP helper** (`grok-host-tools-mcp`) peer-auth’d to daemon gate + `HostDirectBackend` (not in-process MCP, not permission-only agent I/O).
 3. **Credential continuity** — **shared install `GROK_HOME` with exclusive serial ownership**; non-interactive resume; fail closed + Setup re-auth. Preserves `.runtime.lock`.
 4. **Bootstrap via `PrepareHostWorkRuntime`** — single `host_work_runtime_ready` definition; enroll alone ≠ Available; `StartWorkRun` never role-switches; warm resident HostWorkTools after Prepare; explicit `DeactivateHostWorkRuntime` returns HostControl.
 5. **Subscription required for Host Work** — same as Isolated; BYOK never enables Host Work/Shell.
-6. **Isolated preempts Host** when healthy; **sticky `runs.execution_mode`** (schema 25) on flap + restart.
+6. **Isolated preempts Host** when healthy; **sticky `runs.work_backend`** (schema 25) on flap + restart.
 7. **Host warning chrome while any Host-bound run is active**, even if global mode is Isolated.
 8. **No silent fallback** — only `EnrollHostExecution`; tests in early PRs.
-9. **`work_execution_mode` IPC field** — Available `reason_code` stays `"ready"`.
-10. **Daemon-owned policy** — schema 25, `expected_revision`, full replace roots, 16-byte boot id, **`max_breadth_acknowledged` server-enforced**.
+9. **`work_execution_backend` IPC field** — Available `reason_code` stays `"ready"`.
+10. **Daemon-owned durable policy** — schema 25, `expected_revision`, full-replace roots, current acknowledgment version, and server-enforced **`broad_scope_acknowledged`**; no clock or boot expiry.
 11. **Process exec** — argv array only; High/Once; cleared env; bounds; ambient network residual accepted.
 12. **Chat/scheduler structural isolation** — no Host backend in those graphs; explicit tests.
 13. **ADR 0032 amends full doc set** (0003, 0004, AGENTS, linux-ga, threat-model, official-surfaces, implementation-status, chronicle).
@@ -1185,7 +1173,7 @@ unprepared runtime behavior.
    require reconsent.
 3. Isolated Guest is preferred for new runs when both backends are ready.
 4. English acknowledgment v1 is exactly `I UNDERSTAND HOST TOOLS CAN CONTROL
-   THIS COMPUTER` after Unicode normalization and surrounding-whitespace trim.
+   THIS COMPUTER`; the daemon trims surrounding whitespace and otherwise compares exactly.
 5. V1 ships filesystem read/write and process execution.
 6. Production enablement is signed release/daemon policy owned. Environment
    overrides are development-build only.
@@ -1214,7 +1202,7 @@ All rows in Security § Docs table + `docs/decisions/README.md` index + `docs/qu
 |------|-----|------------|
 | Silent fallback regression | Crit | Early tests + ADR |
 | Work Available without bridge | Crit | Advertising gate |
-| Over-broad roots | High | UX + **daemon** `max_breadth_acknowledged` |
+| Over-broad roots | High | UX + **daemon** `broad_scope_acknowledged` |
 | Exec ambient network | High | Enroll copy + threat model |
 | Mode thrash / misleading Isolated chrome | Med | Sticky run + Host warning while Host-bound runs exist |
 | Strict sandbox blocks MCP helper | High | ACP feasibility gate before schema/UI; fail closed runtime_unavailable |
@@ -1278,14 +1266,14 @@ All rows in Security § Docs table + `docs/decisions/README.md` index + `docs/qu
 ### PR 3b — IPC epoch 25 + capability projection + invariant tests
 
 - **Title:** `feat(daemon): host execution enrollment IPC and capability mode projection`
-- **Files:** proto + `PROTOCOL_VERSION=25`; enroll includes `max_breadth_acknowledged`; policy service; `CapabilityResolver` + facts; daemon handler; desktop bridge; snapshot field **`host_bound_run_active`** (clients may also derive from run list); **tests:** default off, enroll/revoke, guest failure ≠ host, missing helper/runtime kill switch, ack mismatch, max-breadth reject without flag, Available still `reason_code=ready`, mode field set
+- **Files:** proto + `PROTOCOL_VERSION=25`; enroll includes `broad_scope_acknowledged`; policy service; `CapabilityResolver` + facts; daemon handler; desktop bridge; snapshot field **`host_bound_run_active`**; **tests:** default off, enroll/revoke, guest failure ≠ host, missing helper/runtime kill switch, ack mismatch, broad-scope reject without acknowledgment, Available still `reason_code=ready`, backend field set
 - **Dependencies:** PR 3a
 - **Description:** **Do not** set Work Available for Host until PR 4 bridge (use `host_tools_runtime_unavailable` if policy active but runtime not wired).
 
 ### PR 4 — Host Work execution bridge (HostWorkTools + Stdio helper + daemon IPC)
 
 - **Title:** `feat(acp): PrepareHostWorkRuntime, HostWorkTools resident role, host-tools MCP gate`
-- **Files:** `PrepareHostWorkRuntime` / `DeactivateHostWorkRuntime` IPC; `HostWorkRuntimeService` + **AcpHomeRole mutex**; HostWorkTools boundary; shared home resume; sticky `host_work_auth_ready`; unified `host_work_runtime_ready`; package `grok-host-tools-mcp`; per-run IPC; `HostWorkExecutor` (start only when ready); tests: enroll≠Available; prepare→Available; start without prepare fails; resume fail restores HostControl; no StartWorkRun role-switch; RuntimeBusy exclusive; max 1 Host run
+- **Files:** `PrepareHostWorkRuntime` / `DeactivateHostWorkRuntime` IPC; `HostWorkRuntimeService` serialized role switch; HostWorkTools boundary; shared-home resume; unified `host_work_runtime_ready`; package `grok-host-tools-mcp`; per-run IPC; `HostWorkExecutor` (start only when ready); tests: enroll≠Available; prepare→Available; start without prepare fails; resume fail restores HostControl; no StartWorkRun role-switch; max 1 Host run
 - **Dependencies:** PR 3b
 - **Description:** Bootstrap path closes chicken-egg; then session open → helper → gate. **Prerequisite for productive FS.** Contract-test non-interactive resume (external gate).
 
