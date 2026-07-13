@@ -18,8 +18,9 @@ exact signed artifacts.
    inside a **qualified utility VM**. There is no automatic host-exec fallback.
    Separately enrolled Host Tools is an explicit risk-accepted backend and is
    not evidence of isolation qualification.
-2. Host ACP is authentication and control only. Session prompts and tool
-   execution for Work use `isolated_guest` inside the utility guest.
+2. The ordinary HostControl ACP role is authentication and control only.
+   Isolated Work prompts/tools use `isolated_guest`; independently enrolled
+   Host Tools uses the constrained HostWorkTools role and daemon MCP bridge.
 3. Subscription OAuth is delegated to the official Grok Build component. No
    cookie import, scraped web OAuth, or unapproved OAuth client.
 4. BYOK xAI keys remain a separate billing and capability path from SuperGrok
@@ -42,7 +43,7 @@ from marketing. Silent permanent stubs are not GA.
 | BYOK enroll / delete / status | Pinentry + Secret Service; key never in renderer/IPC/logs |
 | Direct Chat | Durable turns, Stop, Retry, Branch/Edit/Regenerate, model selection, restart recovery |
 | Grok Build sign-in | Daemon-owned host ACP authenticate lifecycle; non-secret account projection |
-| Work / Shell / MCP | Guest ACP sessions after isolation + subscription facts |
+| Work / Shell / MCP | Guest ACP sessions after isolation + subscription facts; Host Tools may ship separately with explicit risk enrollment and does not satisfy this isolation bar |
 | Files Library | Import, exact-version open, local-copy remove on private Linux storage |
 | Export / diagnostics | Daemon-owned, pathless, secret-canary clean if advertised |
 | Automations | Enabled schedules with lease/overlap/missed-run policy and soak evidence |

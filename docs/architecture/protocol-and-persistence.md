@@ -5,14 +5,13 @@ durable contracts they carry. Stable process architecture lives in
 [overview.md](overview.md). Layering rules live in [principles.md](principles.md).
 Decision detail lives in the linked ADRs.
 
-**Current surface (maintain as you bump):** desktop IPC **v23** rejects epochs
-**0–22** before dispatch. SQLCipher production schema tracks the latest
-forward-only migration (schema **23**: local completed-turn usage-summary
-indexes, after schema 22's atomic scheduler dispatch binding and durable
-managed-integration lifecycle). Scheduler execution and managed-integration
-mutations remain disabled pending qualification. Earlier sections below that name v15/schema 18
-describe contracts still retained under later epochs. Always confirm against
-`grok-protocol` / `grok-sqlcipher` when changing code.
+**Current surface (maintain as you bump):** desktop IPC **v28** rejects epochs
+**0–27** before dispatch. SQLCipher production schema is **26**. Schema 25 adds
+immutable Work backend/run classification and daemon-owned Host Tools policy;
+schema 26 adds the restartable enrollment command journal. Epochs 27–28 add
+durable Host Work start/cancel and bounded run/approval snapshots. Earlier
+sections below describe contracts retained under later epochs. Always confirm
+against `grok-protocol` / `grok-sqlcipher` when changing code.
 
 No third-party model provider, arbitrary compatible endpoint, private Grok web
 API, or imported browser cookie is supported. Official surface research:
@@ -41,6 +40,7 @@ renderer, preload, Electron-main, argv, and environment state. See
 | Managed execution / Limited Mode | — | [0003](../decisions/0003-managed-execution.md) |
 | Explicit HostDirect / IsolatedGuest Work backends | epoch 25 / schema 25 | [0032](../decisions/0032-explicit-dual-mode-work-execution.md) |
 | Host enrollment command replay journal | schema 26 | [0032](../decisions/0032-explicit-dual-mode-work-execution.md) |
+| Durable Host Work start/cancel and run snapshots | epochs 27–28 | [0032](../decisions/0032-explicit-dual-mode-work-execution.md) |
 | Credentials + capabilities | — | [0004](../decisions/0004-daemon-owned-credentials-and-capabilities.md) |
 | Native credential enrollment | IPC v2+ (retained in v15) | [0005](../decisions/0005-native-credential-enrollment.md) |
 | Durable direct Chat turns | schema-backed journal | [0006](../decisions/0006-durable-direct-chat-turns.md) |
@@ -104,7 +104,7 @@ a cleared and validated display/session/locale environment, and process-group
 cleanup. The supervised IPC nonce crosses a one-shot stdin pipe rather than the
 daemon or pinentry environment; Linux disables same-user process inspection
 before the async runtime starts. Electron receives only non-secret account
-state on either path. The enrollment intent was introduced in IPC v2; current IPC v15 carries it
+state on either path. The enrollment intent was introduced in IPC v2; current IPC v28 carries it
 and rejects epochs 0 through 14 before dispatch. Release enablement remains
 fail-closed until the Windows native
 matrix and the Linux desktop, pinentry, cancellation, and Secret Service matrix

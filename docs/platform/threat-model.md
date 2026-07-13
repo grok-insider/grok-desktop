@@ -182,7 +182,7 @@ boundary (same class as Windows local admin / hypervisor compromise).
 | Arbitrary QEMU devices / NIC / monitor | Closed machine template; no caller XML/argv escape | QEMU version skew and feature flags need release pins. |
 | Malicious or rolled-back guest image | Signed catalog, size+SHA-256, anti-rollback sequence, service-owned staging | Interrupted EnsureImage and key rotation need Linux matrix tests. |
 | Host file modification via share | RO attach only; overlay + reviewed daemon commit | Hostile filenames/content still attack parsers and UX. |
-| Host-exec “fallback” when KVM missing | Hard Limited Mode; capabilities stay unavailable | Product/docs must never suggest bubblewrap Work. |
+| Host-exec “fallback” when KVM missing | Isolated Work stays unavailable; Host Tools requires a separate durable enrollment and prepared runtime | Product/docs must never imply that guest failure creates host authority or that bubblewrap is Isolated Work. |
 | Simulated broker mistaken for isolation | `simulated: true` never sets Work Available | CI must not promote simulator-backed evidence. |
 
 ## Qualification gates

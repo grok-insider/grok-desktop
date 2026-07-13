@@ -77,6 +77,13 @@ NO_PROXY=127.0.0.1,localhost npx chrome-devtools-mcp@latest \
   --browserUrl http://127.0.0.1:9250
 ```
 
+When the user is working on the machine, the Electron window belongs in Wisp's
+hidden compositor. Attach the dedicated Chrome DevTools MCP process to its CDP
+port; do not switch Hyprland workspaces or focus the visible window. Use visible
+workspace 3 only after the user explicitly releases it. If Wisp cannot create
+the hidden compositor, continue headless renderer/CDP checks and defer native
+visual assertions.
+
 The browser-only renderer preview is a separate, explicit surface:
 
 ```sh

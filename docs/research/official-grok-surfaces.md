@@ -109,12 +109,12 @@ The managed ACP runtime therefore must:
 4. Disable compatibility imports and unmanaged MCP/plugin/hook discovery. A
    managed integration is launched by the guest supervisor only after signed
    manifest verification and explicit grants.
-5. Treat the host ACP process as an authentication/control surface only. Do not
-   expose its prompt or tool methods through daemon IPC. Work prompts execute
-   with the official component inside the qualified guest, where the same
-   requirements are installed root-owned under `/etc/grok`; Chat uses an
-   unprivileged service path. The adapter itself rejects host session, prompt,
-   and cancellation calls even if a future caller reaches the application port.
+5. Keep the ordinary `HostControl` ACP role authentication/control-only. An
+   independently risk-enrolled Host Tools run may use the separate constrained
+   `HostWorkTools` role with only the daemon-owned packaged stdio MCP bridge;
+   it does not inherit arbitrary native tools, MCP discovery, plugins, hooks,
+   or Chat/scheduler authority. Isolated Work still executes inside the
+   qualified guest. Backend failure never switches roles or creates a grant.
 6. Verify the component against a signed release catalog and revalidate its
    file identity immediately before spawn. A filename, caller-provided
    publisher string, or caller-provided digest alone is not provenance.
@@ -130,7 +130,7 @@ Capability routing is explicit rather than a generic provider abstraction:
 | Web/X research | When official runtime advertises it | Official hosted tools | Policy and citation storage |
 | Images/video | No assumed subscription contract | Official Imagine APIs | Download, provenance, library |
 | Realtime voice | No assumed subscription contract | Official ephemeral-token flow | Audio device broker |
-| Files/shell/local MCP | Guest ACP only | Never ambient | VM, approvals, reviewed diff |
+| Files/shell/local MCP | Isolated Guest ACP, or constrained HostWorkTools after explicit enrollment | Never ambient | VM for isolation; otherwise daemon roots, exact approvals, effect journal |
 | Browser/computer use | Managed tool contract only | Never ambient | Broker plus stale-frame checks |
 
 No capability is inferred from a plan name. The daemon combines live

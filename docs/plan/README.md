@@ -1,9 +1,9 @@
 # Audited recovery and completion plan
 
-- Snapshot: 2026-07-12
+- Snapshot: 2026-07-13
 - Reviewed baseline: `66787d5ef3fe4bd23aadb49951b8d347ab32e8b6`
 - Review range: `226484610d5ea4ecbb1c614cc7a741a2d054fc65..HEAD`
-- Wire/schema implemented in the current tree: IPC epoch 24, SQLCipher schema 24
+- Wire/schema implemented in the current tree: IPC epoch 28, SQLCipher schema 26
 - Release status: not qualified for distribution
 
 This directory is the canonical handoff for continuing the current work. It
@@ -103,6 +103,12 @@ command and provider-request fingerprints, and preserved by retry, edit,
 regenerate, and restart recovery. It maps only to the official xAI web and X
 server tools and grants no host authority. Research is not Search: it remains
 unavailable until it has its own bounded, durable orchestration contract.
+
+Epochs 25–28 and schemas 25–26 implement the explicit Host Tools path described
+by plan 07: durable risk enrollment, immutable Work backend binding, constrained
+ACP runtime preparation, authenticated daemon MCP tools, journaled approvals and
+side effects, cancellation, and bounded desktop snapshots. This does not alter
+Chat/scheduler authority or count as Isolated Work qualification.
 
 ## Reading order
 

@@ -38,7 +38,7 @@ The Rust daemon is the sole owner of credential state and capability facts.
 - Capability resolution ignores deprecated caller-supplied readiness facts.
   Vault presence and trusted runtime adapters supply facts inside the daemon.
   The credential marker means official discovery found at least one text-capable
-  model; current IPC v13 separately resolves the persisted Chat selection against
+  model; current IPC v28 separately resolves the persisted Chat selection against
   a live catalog, as recorded by ADR 0009.
   Provider network availability is optimistic and every provider request still
   enforces its own timeout, authentication, and transport result.

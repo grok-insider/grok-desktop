@@ -4,17 +4,17 @@
 |-------|-------|
 | **Author** | Grok Desktop engineering (draft owner: systems architect) |
 | **Date** | 2026-07-13 |
-| **Status** | Design approved (revision 6) — ACP feasibility gate first |
+| **Status** | Host Tools v1 implemented and locally qualified; isolated backend and native Windows release qualification remain open |
 | **Supersedes / amends** | ADR 0003 (partial), ADR 0004 (Work readiness wording), AGENTS.md isolation wording, `docs/architecture/principles.md`, `docs/quality/linux-ga.md` Limited Mode + host-ACP rules, `docs/platform/threat-model.md`, `docs/research/official-grok-surfaces.md` capability routing, capability resolution in `CapabilityResolver` |
 | **ADR** | [`docs/decisions/0032-explicit-dual-mode-work-execution.md`](../decisions/0032-explicit-dual-mode-work-execution.md) |
-| **IPC impact** | Protocol epoch **25** (current is **24** in `crates/grok-protocol` / `DaemonRpcClient.ts`) |
+| **IPC impact** | Epoch **25** introduced enrollment and backend projection; epochs **27–28** added durable execution, cancellation, and bounded run snapshots. Current: **28**. |
 | **Schema impact** | SQLCipher schema **25** binds run/backend and policy; schema **26** adds the durable Host enrollment command journal |
 
 ---
 
 ## Overview
 
-Grok Desktop today fails closed into **Limited Mode** whenever a qualified isolation backend (Windows HCS utility VM or Linux QEMU/KVM broker + signed guest) is absent. That invariant is correct for strong isolation, but it leaves users without local filesystem, shell, or MCP-class productivity until guest images and brokers ship—an external gate documented in `docs/plan/06-open-risks-and-external-gates.md` and `docs/quality/linux-ga.md`.
+Before this plan, Grok Desktop failed closed into **Limited Mode** whenever a qualified isolation backend (Windows HCS utility VM or Linux QEMU/KVM broker + signed guest) was absent. That invariant remains correct for strong isolation, but it left users without local filesystem, shell, or MCP-class productivity until guest images and brokers ship—an external gate documented in `docs/plan/06-open-risks-and-external-gates.md` and `docs/quality/linux-ga.md`.
 
 This design introduces a **long-term dual-mode product model**:
 
@@ -25,11 +25,60 @@ Host Tools is **not** a silent compatibility fallback. Guest failure, missing im
 
 **Isolated Work remains the only path that satisfies the strong-isolation full-product GA bar** (linux-ga / Windows HCS qualification). Host Tools is a **risk-accepted product mode** that does not substitute for isolation qualification.
 
+## Implementation outcome (2026-07-13)
+
+Host Tools v1 is implemented end to end. This section is the handoff ledger;
+the design sections below preserve the decisions and contracts that led to it.
+
+| Phase | Outcome | Evidence |
+|---|---|---|
+| ADR and invariants | Complete | ADR 0032, AGENTS, architecture principles, threat model |
+| ACP feasibility boundary | Complete | constrained HostWorkTools role, exclusive ACP-home ownership, fail-closed runtime preparation |
+| Durable policy | Complete | SQLCipher schemas 25–26; versioned enrollment, roots, tool classes, revision and replay journal |
+| Capability and IPC | Complete | protocol epochs 25–28; daemon-owned `work_execution_mode`, readiness, run list and approval projection |
+| Host bridge | Complete | packaged stdio MCP helper, authenticated per-run daemon bridge, bounded framing and peer/run binding |
+| Filesystem tools | Complete | capability-rooted list/read plus reparse-aware write validation |
+| Mutating tools | Complete | exact write/process approval, intent-before-effect journal, bounded argv/environment/output, interruption review |
+| Desktop UX | Complete | three-step enrollment, native root chooser, exact warning phrase, persistent Host indicator, revoke confirmation, Work composer, Activity approvals/cancel/reload |
+| Local qualification | Complete | desktop lint/typecheck/test/build, Rust fmt/clippy/workspace tests, Go suites, Nix flake checks, Wisp headless enrollment/revoke flow, production Electron CDP route/security/responsive probe |
+
+Delivered commits, in implementation order:
+
+```text
+4c5ff20 docs(security): define explicit host work authority
+d66bd1a test(acp): prove constrained host tools session contract
+f36ec70 feat(sqlcipher): persist host policy and work backend
+4009b2a feat(protocol): add host work enrollment contracts
+6b571f6 feat(daemon): persist explicit host tools enrollment
+e4d0f39 feat(sqlcipher): journal host enrollment mutations
+74578ad feat(acp): add exclusive host work runtime roles
+47b97c0 feat(work): add policy-free host tools MCP helper
+2390a74 feat(work): add capability-rooted host filesystem reads
+36610ff feat(work): authenticate per-run host tool bridge
+66f641c feat(work): dispatch durable host work turns
+5a232ef feat(work): journal approved host mutations
+202663c feat(work): secure and package host tools bridge
+18b3c0a feat(desktop): expose explicit host tools work mode
+94d2f17 fix(security): enforce frame policy in protocol headers
+```
+
+Still open by design or external qualification:
+
+- Isolated Guest execution, signed guest publication, and real HCS/QEMU release
+  matrices remain on the parallel isolation track.
+- Exact signed Windows x64/ARM64 installers still require the documented native
+  Windows workers; Linux cross-compilation is not release evidence.
+- Third-party Host MCP installers and host computer-use remain out of scope.
+- The current host could not start Wisp's native nested compositor because its
+  MCP service lacked `XDG_RUNTIME_DIR`. Headless Wisp renderer QA and production
+  Electron CDP qualification passed. Future native GUI runs must use Wisp's
+  hidden compositor and CDP so they never take focus from the user's desktop.
+
 ---
 
-## Background & Motivation
+## Design baseline (pre-implementation)
 
-### Current state
+### State before this plan
 
 Capability truth is daemon-owned ([ADR 0004](../../docs/decisions/0004-daemon-owned-credentials-and-capabilities.md)). `CapabilityResolver` in `crates/grok-application/src/capabilities.rs` gates Work / Shell / MCP exclusively on:
 
@@ -41,7 +90,7 @@ When `ready` is true, `status()` **always** sets `reason_code = "ready"` and `re
 
 `IsolationRuntime` (`crates/grok-application/src/isolation_runtime.rs`) sets `strong_isolation_ready` only when the broker probe succeeds **and** a journaled `runner.health` guest-control call succeeds under PoP. Failures clear readiness; comments explicitly forbid host-exec fallback.
 
-Official surface and ACP reality (must not be ignored):
+Official surface and ACP reality at the design baseline:
 
 | Fact | Location |
 |------|----------|
@@ -53,7 +102,7 @@ Official surface and ACP reality (must not be ignored):
 | Runtime gating is **facts-based** in `CapabilityResolver`; domain `CapabilityRequirement.requires_strong_isolation` is static metadata, not the live gate | `capability.rs`, `capabilities.rs` |
 | MCP unavailable reason today | `mcp_sandbox_unavailable` |
 
-Product surfaces reflect Limited Mode:
+Product surfaces at the design baseline reflected Limited Mode:
 
 | Layer | Behavior today |
 |-------|----------------|
@@ -166,7 +215,7 @@ Rules:
   - `host_tools_not_enrolled`
   - `host_tools_policy_expired`
   - `host_tools_revoked`
-  - `host_tools_feature_disabled`
+  - `host_tools_runtime_unavailable`
   - `host_tools_runtime_not_prepared` — enrolled + HostControl authenticated, but `PrepareHostWorkRuntime` not yet succeeded this daemon lifetime (or deactivated and not re-prepared)
   - `host_tools_runtime_unavailable` — helper/package/IPC factory missing or HostWorkTools cannot compose
   - `host_tools_auth_resume_failed` — prepare/role switch: non-interactive authenticate failed
@@ -181,7 +230,7 @@ Rules:
 |------------------|----------|
 | Capability snapshot / UI refresh | Recompute effective mode from live isolation + policy |
 | **New** Work run start | Bind `run.execution_mode` durably to resolved mode at start; refuse start if Limited |
-| **Every host tool dispatch** | Re-check: policy still effective, feature flag on, run’s bound mode still allowed. Deny with stable reason if not |
+| **Every host tool dispatch** | Re-check: policy still effective, verified runtime/helper still bound, run’s bound mode still allowed. Deny with stable reason if not |
 | Isolation becomes ready mid Host run | **Sticky run mode**: in-flight Host run keeps `HostDirect` until terminal (durable `runs.execution_mode`); **new** runs become Isolated. **Chrome:** while any non-terminal run is Host-bound, keep **HOST TOOLS** warning chrome even if global effective mode is Isolated (see § Persistent indicator). Notice: “Isolated Work is ready — new sessions use the protected guest. This session still runs on this computer.” |
 | Isolation lost mid Isolated run | Existing isolation/interrupt paths; do **not** migrate the run to Host mid-flight. New runs may use Host if enrolled |
 | Policy revoked mid Host run | Cancel in-flight tool dispatches; non-idempotent effects → `interrupted_needs_review`; run fails closed |
@@ -282,7 +331,7 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 | `active` | IsolatedGuest | yes | yes | Badge ISOLATED; Settings: Host enrollment “saved, not active (Isolated preferred)”. If Host-bound run still live → HOST TOOLS warning (chrome derivation) |
 | `active` + sticky Host run | IsolatedGuest (global) | yes | yes | Banner: **HOST TOOLS — active session on this computer**; dual plan string |
 | `expired` / `needs_reconsent` | Limited | yes | no | Settings: Re-enable; Work Unavailable |
-| `active` + feature flag off | Limited | yes | no | reason `host_tools_feature_disabled` |
+| `active` + verified helper unavailable | Limited | yes | no | reason `host_tools_runtime_not_prepared` |
 | any | Limited | yes | no | Plan “Limited mode” only when Host not effective **and** no Host-bound active run |
 | daemon offline | n/a | n/a | n/a | Plan “Connecting” / degraded — **never** show HOST badge |
 
@@ -406,7 +455,7 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 | Switch → HostWorkTools | **Only via `PrepareHostWorkRuntime`** (or internal re-prepare), **never** as a side effect of `StartWorkRun`. Steps under **role mutex**: (1) require policy effective + HostControl authenticated; (2) shutdown HostControl + drop lock; (3) provision same home as HostWorkTools; (4) start agent; (5) non-interactive `authenticate` resume. |
 | Resume success | Set sticky **`host_work_auth_ready = true`** (process lifetime); keep HostWorkTools role **resident** (warm pool — see idle policy); rebind subscription fact source to HostWorkTools; then `host_work_runtime_ready` becomes true. |
 | Resume failure | **Fail closed:** `host_tools_auth_resume_failed`. Tear down HostWorkTools; restore HostControl; `host_work_auth_ready = false`; UI: Setup re-auth then Prepare again. Never open Host Work unauthenticated. |
-| Switch ← HostControl | Via **`DeactivateHostWorkRuntime`**, Host policy revoke, feature flag off, or effective mode permanently leaves Host path without prepared runtime needs. Shutdown HostWorkTools; re-provision HostControl; **sticky `host_work_auth_ready` cleared** (must Prepare again). |
+| Switch ← HostControl | Via **`DeactivateHostWorkRuntime`**, Host policy revoke, verified helper/runtime loss, or effective mode permanently leaves Host path without prepared runtime needs. Shutdown HostWorkTools; re-provision HostControl; **sticky `host_work_auth_ready` cleared** (must Prepare again). |
 | What “session state” means | ACP session ids / prompts / MCP helpers die with process or run end. Auth materials the **component** keeps under the shared home may remain for a future Prepare resume — daemon never exports them. |
 | Concurrent roles | **Forbidden**. All provision/start/shutdown under a **daemon `AcpHomeRole` mutex** so `capability_facts` / Prepare / Deactivate / Setup auth cannot double-provision (`RuntimeBusy`). |
 | Auth fact rebind | `subscription_authenticated` is read from the **current role owner**’s last successful authenticate (HostControl or HostWorkTools). While HostWorkTools is resident and authed, Setup interactive auth is busy (`host_tools_runtime_busy`) until Deactivate. |
@@ -430,7 +479,7 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 2. Explicit Settings / Work panel button **Prepare Host Tools runtime**.
 3. **Not** on every capability poll; **not** inside `StartWorkRun`.
 
-**Preconditions for Prepare:** feature flag; policy effective; roots non-empty; helper path verified; IPC factory ready; HostControl currently authenticated (or restore HostControl first if orphaned); no non-terminal Host-bound run requiring opposite transition mid-flight.
+**Preconditions for Prepare:** policy effective; roots non-empty; packaged helper path verified; IPC factory ready; HostControl currently authenticated (or restore HostControl first if orphaned); no non-terminal Host-bound run requiring opposite transition mid-flight.
 
 **Post-success warm policy:** HostWorkTools **stays up** after Prepare (resident warm runtime) so `host_work_runtime_ready` remains true and the user can start Work without another switch. Idle timeout does **not** auto-deactivate solely to flip Available off (avoids thrash). Optional later: soft idle after N hours with sticky `host_work_auth_ready` only if product accepts re-Prepare without clearing sticky — **v1: no silent auto-deactivate**; only explicit Deactivate, revoke, flag off, or daemon exit.
 
@@ -491,7 +540,7 @@ flowchart LR
 // DELETE any HostControl-only alternate branch.
 
 fn host_work_runtime_ready(facts) -> bool {
-  facts.host_tools_feature_enabled
+  facts.host_tools_runtime_composable
   && facts.host_policy_effective          // active, ack version, boot/session valid
   && facts.host_roots_non_empty
   && facts.packaged_helper_path_verified
@@ -850,7 +899,10 @@ Readiness checks: split or extend “Protected Work” into Isolated vs Host Too
 
 #### Epoch
 
-`PROTOCOL_VERSION = 25`; reject 0–24. Keep Rust/TS parity tests. When updating `docs/architecture/protocol-and-persistence.md`, **fix the stale header** (still says v23/schema 23 while index has v24/schema 24) then add epoch 25 / schema 25.
+Epoch 25 introduced enrollment, policy, and backend projection. Epoch 27 added
+durable Host Work start/cancel and epoch 28 added bounded run/approval
+snapshots. The current `PROTOCOL_VERSION = 28` rejects 0–27; Rust/TypeScript
+parity tests enforce the shared constant.
 
 ---
 
@@ -983,7 +1035,7 @@ Validation (daemon, authoritative):
 | Domain | **New** `WorkExecutionMode`, `HostExecutionPolicy`, `HOST_ACKNOWLEDGMENT_VERSION`; `Run.execution_mode` |
 | Application | `CapabilityFacts` host fields; HostWorkExecutor; gate tests; create-run sets mode |
 | Run record | Immutable sticky mode for flap + restart recovery |
-| Chronicle | Fix header drift + add v25/schema 25 |
+| Chronicle | Records the epoch-25/schema-25 foundation, schema-26 journal, and epoch-27/28 execution projections |
 
 ---
 
@@ -1079,25 +1131,28 @@ ADR 0032 and PR 1 amend **all** of:
 
 ## Rollout Plan (Issue 14)
 
-| Build | `host_tools_feature_enabled` default |
-|-------|--------------------------------------|
-| Dev / dogfood | `true` (policy still default inactive) |
-| Packaged release pre-GA | **`false`** until GA criteria |
-| Post-GA | `true` |
+| Build | Host Tools availability |
+|-------|-------------------------|
+| Dev / dogfood | Helper may be selected with the debug-only absolute override; policy still defaults inactive |
+| Packaged release | Available only when the signed release packages the verified sibling helper; policy still defaults inactive |
 
-**Runtime flag** (env or daemon config), not compile-only — IPC still negotiates; enroll returns `host_tools_feature_disabled` when false.
+The release kill switch is component composition, not a broad runtime
+environment flag: packaged builds ignore the debug helper override and remain
+unavailable if the verified helper is absent or fails identity checks. This
+keeps production enablement owned by signed release policy.
 
 **Kill-switch matrix:**
 
-| flag | DB active | session_bound vs boot | effective |
-|------|-----------|------------------------|-----------|
-| false | 1 | any | **false** (ignore stored active) |
-| true | 1 | session mismatch | false |
-| true | 1 | ack version stale | false (`needs_reconsent`) |
-| true | 1 | valid | true if subscription + runtime ready |
-| true | 0 | — | false |
+| verified packaged helper | DB active | session-bound vs boot | effective |
+|---------------------------|-----------|-----------------------|-----------|
+| absent/invalid | 1 | any | **false** (runtime cannot prepare) |
+| present | 1 | session mismatch | false |
+| present | 1 | ack version stale | false (`needs_reconsent`) |
+| present | 1 | valid | true if subscription + runtime prepared |
+| present | 0 | — | false |
 
-Tests for flag override land with policy PR.
+Tests cover absent/invalid helper, inactive policy, stale acknowledgment, and
+unprepared runtime behavior.
 
 ---
 
@@ -1117,7 +1172,8 @@ Tests for flag override land with policy PR.
 12. **Chat/scheduler structural isolation** — no Host backend in those graphs; explicit tests.
 13. **ADR 0032 amends full doc set** (0003, 0004, AGENTS, linux-ga, threat-model, official-surfaces, implementation-status, chronicle).
 14. **Do not advertise Work Available for Host until Prepare succeeds** (and PR 4 bridge exists).
-15. **Release flag default false** until GA; runtime kill switch.
+15. **Signed component composition is the release kill switch**; environment
+    helper overrides are debug-only and packaged policy defaults inactive.
 16. **ACP non-interactive resume** is an external contract gate; fail closed if violated.
 
 ---
@@ -1179,7 +1235,7 @@ All rows in Security § Docs table + `docs/decisions/README.md` index + `docs/qu
 - `crates/grok-application/src/capabilities.rs` — `reason_code = "ready"` when available
 - `crates/grok-application/src/agent_runtime.rs`, `approvals.rs`, `effects.rs`, `automation_scheduler.rs` (`ScheduledGuestDispatcher`)
 - `crates/grok-daemon/src/handler.rs` — `capability_facts`
-- Protocol/schema **24** → target **25**
+- Protocol/schema implementation: **epoch 28 / schema 26**
 - `apps/desktop/src/views/SettingsView.tsx`, `electronDesktopClient.ts`, `DESIGN.md`
 
 ---
@@ -1222,7 +1278,7 @@ All rows in Security § Docs table + `docs/decisions/README.md` index + `docs/qu
 ### PR 3b — IPC epoch 25 + capability projection + invariant tests
 
 - **Title:** `feat(daemon): host execution enrollment IPC and capability mode projection`
-- **Files:** proto + `PROTOCOL_VERSION=25`; enroll includes `max_breadth_acknowledged`; policy service; `CapabilityResolver` + facts; daemon handler; desktop bridge; snapshot field **`host_bound_run_active`** (clients may also derive from run list); **tests:** default off, enroll/revoke, guest failure ≠ host, flag kill switch, ack mismatch, max-breadth reject without flag, Available still `reason_code=ready`, mode field set
+- **Files:** proto + `PROTOCOL_VERSION=25`; enroll includes `max_breadth_acknowledged`; policy service; `CapabilityResolver` + facts; daemon handler; desktop bridge; snapshot field **`host_bound_run_active`** (clients may also derive from run list); **tests:** default off, enroll/revoke, guest failure ≠ host, missing helper/runtime kill switch, ack mismatch, max-breadth reject without flag, Available still `reason_code=ready`, mode field set
 - **Dependencies:** PR 3a
 - **Description:** **Do not** set Work Available for Host until PR 4 bridge (use `host_tools_runtime_unavailable` if policy active but runtime not wired).
 

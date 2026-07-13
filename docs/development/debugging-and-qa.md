@@ -1,8 +1,9 @@
 # Debugging and QA
 
 Procedures for verifying Grok Desktop locally. Prefer the lightest surface that
-answers the question. Do **not** rearrange the user’s desktop or launch Electron
-while they are actively using the machine unless they have released it.
+answers the question. When the user is active, launch or move the app into
+Wisp's hidden compositor and attach through Chrome DevTools MCP/CDP. Do **not**
+rearrange, switch, or take focus on the user's visible desktop.
 
 Harness detail for the CDP launcher lives in
 [apps/desktop/scripts/README.md](../../apps/desktop/scripts/README.md).
@@ -14,7 +15,7 @@ Harness detail for the CDP launcher lives in
 | Renderer layout, routes, sample UI without daemon | Browser preview | `pnpm dev:web` + headless browser or DevTools |
 | Production Electron shell, CSP, preload, daemon | CDP QA profile | `pnpm dev:cdp` + `pnpm test:e2e:electron` |
 | Semantic DOM / a11y while Electron runs | Chrome DevTools Protocol | attach to the CDP port (default **9250**) |
-| Native window, tray, focus, fullscreen screenshots | Host GUI + Wisp/Hyprland | workspace **3** only (see below) |
+| Native window, tray, focus, fullscreen screenshots | Wisp hidden compositor + CDP | hidden compositor by default; visible workspace **3** only when explicitly released |
 | Unit / integration without UI | Tests | `pnpm test`, `cargo test --workspace`, Go package tests |
 
 ## Renderer-only preview
@@ -86,7 +87,23 @@ NO_PROXY=127.0.0.1,localhost npx chrome-devtools-mcp@latest \
 On hosts where port 9222 is occupied, keep **9250** unless both launcher and
 probe are changed together.
 
-## Native GUI on Hyprland (this development host)
+## Native GUI without focus stealing
+
+The default workflow while the machine is in use is:
+
+1. Open Grok Desktop inside Wisp's hidden compositor, or move its exact window
+   there before interaction.
+2. Launch with a dedicated CDP profile and port (normally `qa-local`, 9250).
+3. Connect Chrome DevTools MCP/CDP to that Electron renderer for DOM, console,
+   network, accessibility, and state inspection.
+4. Use Wisp only for native window, tray, focus, sizing, input, and screenshots.
+5. Close the exact Wisp, Electron, Vite, and CDP-profile owners when finished.
+
+If the hidden compositor cannot start, treat that as a tooling blocker for
+native visual QA. Browser-preview/headless and CDP semantic checks may continue,
+but do not substitute a visible workspace without the user's permission.
+
+## Visible native GUI on Hyprland (only when released)
 
 For visual GUI verification of the real Electron window:
 
@@ -105,9 +122,10 @@ setup through the external Wisp/Hyprland flow (or manually).
 
 ### Courtesy rule
 
-If the user is using the computer, do not launch Electron, switch workspaces,
-or move windows. Prefer `pnpm dev:web` + headless browser QA until the desktop
-is explicitly released.
+If the user is using the computer, do not switch workspaces or move windows on
+the visible compositor. Use Wisp's hidden compositor plus CDP. If it is
+unavailable, prefer `pnpm dev:web` + headless browser QA and defer native checks
+until the desktop is explicitly released.
 
 ## Two meanings of “Wisp”
 

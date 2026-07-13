@@ -1,17 +1,19 @@
 # Implementation status
 
-- Snapshot date: 2026-07-12
+- Snapshot date: 2026-07-13
 - Release status: not qualified for distribution
-- Wire/schema tip: **IPC protocol epoch 24**, **SQLCipher schema 24**. Scheduler
-  execution and managed-integration mutation remain disabled; schema 24 adds
-  a durable per-turn official xAI Search grant while retaining local usage
-  summaries and immutable per-conversation credential-rail lineage. Older narrative below
+- Wire/schema tip: **IPC protocol epoch 28**, **SQLCipher schema 26**. Epochs
+  25–28 and schemas 25–26 add explicit HostDirect/IsolatedGuest classification,
+  durable Host Tools enrollment, runtime preparation, Work dispatch,
+  cancellation, approvals, and bounded snapshots. Older narrative below
   describes retained contracts unless a later epoch explicitly replaced them.
 - Linux full product GA contract and milestones:
   [linux-ga.md](linux-ga.md). Platform isolation on Linux is **specified**
   (platform ADRs 0004–0007) and has fail-closed broker, transport, and packaging
-  foundations; Work remains Limited Mode until the signed QEMU/KVM guest,
-  proof-of-possession, privileged gateway, and hardware qualification complete.
+  foundations. Isolated Work remains unavailable until the signed QEMU/KVM
+  guest, proof-of-possession, privileged gateway, and hardware qualification
+  complete; independently enrolled Host Tools is available as a distinct,
+  risk-accepted backend and is not isolation evidence.
 
 This ledger distinguishes implemented code from an end-to-end product workflow
 and from release evidence. A locally passing adapter or cross-compiled binary
@@ -76,7 +78,7 @@ Architecture principles:
   Windows and a bounded Assuan pinentry exchange on Linux. The shared path has
   serialized prompt policy, durable intent replay, daemon-owned
   validation/vault persistence, and non-secret responses introduced in IPC v2;
-  current IPC v15 retains that boundary. Linux additionally uses a protected
+  current IPC v28 retains that boundary. Linux additionally uses a protected
   canonical pinentry executable, a cleared and validated child environment,
   process-group cancellation/reaping, a one-shot stdin nonce handoff, and a
   pre-runtime non-dumpable daemon. The Windows
@@ -98,6 +100,12 @@ Architecture principles:
 - Signed guest-image catalog, hardened Windows service storage, explicit HCS
   lifecycle contract, authenticated guest channel v2, reproducible NixOS guest,
   and fail-closed capability reporting.
+- Explicit Host Tools v1 behind daemon-owned, versioned risk enrollment. Runs
+  bind immutably to HostDirect, use an authenticated packaged stdio MCP bridge,
+  enforce capability roots for filesystem operations, require exact one-time
+  approval for writes and processes, persist intent before side effects, and
+  recover uncertain mutations as `interrupted_needs_review`. Chat and scheduled
+  runs cannot inherit this authority; missing isolation never creates a grant.
 - IPC v4 bounded resumable long polling over durable per-run audit events,
   including strict cursor validation, dedicated reconnecting Electron
   connections, and process/subscriber concurrency limits. This is not provider
@@ -261,8 +269,9 @@ Architecture principles:
   ID as a transport ID. A bounded daemon startup pass moves interrupted
   retry-safe attempts to `retry_pending` and non-idempotent attempts to
   `interrupted_needs_review` without I/O, and fails startup closed if the bound
-  is exceeded. There is still no privileged execution gateway, public IPC, or
-  guest-control authority, so this exposes no executable Work path.
+  is exceeded. This journal remains the guest-control foundation; Host Tools
+  uses its separate ADR-0032 policy, approval, and side-effect path and does not
+  grant guest-control authority.
 - Explicit MSIX inventory, signing, Electron fuse, provenance, architecture,
   and outer/inner artifact-binding checks for Windows x64 and ARM64.
 
@@ -288,8 +297,8 @@ Architecture principles:
   Bounded startup recovery resolves crash-left reservations and in-flight calls
   before the daemon accepts IPC.
 - Native xAI key enrollment intent, non-secret vault status, and credential
-  deletion. IPC v2 introduced the wire change; current IPC v15 rejects epochs 0
-  through 14. The Wayland developer pass now covers the real protected pinentry,
+  deletion. IPC v2 introduced the wire change; current IPC v28 rejects epochs 0
+  through 27. The Wayland developer pass now covers the real protected pinentry,
   environment isolation, process-group cleanup, and Escape cancellation. The
   Win32 boundary still needs native Windows qualification, while the Linux
   pinentry path remains a developer workflow pending representative X11,
@@ -322,7 +331,7 @@ remain under **Windows qualification blockers**.
 | T2 BYOK / pinentry / Files qualification | **Code + structural tests**; full packaged DE matrix still open |
 | T3 Linux QEMU/KVM broker + virtio image | **Broker + unix socket main** exposes ensure_image/create_vm/start_vm/guest_control; StartVm requires Spawn (lab injects fake process). Wire: Go `[]byte` ↔ base64 JSON fixtures. Residual: production QEMU matrix |
 | T4 Privileged gateway + PoP + live isolation facts | **IsolationRuntime** journals `runner.health`; Linux dialer **orchestrates** EnsureImage→Create/Start→grant→health. Peer: **SO_PEERCRED + /proc/pid/exe** (client peerExe not authoritative). Residual: real KVM+image release matrix |
-| T5 Subscription host auth + guest ACP Work | **Host auth IPC + Setup Connect**; Work still needs isolation+auth facts |
+| T5 Subscription auth + Work | **Host Tools v1 implemented** after explicit enrollment and runtime preparation; isolated guest ACP Work still needs isolation+auth facts |
 | T6 Overlay host commit UX | Specified; not product-wired |
 | T7 Automation execution | **Epoch 18** `schedule_active` + `KernelInitializedExecutionEnabled` when journal recovers; `execute_due` claims and links durable runs. Residual: full product schedule UX + occurrence history still thin |
 | T8 Media / voice / search product ops | Capabilities unavailable; **Library files-only** (Imagine create tabs removed) |
@@ -338,12 +347,11 @@ remain under **Windows qualification blockers**.
   plus explicit child-thread Branch/Edit/Regenerate are implemented;
   completed and uncertain turns remain ineligible for Retry. General
   background-operation event synchronization remains separate; IPC v4's
-  run-event long poll carries audit events only, while current IPC (epoch 16)
+  run-event long poll carries audit events only, while current IPC (epoch 28)
   retains epoch 7's direct-Chat-only turn-local text stream.
-- Subscription authentication and session execution need a daemon-owned ACP
-  lifecycle. Session prompts remain guest-only and unavailable until the
-  qualified guest proxy exists. On Linux that proxy is the future QEMU/KVM
-  broker (platform ADR 0004), not host execution.
+- Isolated session execution still needs the qualified guest proxy. Host Tools
+  now has a separate daemon-owned ACP lifecycle and authenticated MCP bridge;
+  it is deliberately not represented as guest isolation or used as fallback.
 - BYOK add/replace needs native qualification of packaged process/window
   identity, prompt accessibility, cancellation, HWND reuse, buffer cleanup, and
   crash behavior on Windows. Linux additionally needs representative
