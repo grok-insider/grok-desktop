@@ -1,12 +1,15 @@
 //! Capability-root confinement and output-bound tests.
 
-use std::{path::Path, time::Duration};
+#[cfg(unix)]
+use std::path::Path;
+use std::time::Duration;
 
 use grok_application::{
     HostFilesystemErrorKind, HostFilesystemReader, HostFilesystemWriter, HostProcessErrorKind,
     HostProcessExecutor, HostProcessRequest,
 };
 use grok_host_tools::CapabilityHostFilesystem;
+#[cfg(unix)]
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
