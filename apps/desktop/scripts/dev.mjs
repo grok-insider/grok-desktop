@@ -29,6 +29,7 @@ const nativeExtension = process.platform === "win32" ? ".exe" : "";
 const developmentEnvironment = {
   ...process.env,
   GROK_DAEMON_BINARY: path.join(repositoryRoot, "target", "debug", `grok-daemon${nativeExtension}`),
+  GROK_INSTALLATION_ID: "dev",
 };
 
 const graphicsArguments = process.argv.slice(2);

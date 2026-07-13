@@ -155,6 +155,14 @@ export interface DaemonSupervisorOptions {
   inheritDaemonStderr?: boolean;
 }
 
+export const DAEMON_DATABASE_IN_USE_EXIT_CODE = 20;
+
+export function daemonStartupExitReason(exitCode: number | null): string | undefined {
+  return exitCode === DAEMON_DATABASE_IN_USE_EXIT_CODE
+    ? "Another Grok Desktop instance owns this profile's data. Close that instance or use a different development profile."
+    : undefined;
+}
+
 /** Owns one nonce-paired daemon process and reconnectable local RPC client. */
 export class DaemonSupervisor {
   private readonly options: DaemonSupervisorOptions;
@@ -997,10 +1005,14 @@ export class DaemonSupervisor {
     if (failedChild && failedChild.exitCode === null && failedChild.signalCode === null) {
       await stopChild(failedChild);
     }
+    const classifiedExitReason = daemonStartupExitReason(startingChild.exitCode);
     if (!this.stopping) {
-      this.setDegraded(didNotBecomeReady
+      this.setDegraded(classifiedExitReason ?? (didNotBecomeReady
         ? "The local daemon did not become ready."
-        : "The local daemon exited during startup.");
+        : "The local daemon exited during startup."));
+    }
+    if (classifiedExitReason) {
+      throw new Error(`daemon startup failed: ${classifiedExitReason}`);
     }
     const causeMessage = lastError instanceof Error ? lastError.message : lastError ? String(lastError) : "startup timed out";
     throw new Error(`daemon startup failed: ${causeMessage}`, { cause: lastError });

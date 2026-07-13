@@ -51,7 +51,7 @@ use grok_memory::{
     EphemeralKeyProvider, InMemoryExecutionStore, InMemoryManagedIntegrationLifecycleStore,
     InMemorySecretVault, SystemClock, UuidGenerator,
 };
-use grok_sqlcipher::{DatabaseLock, SqlCipherStore};
+use grok_sqlcipher::{DatabaseLock, SqlCipherStore, SqlCipherStoreError};
 use grok_vault::OsVault;
 use grok_vm_service_client::VmServiceIsolationProbe;
 use grok_xai::oauth::XaiOAuthClient;
@@ -93,6 +93,7 @@ const LEGACY_ACP_VARIABLES: [&str; 5] = [
     "GROK_ACP_WORKSPACE_ROOTS",
     "GROK_ACP_CHAT_PROXY_BASE_URL",
 ];
+const DATABASE_IN_USE_EXIT_CODE: i32 = 20;
 
 /// Ties this daemon's lifetime to the supervising desktop process.
 ///
@@ -127,7 +128,17 @@ fn harden_process_inspection() -> Result<(), DynError> {
     Ok(())
 }
 
-fn main() -> Result<(), DynError> {
+fn main() {
+    if let Err(error) = run_main() {
+        error!(
+            reason = startup_error_reason(error.as_ref()),
+            "daemon startup failed"
+        );
+        std::process::exit(startup_error_exit_code(error.as_ref()));
+    }
+}
+
+fn run_main() -> Result<(), DynError> {
     #[cfg(target_os = "linux")]
     harden_process_inspection()?;
     #[cfg(target_os = "linux")]
@@ -138,6 +149,38 @@ fn main() -> Result<(), DynError> {
         .enable_all()
         .build()?;
     runtime.block_on(run(startup_nonce))
+}
+
+fn startup_error_exit_code(error: &(dyn Error + 'static)) -> i32 {
+    if error_chain_contains::<SqlCipherStoreError>(error, |value| {
+        matches!(value, SqlCipherStoreError::DatabaseInUse)
+    }) {
+        DATABASE_IN_USE_EXIT_CODE
+    } else {
+        1
+    }
+}
+
+fn startup_error_reason(error: &(dyn Error + 'static)) -> &'static str {
+    if startup_error_exit_code(error) == DATABASE_IN_USE_EXIT_CODE {
+        "database_in_use"
+    } else {
+        "startup_failed"
+    }
+}
+
+fn error_chain_contains<T: Error + 'static>(
+    error: &(dyn Error + 'static),
+    predicate: impl Fn(&T) -> bool,
+) -> bool {
+    let mut current = Some(error);
+    while let Some(value) = current {
+        if value.downcast_ref::<T>().is_some_and(&predicate) {
+            return true;
+        }
+        current = value.source();
+    }
+    false
 }
 
 fn initialize_tracing() -> Result<(), DynError> {
@@ -1373,8 +1416,7 @@ fn unavailable_component_runtime() -> AgentRuntimeConfiguration {
 fn default_grok_home_spec() -> Result<GrokHomeSpec, DynError> {
     let directories = directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
         .ok_or("operating system did not provide a local application data directory")?;
-    let installation_id =
-        std::env::var("GROK_INSTALLATION_ID").unwrap_or_else(|_| "default".into());
+    let installation_id = installation_id()?;
     Ok(GrokHomeSpec::new(
         directories.data_local_dir().to_path_buf(),
         installation_id,
@@ -1585,8 +1627,7 @@ async fn stores() -> Result<Stores, DynError> {
                 Some(_) => return Err("database path overrides are debug-only".into()),
                 None => default_database_path()?,
             };
-            let installation_id = std::env::var("GROK_INSTALLATION_ID")
-                .unwrap_or_else(|_| "default".into());
+            let installation_id = installation_id()?;
             let lock = DatabaseLock::acquire(&path)?;
             let artifact_content_base = absolute_parent(&path)?;
             let vault = Arc::new(OsVault::new(&installation_id)?);
@@ -1617,17 +1658,38 @@ fn absolute_parent(path: &Path) -> Result<PathBuf, DynError> {
 }
 
 fn os_vault() -> Result<Arc<dyn SecretVault>, DynError> {
-    let installation_id =
-        std::env::var("GROK_INSTALLATION_ID").unwrap_or_else(|_| "default".into());
+    let installation_id = installation_id()?;
     Ok(Arc::new(OsVault::new(&installation_id)?))
 }
 
 fn default_database_path() -> Result<std::path::PathBuf, DynError> {
     let directories = directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
         .ok_or("operating system did not provide a local application data directory")?;
-    let data_directory = directories.data_local_dir().join("data");
+    let data_directory =
+        database_directory_for(directories.data_local_dir(), installation_id()?.as_str());
     ensure_private_database_directory(&data_directory)?;
     Ok(data_directory.join("grok.db"))
+}
+
+fn database_directory_for(data_local_directory: &Path, installation_id: &str) -> PathBuf {
+    if installation_id == "default" {
+        data_local_directory.join("data")
+    } else {
+        data_local_directory.join(installation_id).join("data")
+    }
+}
+
+fn installation_id() -> Result<String, DynError> {
+    let value = std::env::var("GROK_INSTALLATION_ID").unwrap_or_else(|_| "default".into());
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err("installation id is invalid".into());
+    }
+    Ok(value)
 }
 
 fn ensure_private_database_directory(path: &Path) -> Result<(), std::io::Error> {
@@ -2535,6 +2597,23 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    #[test]
+    fn non_default_installations_receive_distinct_database_directories() {
+        let root = Path::new("/application-data");
+        assert_eq!(database_directory_for(root, "default"), root.join("data"));
+        assert_eq!(
+            database_directory_for(root, "cdp-qa-local"),
+            root.join("cdp-qa-local").join("data")
+        );
+    }
+
+    #[test]
+    fn database_in_use_has_a_stable_classified_exit() {
+        let error = SqlCipherStoreError::DatabaseInUse;
+        assert_eq!(startup_error_exit_code(&error), DATABASE_IN_USE_EXIT_CODE);
+        assert_eq!(startup_error_reason(&error), "database_in_use");
     }
 
     struct CatalogFixture {

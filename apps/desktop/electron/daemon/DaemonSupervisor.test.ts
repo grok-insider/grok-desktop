@@ -49,6 +49,7 @@ import {
   DaemonSupervisor,
   daemonBootstrapInput,
   daemonEnvironment,
+  daemonStartupExitReason,
   mapApprovalDecisionResponse,
   mapArtifact,
   mapArtifactRemovalOperation,
@@ -69,6 +70,13 @@ import {
   type DaemonSupervisorOptions,
   resolveDaemonBinary,
 } from "./DaemonSupervisor.js";
+
+describe("daemon startup exit classification", () => {
+  it("maps the database ownership exit without leaking a transport error", () => {
+    expect(daemonStartupExitReason(20)).toContain("owns this profile's data");
+    expect(daemonStartupExitReason(1)).toBeUndefined();
+  });
+});
 
 function pendingForkDelivery(childThreadId = "thread-child"): ConversationForkDelivery {
   return {

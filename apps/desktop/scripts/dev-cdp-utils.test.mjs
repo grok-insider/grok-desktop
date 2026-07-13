@@ -7,12 +7,18 @@ import {
   DEFAULT_CDP_PROFILE,
   assertLoopbackPortAvailable,
   developmentNativeBuildArguments,
+  developmentInstallationId,
   parseCdpProbeArguments,
   parseDevCdpArguments,
   productionRendererBuildEnvironment,
   resolveCdpProfileDirectory,
   validateElectronCdpDiscovery,
 } from "./dev-cdp-utils.mjs";
+
+test("derives a bounded daemon installation id from the validated CDP profile", () => {
+  assert.equal(developmentInstallationId("qa-local"), "cdp-qa-local");
+  assert.throws(() => developmentInstallationId("../shared"), /profile/);
+});
 
 test("development launchers build the daemon with the official ACP descriptor", () => {
   assert.deepEqual(developmentNativeBuildArguments(), [

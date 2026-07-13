@@ -10,6 +10,7 @@ import {
   DEFAULT_CDP_HOST,
   assertLoopbackPortAvailable,
   developmentNativeBuildArguments,
+  developmentInstallationId,
   parseDevCdpArguments,
   productionRendererBuildEnvironment,
   resolveCdpProfileDirectory,
@@ -86,6 +87,7 @@ async function main() {
     const environment = {
       ...process.env,
       GROK_DAEMON_BINARY: daemonBinary,
+      GROK_INSTALLATION_ID: developmentInstallationId(options.profile),
     };
     delete environment.ELECTRON_RUN_AS_NODE;
     delete environment.VITE_BROWSER_PREVIEW;

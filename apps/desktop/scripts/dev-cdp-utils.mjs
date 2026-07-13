@@ -8,6 +8,10 @@ export const DEFAULT_CDP_PORT = 9250;
 export const DEFAULT_CDP_PROFILE = "qa-local";
 export const DEFAULT_CDP_TIMEOUT_MS = 15_000;
 
+export function developmentInstallationId(profile) {
+  return `cdp-${parseProfileName(profile)}`;
+}
+
 export function developmentNativeBuildArguments() {
   return [
     "build", "--locked",
