@@ -181,8 +181,10 @@ pub fn open_private_file(
     create_new: bool,
 ) -> io::Result<File> {
     let share_mode = if create_new {
-        // Atomic hard-link publication removes the still-open temporary name.
-        FILE_SHARE_DELETE
+        // Atomic hard-link publication opens the source and removes the
+        // still-open temporary name. Keep all three sharing modes compatible
+        // while the original handle pins the file identity.
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
     } else if read && !write {
         // Readers may coexist, but no writer or deleter can race verification.
         FILE_SHARE_READ
@@ -645,6 +647,21 @@ mod tests {
         let file = open_private_file(&file_path, true, true, true).expect("create file");
         assert!(verify_private_acl(&file, PrivateObjectKind::File).expect("verify file"));
         assert!(file_has_single_link(&file).expect("link count"));
+    }
+
+    #[test]
+    fn publishes_and_removes_a_private_file_while_its_handle_is_open() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let temporary = root.path().join("managed.tmp");
+        let published = root.path().join("managed.toml");
+        let file = open_private_file(&temporary, false, true, true).expect("create file");
+
+        std::fs::hard_link(&temporary, &published).expect("publish hard link");
+        std::fs::remove_file(&temporary).expect("remove temporary name");
+
+        assert!(published.is_file());
+        assert!(file_has_single_link(&file).expect("published link count"));
+        assert!(verify_private_acl(&file, PrivateObjectKind::File).expect("verify file"));
     }
 
     #[test]

@@ -758,7 +758,13 @@ mod tests {
             .expect("verified catalog");
         assert_eq!(verified.sequence(), 42);
         assert_eq!(verified.component().version(), &Version::new(0, 2, 95));
-        assert_eq!(verified.component().executable(), fixture.executable);
+        assert_eq!(
+            verified.component().executable(),
+            fixture
+                .executable
+                .canonicalize()
+                .expect("canonical fixture executable")
+        );
         verified.component().reverify().expect("reverify");
     }
 
