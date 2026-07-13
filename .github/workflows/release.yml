@@ -49,12 +49,15 @@ jobs:
       APPIMAGEUPDATETOOL_SHA256: d976cdac667b03dee8cb23fb95ef74b042c406c5cbab3ff294d2b16efeaff84f
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - uses: cachix/install-nix-action@v31
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Verify tag matches package version
         shell: bash
@@ -150,11 +153,14 @@ jobs:
       GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Verify qualified worker inputs
         shell: pwsh
@@ -214,11 +220,14 @@ jobs:
       UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
