@@ -8,6 +8,15 @@ export const DEFAULT_CDP_PORT = 9250;
 export const DEFAULT_CDP_PROFILE = "qa-local";
 export const DEFAULT_CDP_TIMEOUT_MS = 15_000;
 
+export function developmentNativeBuildArguments() {
+  return [
+    "build", "--locked",
+    "--package", "grok-daemon",
+    "--package", "grok-host-tools-mcp",
+    "--features", "grok-daemon/debug-acp-descriptor",
+  ];
+}
+
 const profilePattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
 
 export function parseDevCdpArguments(arguments_) {

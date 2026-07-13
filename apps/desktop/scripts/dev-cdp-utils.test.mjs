@@ -6,12 +6,22 @@ import {
   DEFAULT_CDP_PORT,
   DEFAULT_CDP_PROFILE,
   assertLoopbackPortAvailable,
+  developmentNativeBuildArguments,
   parseCdpProbeArguments,
   parseDevCdpArguments,
   productionRendererBuildEnvironment,
   resolveCdpProfileDirectory,
   validateElectronCdpDiscovery,
 } from "./dev-cdp-utils.mjs";
+
+test("development launchers build the daemon with the official ACP descriptor", () => {
+  assert.deepEqual(developmentNativeBuildArguments(), [
+    "build", "--locked",
+    "--package", "grok-daemon",
+    "--package", "grok-host-tools-mcp",
+    "--features", "grok-daemon/debug-acp-descriptor",
+  ]);
+});
 
 test("parses bounded CDP launcher and probe options", () => {
   assert.deepEqual(parseDevCdpArguments([]), { profile: DEFAULT_CDP_PROFILE, port: DEFAULT_CDP_PORT });

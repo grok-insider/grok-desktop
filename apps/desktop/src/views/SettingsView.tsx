@@ -51,6 +51,7 @@ import { formatTokenCount, formatUsageLine } from "../lib/usageFormat";
 import { PageHeader } from "../components/PageHeader";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
+import { grokBuildAgentRuntimeDetail } from "../services/productAvailability";
 import type {
   AccountSetupState,
   DesktopPreferences,
@@ -169,8 +170,10 @@ const HOST_ACKNOWLEDGMENT_PHRASE = "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COM
 
 function WorkExecutionSettings() {
   const client = useDesktopClient();
+  const navigate = useNavigate();
   const { snapshot } = useDesktopSnapshot();
   const [policy, setPolicy] = useState<HostExecutionPolicy | null>(null);
+  const [account, setAccount] = useState<AccountSetupState | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [roots, setRoots] = useState<string[]>([]);
@@ -184,7 +187,12 @@ function WorkExecutionSettings() {
 
   const refresh = useCallback(async () => {
     try {
-      setPolicy(await client.getHostExecutionPolicy());
+      const [nextPolicy, nextAccount] = await Promise.all([
+        client.getHostExecutionPolicy(),
+        client.getAccountSetup(),
+      ]);
+      setPolicy(nextPolicy);
+      setAccount(nextAccount);
       setError("");
     } catch {
       setError("Host Tools policy is unavailable.");
@@ -249,13 +257,21 @@ function WorkExecutionSettings() {
       setPolicy(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Host Tools settings could not be changed.");
-      await refresh();
     } finally {
       setBusy(false);
     }
   };
 
   const hostEffective = snapshot?.workExecution.mode === "host_direct";
+  const agentRuntime = snapshot?.connection.agentRuntime;
+  const runtimeAvailable = snapshot?.connection.interfacePreview === true || agentRuntime?.healthy === true;
+  const accountConnected = account?.grokBuild === "connected";
+  const runtimePrerequisite = !runtimeAvailable
+    ? grokBuildAgentRuntimeDetail(agentRuntime)
+    : !accountConnected
+      ? "Connect Grok Build in Setup before preparing Host Tools."
+      : "Enrollment is saved, but Work stays unavailable until the runtime is prepared.";
+  const canPrepareRuntime = runtimeAvailable && accountConnected;
 
   return (
     <>
@@ -286,14 +302,20 @@ function WorkExecutionSettings() {
               title="Runtime"
               description={policy.runtimePrepared
                 ? "The authenticated Host Work role is ready for new Work sessions."
-                : "Enrollment is saved, but Work stays unavailable until the runtime is prepared."}
+                : runtimePrerequisite}
             >
               <Button
                 variant="outline"
-                disabled={busy}
-                onClick={() => void mutateRuntime(policy.runtimePrepared ? "deactivate" : "prepare")}
+                disabled={busy || (!policy.runtimePrepared && account === null)}
+                onClick={() => {
+                  if (!policy.runtimePrepared && !canPrepareRuntime) {
+                    void navigate("/setup");
+                    return;
+                  }
+                  void mutateRuntime(policy.runtimePrepared ? "deactivate" : "prepare");
+                }}
               >
-                {policy.runtimePrepared ? "Deactivate runtime" : "Prepare Host Tools"}
+                {policy.runtimePrepared ? "Deactivate runtime" : canPrepareRuntime ? "Prepare Host Tools" : "Open Setup"}
               </Button>
             </SettingRow>
             <SettingRow

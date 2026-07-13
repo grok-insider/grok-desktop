@@ -35,6 +35,50 @@ class ConnectedSuperGrokClient extends MockDesktopClient {
   }
 }
 
+class FailingHostRuntimeClient extends MockDesktopClient {
+  override async prepareHostWorkRuntime(): Promise<never> {
+    throw new Error("The official Grok Build runtime is unavailable.");
+  }
+}
+
+class UnhealthyHostRuntimeClient extends MockDesktopClient {
+  override async getSnapshot() {
+    const snapshot = await super.getSnapshot();
+    snapshot.connection.interfacePreview = false;
+    snapshot.connection.agentRuntime = {
+      configured: false,
+      healthy: false,
+      protocolVersion: 0,
+      name: "",
+      version: "",
+      reasonCode: "configuration_invalid",
+      authMethods: [],
+      capabilities: {
+        loadSession: false,
+        embeddedContext: false,
+        imageInput: false,
+        audioInput: false,
+        mcpHttp: false,
+        mcpSse: false,
+      },
+    };
+    return snapshot;
+  }
+}
+
+async function enrollHostTools(client: MockDesktopClient) {
+  await client.enrollHostExecution({
+    expectedRevision: 0,
+    acknowledgmentVersion: 1,
+    typedAcknowledgment: "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER",
+    filesystemRead: true,
+    filesystemWrite: false,
+    processExecute: false,
+    pathRoots: ["/home/friend/Work"],
+    broadScopeAcknowledged: false,
+  });
+}
+
 function renderSettings(
   client: MockDesktopClient = new MockDesktopClient(),
   initialEntry = "/settings",
@@ -128,6 +172,33 @@ describe("SettingsView", () => {
       pathRoots: ["/home/friend/Work"],
       typedAcknowledgment: "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER",
     })));
+  });
+
+  it("keeps a Host Tools preparation failure visible", async () => {
+    const client = new FailingHostRuntimeClient();
+    await enrollHostTools(client);
+    renderSettings(client, "/settings?section=work");
+
+    const prepare = await screen.findByRole("button", { name: "Prepare Host Tools" });
+    await waitFor(() => expect(prepare).toBeEnabled());
+    fireEvent.click(prepare);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The official Grok Build runtime is unavailable.",
+    );
+  });
+
+  it("routes to Setup instead of dispatching when the official runtime is unhealthy", async () => {
+    const client = new UnhealthyHostRuntimeClient();
+    await enrollHostTools(client);
+    const prepare = vi.spyOn(client, "prepareHostWorkRuntime");
+    renderSettings(client, "/settings?section=work");
+
+    expect(await screen.findByText(/configuration is invalid/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Setup" }));
+
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/setup");
+    expect(prepare).not.toHaveBeenCalled();
   });
 
   it("saves daemon-owned close behavior with the loaded revision", async () => {

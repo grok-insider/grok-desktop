@@ -1714,16 +1714,24 @@ impl Daemon {
 
     async fn prepare_host_work_runtime(&self) -> Result<v1::response::Result, ApplicationError> {
         let runtime = self.host_work_runtime.as_ref().ok_or_else(|| {
-            ApplicationError::Unavailable("Host Tools runtime is not configured".into())
+            ApplicationError::InvalidState(
+                "The official Grok Build runtime must be ready before Host Tools can be prepared."
+                    .into(),
+            )
         })?;
         let policy = self
             .host_execution_policy_store()?
             .get_host_execution_policy()
             .await?;
-        runtime
-            .prepare(&policy)
-            .await
-            .map_err(agent_runtime_application_error)?;
+        runtime.prepare(&policy).await.map_err(|error| {
+            if error.kind == AgentRuntimeErrorKind::Authentication {
+                ApplicationError::InvalidState(
+                    "Connect Grok Build in Setup before preparing Host Tools.".into(),
+                )
+            } else {
+                agent_runtime_application_error(error)
+            }
+        })?;
         Ok(v1::response::Result::HostExecutionPolicy(
             host_execution_policy_to_wire(policy, true),
         ))

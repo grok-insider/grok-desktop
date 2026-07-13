@@ -1154,8 +1154,16 @@ async fn configured_legacy_agent_runtime() -> AgentRuntimeConfiguration {
         sha256,
         publisher: "xAI".into(),
     };
-    let Ok(component) = VerifiedGrokComponent::verify(&descriptor) else {
-        return unavailable_component_runtime();
+    let component = match VerifiedGrokComponent::verify(&descriptor) {
+        Ok(component) => component,
+        Err(error) => {
+            warn!(
+                reason_code = "component_verification_failed",
+                error = %error,
+                "official Grok development component verification failed"
+            );
+            return unavailable_component_runtime();
+        }
     };
     start_agent_runtime(component, grok_home).await
 }

@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { developmentNativeBuildArguments } from "./dev-cdp-utils.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -12,10 +13,7 @@ if (!pnpmScript || !path.isAbsolute(pnpmScript)) {
 }
 
 const repositoryRoot = path.resolve(desktopRoot, "../..");
-const nativeBuild = spawn("cargo", [
-  "build", "--locked", "--package", "grok-daemon", "--package", "grok-host-tools-mcp",
-  "--features", "grok-daemon/debug-acp-descriptor",
-], {
+const nativeBuild = spawn("cargo", developmentNativeBuildArguments(), {
   cwd: repositoryRoot,
   env: process.env,
   shell: false,

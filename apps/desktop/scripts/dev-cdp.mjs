@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_CDP_HOST,
   assertLoopbackPortAvailable,
+  developmentNativeBuildArguments,
   parseDevCdpArguments,
   productionRendererBuildEnvironment,
   resolveCdpProfileDirectory,
@@ -66,9 +67,7 @@ async function main() {
   });
 
   try {
-    await runChecked("cargo", [
-      "build", "--locked", "--package", "grok-daemon", "--package", "grok-host-tools-mcp",
-    ], repositoryRoot);
+    await runChecked("cargo", developmentNativeBuildArguments(), repositoryRoot);
     const buildEnvironment = productionRendererBuildEnvironment();
     await runPnpm(["--filter", "@grok-desktop/desktop", "build"], buildEnvironment);
     if (receivedSignal) return;

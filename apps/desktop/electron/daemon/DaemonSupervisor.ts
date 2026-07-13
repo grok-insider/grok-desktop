@@ -1153,6 +1153,10 @@ export function daemonEnvironment(
     if (process.env.GROK_DAEMON_EPHEMERAL === "1") {
       environment.GROK_DAEMON_EPHEMERAL = "1";
     }
+    const installationId = process.env.GROK_INSTALLATION_ID;
+    if (installationId && /^[A-Za-z0-9_-]{1,64}$/.test(installationId)) {
+      environment.GROK_INSTALLATION_ID = installationId;
+    }
     const acp = resolveDevelopmentAcpDescriptor({
       platform,
       env: process.env,

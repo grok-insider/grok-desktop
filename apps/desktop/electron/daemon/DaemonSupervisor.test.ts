@@ -1481,6 +1481,18 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
     expect(daemonEnvironment("/tmp/invalid.sock", "linux", true)).not.toHaveProperty("GROK_DAEMON_EPHEMERAL");
   });
 
+  it("forwards a bounded installation id only to isolate explicit development launches", () => {
+    vi.stubEnv("GROK_INSTALLATION_ID", "qa-host-tools-1");
+    expect(daemonEnvironment("/tmp/development.sock", "linux", true).GROK_INSTALLATION_ID)
+      .toBe("qa-host-tools-1");
+    expect(daemonEnvironment("/tmp/packaged.sock", "linux", false))
+      .not.toHaveProperty("GROK_INSTALLATION_ID");
+
+    vi.stubEnv("GROK_INSTALLATION_ID", "../shared");
+    expect(daemonEnvironment("/tmp/invalid.sock", "linux", true))
+      .not.toHaveProperty("GROK_INSTALLATION_ID");
+  });
+
   it("forwards a complete official Grok Build ACP descriptor only for development launches", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "grok-acp-descriptor-"));
     const acpExecutable = path.join(directory, "grok");
