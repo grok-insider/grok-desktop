@@ -739,7 +739,9 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let file_path = root.path().join("unsafe.dat");
         let file = open_private_file(&file_path, true, true, true).expect("create file");
-        let descriptor = LocalDescriptor::from_sddl("D:(A;;FA;;;WD)").expect("world descriptor");
+        let owner = current_user_sid_string().expect("current owner");
+        let descriptor = LocalDescriptor::from_sddl(&format!("O:{owner}D:(A;;FA;;;WD)"))
+            .expect("world descriptor");
         let (_, dacl) = descriptor.owner_and_dacl().expect("dacl");
         let status = unsafe {
             SetSecurityInfo(
