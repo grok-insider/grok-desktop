@@ -249,7 +249,28 @@ async function probeResponsiveLayouts(session) {
     await session.command("Emulation.clearDeviceMetricsOverride");
     await settleRenderer(session);
   }
+  await waitForNativeViewportLayout(session);
   return labels;
+}
+
+/*
+ * Clearing device metrics restores the native window size asynchronously; the
+ * responsive shell (desktop sidebar vs mobile sheet) re-renders only after the
+ * media query re-evaluates. Later probes read the accessibility tree, so wait
+ * until the desktop layout — including the primary navigation landmark — is
+ * actually back before continuing. Chromium can leave a cleared override
+ * applied until the next navigation; one reload (read-only routes) recovers.
+ */
+async function waitForNativeViewportLayout(session) {
+  const settledExpression = "window.matchMedia('(min-width: 768px)').matches"
+    + " && document.readyState === 'complete'"
+    + " && Boolean(document.querySelector(\"nav[aria-label='Primary navigation']\"))";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await session.evaluate(settledExpression) === true) return;
+    if (attempt === 10) await session.command("Page.reload");
+    await settleRenderer(session);
+  }
+  throw new Error("renderer did not restore the native viewport layout after emulation cleared");
 }
 
 async function probeAccessibility(session) {
