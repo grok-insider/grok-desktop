@@ -56,6 +56,10 @@ type entry struct {
 // identity proved by the transport; request payloads never participate.
 type Manager struct {
 	config Config
+	// prepareStorage is fixed to the audited platform implementation in
+	// production. Keeping it internal lets manager unit tests exercise tenant
+	// coordination without provisioning host ACLs or requiring HCS.
+	prepareStorage func(StorageRoots, string) error
 
 	mu      sync.Mutex
 	closed  bool
@@ -77,7 +81,11 @@ func NewManager(config Config) (*Manager, error) {
 		return nil, fmt.Errorf("DataRoot must be an absolute service-owned directory")
 	}
 	config.DataRoot = filepath.Clean(config.DataRoot)
-	return &Manager{config: config, entries: make(map[string]*entry)}, nil
+	return &Manager{
+		config:         config,
+		prepareStorage: secureTenantStorage,
+		entries:        make(map[string]*entry),
+	}, nil
 }
 
 func (manager *Manager) Resolve(ctx context.Context, identity transport.PeerIdentity) (vmservice.Service, error) {
@@ -137,7 +145,7 @@ func (manager *Manager) createBackend(ctx context.Context, sid string) (vmservic
 	if err != nil {
 		return nil, err
 	}
-	if err := secureTenantStorage(roots, sid); err != nil {
+	if err := manager.prepareStorage(roots, sid); err != nil {
 		return nil, err
 	}
 	return manager.config.Factory.New(ctx, vmservice.Config{
