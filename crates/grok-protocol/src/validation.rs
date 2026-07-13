@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 24);
+        assert_eq!(PROTOCOL_VERSION, 25);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -1104,5 +1104,44 @@ mod tests {
             inner.result,
             Some(v1::response::Result::UsageSummary(value)) if value == summary
         ));
+    }
+
+    #[test]
+    fn epoch_twenty_five_host_enrollment_and_backend_projection_round_trip() {
+        let enrollment = v1::EnrollHostExecutionRequest {
+            expected_revision: 4,
+            acknowledgment_version: 1,
+            typed_acknowledgment: "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER".into(),
+            filesystem_read: true,
+            filesystem_write: true,
+            process_execute: true,
+            path_roots: vec!["/workspace".into()],
+            broad_scope_acknowledged: false,
+        };
+        let mut envelope = request();
+        envelope.payload = Some(v1::envelope::Payload::Request(v1::Request {
+            operation: Some(v1::request::Operation::EnrollHostExecution(
+                enrollment.clone(),
+            )),
+        }));
+        let decoded = v1::Envelope::decode(envelope.encode_to_vec().as_slice())
+            .expect("decode Host Tools enrollment");
+        let Some(v1::envelope::Payload::Request(request)) = decoded.payload else {
+            panic!("request payload");
+        };
+        assert!(matches!(
+            request.operation,
+            Some(v1::request::Operation::EnrollHostExecution(value)) if value == enrollment
+        ));
+
+        let run = v1::Run {
+            kind: v1::RunKind::Work as i32,
+            work_backend: v1::WorkExecutionBackend::HostDirect as i32,
+            ..v1::Run::default()
+        };
+        assert_eq!(
+            v1::Run::decode(run.encode_to_vec().as_slice()).expect("decode bound Work run"),
+            run
+        );
     }
 }

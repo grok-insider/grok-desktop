@@ -964,6 +964,15 @@ impl Daemon {
             Some(v1::request::Operation::GetUsageSummary(request)) => {
                 self.get_usage_summary(request).await
             }
+            Some(
+                v1::request::Operation::GetHostExecutionPolicy(_)
+                | v1::request::Operation::EnrollHostExecution(_)
+                | v1::request::Operation::RevokeHostExecution(_)
+                | v1::request::Operation::PrepareHostWorkRuntime(_)
+                | v1::request::Operation::DeactivateHostWorkRuntime(_),
+            ) => Err(ApplicationError::Unavailable(
+                "Host Tools runtime is not composed".into(),
+            )),
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
             }
@@ -1097,12 +1106,27 @@ impl Daemon {
     }
 
     async fn resolve_capabilities(&self) -> Result<v1::response::Result, ApplicationError> {
-        let statuses = CapabilityResolver::resolve(self.capability_facts().await?)
+        let facts = self.capability_facts().await?;
+        let work_execution_backend = match CapabilityResolver::resolve_work_backend(facts) {
+            None => v1::WorkExecutionBackend::Unspecified,
+            Some(grok_domain::WorkExecutionBackend::HostDirect) => {
+                v1::WorkExecutionBackend::HostDirect
+            }
+            Some(grok_domain::WorkExecutionBackend::IsolatedGuest) => {
+                v1::WorkExecutionBackend::IsolatedGuest
+            }
+        };
+        let statuses = CapabilityResolver::resolve(facts)
             .into_iter()
             .map(capability_to_wire)
             .collect();
         Ok(v1::response::Result::Capabilities(
-            v1::ResolveCapabilitiesResponse { statuses },
+            v1::ResolveCapabilitiesResponse {
+                statuses,
+                work_execution_backend: work_execution_backend as i32,
+                host_work_runtime_ready: facts.host_work_runtime_ready,
+                host_bound_run_active: false,
+            },
         ))
     }
 
@@ -4230,6 +4254,8 @@ mod tests {
                 revision: 2,
                 created_at_unix_ms: 1,
                 updated_at_unix_ms: 2,
+                kind: v1::RunKind::Chat as i32,
+                work_backend: v1::WorkExecutionBackend::Unspecified as i32,
             }),
             failure: None,
             citations,

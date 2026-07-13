@@ -79,6 +79,11 @@ message Request {
     DisconnectSuperGrokRequest disconnect_supergrok = 65;
     // Epoch 23: read-only aggregate of completed conversation-turn usage.
     GetUsageSummaryRequest get_usage_summary = 66;
+    GetHostExecutionPolicyRequest get_host_execution_policy = 67;
+    EnrollHostExecutionRequest enroll_host_execution = 68;
+    RevokeHostExecutionRequest revoke_host_execution = 69;
+    PrepareHostWorkRuntimeRequest prepare_host_work_runtime = 70;
+    DeactivateHostWorkRuntimeRequest deactivate_host_work_runtime = 71;
   }
 }
 
@@ -121,6 +126,7 @@ message Response {
     SuperGrokEnrollmentStatus supergrok_enrollment_status = 33;
     // Epoch 23: local completed-turn usage aggregate.
     UsageSummary usage_summary = 34;
+    HostExecutionPolicy host_execution_policy = 35;
   }
 }
 
@@ -265,6 +271,51 @@ message CapabilityFacts {
 
 message ResolveCapabilitiesResponse {
   repeated CapabilityStatus statuses = 1;
+  WorkExecutionBackend work_execution_backend = 2;
+  bool host_work_runtime_ready = 3;
+  bool host_bound_run_active = 4;
+}
+
+enum WorkExecutionBackend {
+  WORK_EXECUTION_BACKEND_UNSPECIFIED = 0;
+  WORK_EXECUTION_BACKEND_HOST_DIRECT = 1;
+  WORK_EXECUTION_BACKEND_ISOLATED_GUEST = 2;
+}
+
+message GetHostExecutionPolicyRequest {}
+
+message EnrollHostExecutionRequest {
+  uint64 expected_revision = 1;
+  uint32 acknowledgment_version = 2;
+  string typed_acknowledgment = 3;
+  bool filesystem_read = 4;
+  bool filesystem_write = 5;
+  bool process_execute = 6;
+  repeated string path_roots = 7;
+  bool broad_scope_acknowledged = 8;
+}
+
+message RevokeHostExecutionRequest {
+  uint64 expected_revision = 1;
+}
+
+message PrepareHostWorkRuntimeRequest {}
+message DeactivateHostWorkRuntimeRequest {}
+
+message HostExecutionPolicy {
+  uint64 revision = 1;
+  bool active = 2;
+  uint32 acknowledgment_version = 3;
+  uint32 required_acknowledgment_version = 4;
+  uint64 acknowledged_at_unix_ms = 5;
+  bool filesystem_read = 6;
+  bool filesystem_write = 7;
+  bool process_execute = 8;
+  repeated string path_roots = 9;
+  bool broad_scope_acknowledged = 10;
+  uint64 updated_at_unix_ms = 11;
+  bool runtime_prepared = 12;
+  string unavailable_reason_code = 13;
 }
 
 message GetAccountStateRequest {}
@@ -608,6 +659,15 @@ message Run {
   uint64 revision = 5;
   uint64 created_at_unix_ms = 6;
   uint64 updated_at_unix_ms = 7;
+  RunKind kind = 8;
+  WorkExecutionBackend work_backend = 9;
+}
+
+enum RunKind {
+  RUN_KIND_UNSPECIFIED = 0;
+  RUN_KIND_CHAT = 1;
+  RUN_KIND_WORK = 2;
+  RUN_KIND_SCHEDULED = 3;
 }
 
 enum RunState {

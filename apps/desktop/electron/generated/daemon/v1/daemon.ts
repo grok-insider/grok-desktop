@@ -19,6 +19,13 @@ export enum AutomationSchedulerHealth {
   UNRECOGNIZED = -1,
 }
 
+export enum WorkExecutionBackend {
+  WORK_EXECUTION_BACKEND_UNSPECIFIED = 0,
+  WORK_EXECUTION_BACKEND_HOST_DIRECT = 1,
+  WORK_EXECUTION_BACKEND_ISOLATED_GUEST = 2,
+  UNRECOGNIZED = -1,
+}
+
 export enum ConversationForkDeliveryState {
   CONVERSATION_FORK_DELIVERY_STATE_UNSPECIFIED = 0,
   CONVERSATION_FORK_DELIVERY_STATE_PENDING = 1,
@@ -125,6 +132,14 @@ export enum CapabilityAvailability {
   CAPABILITY_AVAILABILITY_AVAILABLE = 1,
   CAPABILITY_AVAILABILITY_LIMITED = 2,
   CAPABILITY_AVAILABILITY_UNAVAILABLE = 3,
+  UNRECOGNIZED = -1,
+}
+
+export enum RunKind {
+  RUN_KIND_UNSPECIFIED = 0,
+  RUN_KIND_CHAT = 1,
+  RUN_KIND_WORK = 2,
+  RUN_KIND_SCHEDULED = 3,
   UNRECOGNIZED = -1,
 }
 
@@ -387,6 +402,11 @@ export interface Request {
     | //
     /** Epoch 23: read-only aggregate of completed conversation-turn usage. */
     { $case: "getUsageSummary"; value: GetUsageSummaryRequest }
+    | { $case: "getHostExecutionPolicy"; value: GetHostExecutionPolicyRequest }
+    | { $case: "enrollHostExecution"; value: EnrollHostExecutionRequest }
+    | { $case: "revokeHostExecution"; value: RevokeHostExecutionRequest }
+    | { $case: "prepareHostWorkRuntime"; value: PrepareHostWorkRuntimeRequest }
+    | { $case: "deactivateHostWorkRuntime"; value: DeactivateHostWorkRuntimeRequest }
     | undefined;
 }
 
@@ -427,6 +447,7 @@ export interface Response {
     | //
     /** Epoch 23: local completed-turn usage aggregate. */
     { $case: "usageSummary"; value: UsageSummary }
+    | { $case: "hostExecutionPolicy"; value: HostExecutionPolicy }
     | undefined;
 }
 
@@ -576,6 +597,49 @@ export interface CapabilityFacts {
 
 export interface ResolveCapabilitiesResponse {
   statuses: CapabilityStatus[];
+  workExecutionBackend: WorkExecutionBackend;
+  hostWorkRuntimeReady: boolean;
+  hostBoundRunActive: boolean;
+}
+
+export interface GetHostExecutionPolicyRequest {
+}
+
+export interface EnrollHostExecutionRequest {
+  expectedRevision: bigint;
+  acknowledgmentVersion: number;
+  typedAcknowledgment: string;
+  filesystemRead: boolean;
+  filesystemWrite: boolean;
+  processExecute: boolean;
+  pathRoots: string[];
+  broadScopeAcknowledged: boolean;
+}
+
+export interface RevokeHostExecutionRequest {
+  expectedRevision: bigint;
+}
+
+export interface PrepareHostWorkRuntimeRequest {
+}
+
+export interface DeactivateHostWorkRuntimeRequest {
+}
+
+export interface HostExecutionPolicy {
+  revision: bigint;
+  active: boolean;
+  acknowledgmentVersion: number;
+  requiredAcknowledgmentVersion: number;
+  acknowledgedAtUnixMs: bigint;
+  filesystemRead: boolean;
+  filesystemWrite: boolean;
+  processExecute: boolean;
+  pathRoots: string[];
+  broadScopeAcknowledged: boolean;
+  updatedAtUnixMs: bigint;
+  runtimePrepared: boolean;
+  unavailableReasonCode: string;
 }
 
 export interface GetAccountStateRequest {
@@ -850,6 +914,8 @@ export interface Run {
   revision: bigint;
   createdAtUnixMs: bigint;
   updatedAtUnixMs: bigint;
+  kind: RunKind;
+  workBackend: WorkExecutionBackend;
 }
 
 export interface EventsSinceRequest {
@@ -1613,6 +1679,21 @@ export const Request: MessageFns<Request> = {
       case "getUsageSummary":
         GetUsageSummaryRequest.encode(message.operation.value, writer.uint32(530).fork()).join();
         break;
+      case "getHostExecutionPolicy":
+        GetHostExecutionPolicyRequest.encode(message.operation.value, writer.uint32(538).fork()).join();
+        break;
+      case "enrollHostExecution":
+        EnrollHostExecutionRequest.encode(message.operation.value, writer.uint32(546).fork()).join();
+        break;
+      case "revokeHostExecution":
+        RevokeHostExecutionRequest.encode(message.operation.value, writer.uint32(554).fork()).join();
+        break;
+      case "prepareHostWorkRuntime":
+        PrepareHostWorkRuntimeRequest.encode(message.operation.value, writer.uint32(562).fork()).join();
+        break;
+      case "deactivateHostWorkRuntime":
+        DeactivateHostWorkRuntimeRequest.encode(message.operation.value, writer.uint32(570).fork()).join();
+        break;
     }
     return writer;
   },
@@ -2163,6 +2244,61 @@ export const Request: MessageFns<Request> = {
           };
           continue;
         }
+        case 67: {
+          if (tag !== 538) {
+            break;
+          }
+
+          message.operation = {
+            $case: "getHostExecutionPolicy",
+            value: GetHostExecutionPolicyRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 68: {
+          if (tag !== 546) {
+            break;
+          }
+
+          message.operation = {
+            $case: "enrollHostExecution",
+            value: EnrollHostExecutionRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 69: {
+          if (tag !== 554) {
+            break;
+          }
+
+          message.operation = {
+            $case: "revokeHostExecution",
+            value: RevokeHostExecutionRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 70: {
+          if (tag !== 562) {
+            break;
+          }
+
+          message.operation = {
+            $case: "prepareHostWorkRuntime",
+            value: PrepareHostWorkRuntimeRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
+        case 71: {
+          if (tag !== 570) {
+            break;
+          }
+
+          message.operation = {
+            $case: "deactivateHostWorkRuntime",
+            value: DeactivateHostWorkRuntimeRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2637,6 +2773,51 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "getHostExecutionPolicy": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "getHostExecutionPolicy",
+            value: GetHostExecutionPolicyRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "enrollHostExecution": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "enrollHostExecution",
+            value: EnrollHostExecutionRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "revokeHostExecution": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "revokeHostExecution",
+            value: RevokeHostExecutionRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "prepareHostWorkRuntime": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "prepareHostWorkRuntime",
+            value: PrepareHostWorkRuntimeRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
+      case "deactivateHostWorkRuntime": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "deactivateHostWorkRuntime",
+            value: DeactivateHostWorkRuntimeRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2747,6 +2928,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "usageSummary":
         UsageSummary.encode(message.result.value, writer.uint32(274).fork()).join();
+        break;
+      case "hostExecutionPolicy":
+        HostExecutionPolicy.encode(message.result.value, writer.uint32(282).fork()).join();
         break;
     }
     return writer;
@@ -3041,6 +3225,14 @@ export const Response: MessageFns<Response> = {
           message.result = { $case: "usageSummary", value: UsageSummary.decode(reader, reader.uint32()) };
           continue;
         }
+        case 35: {
+          if (tag !== 282) {
+            break;
+          }
+
+          message.result = { $case: "hostExecutionPolicy", value: HostExecutionPolicy.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3284,6 +3476,15 @@ export const Response: MessageFns<Response> = {
       case "usageSummary": {
         if (object.result?.value !== undefined && object.result?.value !== null) {
           message.result = { $case: "usageSummary", value: UsageSummary.fromPartial(object.result.value) };
+        }
+        break;
+      }
+      case "hostExecutionPolicy": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = {
+            $case: "hostExecutionPolicy",
+            value: HostExecutionPolicy.fromPartial(object.result.value),
+          };
         }
         break;
       }
@@ -4835,13 +5036,22 @@ export const CapabilityFacts: MessageFns<CapabilityFacts> = {
 };
 
 function createBaseResolveCapabilitiesResponse(): ResolveCapabilitiesResponse {
-  return { statuses: [] };
+  return { statuses: [], workExecutionBackend: 0, hostWorkRuntimeReady: false, hostBoundRunActive: false };
 }
 
 export const ResolveCapabilitiesResponse: MessageFns<ResolveCapabilitiesResponse> = {
   encode(message: ResolveCapabilitiesResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     for (const v of message.statuses) {
       CapabilityStatus.encode(v!, writer.uint32(10).fork()).join();
+    }
+    if (message.workExecutionBackend !== 0) {
+      writer.uint32(16).int32(message.workExecutionBackend);
+    }
+    if (message.hostWorkRuntimeReady !== false) {
+      writer.uint32(24).bool(message.hostWorkRuntimeReady);
+    }
+    if (message.hostBoundRunActive !== false) {
+      writer.uint32(32).bool(message.hostBoundRunActive);
     }
     return writer;
   },
@@ -4861,6 +5071,30 @@ export const ResolveCapabilitiesResponse: MessageFns<ResolveCapabilitiesResponse
           message.statuses.push(CapabilityStatus.decode(reader, reader.uint32()));
           continue;
         }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.workExecutionBackend = reader.int32() as any;
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.hostWorkRuntimeReady = reader.bool();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.hostBoundRunActive = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -4876,6 +5110,523 @@ export const ResolveCapabilitiesResponse: MessageFns<ResolveCapabilitiesResponse
   fromPartial(object: DeepPartial<ResolveCapabilitiesResponse>): ResolveCapabilitiesResponse {
     const message = createBaseResolveCapabilitiesResponse();
     message.statuses = object.statuses?.map((e) => CapabilityStatus.fromPartial(e)) || [];
+    message.workExecutionBackend = object.workExecutionBackend ?? 0;
+    message.hostWorkRuntimeReady = object.hostWorkRuntimeReady ?? false;
+    message.hostBoundRunActive = object.hostBoundRunActive ?? false;
+    return message;
+  },
+};
+
+function createBaseGetHostExecutionPolicyRequest(): GetHostExecutionPolicyRequest {
+  return {};
+}
+
+export const GetHostExecutionPolicyRequest: MessageFns<GetHostExecutionPolicyRequest> = {
+  encode(_: GetHostExecutionPolicyRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetHostExecutionPolicyRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetHostExecutionPolicyRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<GetHostExecutionPolicyRequest>): GetHostExecutionPolicyRequest {
+    return GetHostExecutionPolicyRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<GetHostExecutionPolicyRequest>): GetHostExecutionPolicyRequest {
+    const message = createBaseGetHostExecutionPolicyRequest();
+    return message;
+  },
+};
+
+function createBaseEnrollHostExecutionRequest(): EnrollHostExecutionRequest {
+  return {
+    expectedRevision: 0n,
+    acknowledgmentVersion: 0,
+    typedAcknowledgment: "",
+    filesystemRead: false,
+    filesystemWrite: false,
+    processExecute: false,
+    pathRoots: [],
+    broadScopeAcknowledged: false,
+  };
+}
+
+export const EnrollHostExecutionRequest: MessageFns<EnrollHostExecutionRequest> = {
+  encode(message: EnrollHostExecutionRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.expectedRevision !== 0n) {
+      if (BigInt.asUintN(64, message.expectedRevision) !== message.expectedRevision) {
+        throw new globalThis.Error("value provided for field message.expectedRevision of type uint64 too large");
+      }
+      writer.uint32(8).uint64(message.expectedRevision);
+    }
+    if (message.acknowledgmentVersion !== 0) {
+      writer.uint32(16).uint32(message.acknowledgmentVersion);
+    }
+    if (message.typedAcknowledgment !== "") {
+      writer.uint32(26).string(message.typedAcknowledgment);
+    }
+    if (message.filesystemRead !== false) {
+      writer.uint32(32).bool(message.filesystemRead);
+    }
+    if (message.filesystemWrite !== false) {
+      writer.uint32(40).bool(message.filesystemWrite);
+    }
+    if (message.processExecute !== false) {
+      writer.uint32(48).bool(message.processExecute);
+    }
+    for (const v of message.pathRoots) {
+      writer.uint32(58).string(v!);
+    }
+    if (message.broadScopeAcknowledged !== false) {
+      writer.uint32(64).bool(message.broadScopeAcknowledged);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): EnrollHostExecutionRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseEnrollHostExecutionRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.expectedRevision = reader.uint64() as bigint;
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.acknowledgmentVersion = reader.uint32();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.typedAcknowledgment = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.filesystemRead = reader.bool();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.filesystemWrite = reader.bool();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.processExecute = reader.bool();
+          continue;
+        }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.pathRoots.push(reader.string());
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.broadScopeAcknowledged = reader.bool();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<EnrollHostExecutionRequest>): EnrollHostExecutionRequest {
+    return EnrollHostExecutionRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<EnrollHostExecutionRequest>): EnrollHostExecutionRequest {
+    const message = createBaseEnrollHostExecutionRequest();
+    message.expectedRevision = (object.expectedRevision !== undefined && object.expectedRevision !== null)
+      ? BigInt(object.expectedRevision)
+      : 0n;
+    message.acknowledgmentVersion = object.acknowledgmentVersion ?? 0;
+    message.typedAcknowledgment = object.typedAcknowledgment ?? "";
+    message.filesystemRead = object.filesystemRead ?? false;
+    message.filesystemWrite = object.filesystemWrite ?? false;
+    message.processExecute = object.processExecute ?? false;
+    message.pathRoots = object.pathRoots?.map((e) => e) || [];
+    message.broadScopeAcknowledged = object.broadScopeAcknowledged ?? false;
+    return message;
+  },
+};
+
+function createBaseRevokeHostExecutionRequest(): RevokeHostExecutionRequest {
+  return { expectedRevision: 0n };
+}
+
+export const RevokeHostExecutionRequest: MessageFns<RevokeHostExecutionRequest> = {
+  encode(message: RevokeHostExecutionRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.expectedRevision !== 0n) {
+      if (BigInt.asUintN(64, message.expectedRevision) !== message.expectedRevision) {
+        throw new globalThis.Error("value provided for field message.expectedRevision of type uint64 too large");
+      }
+      writer.uint32(8).uint64(message.expectedRevision);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): RevokeHostExecutionRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseRevokeHostExecutionRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.expectedRevision = reader.uint64() as bigint;
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<RevokeHostExecutionRequest>): RevokeHostExecutionRequest {
+    return RevokeHostExecutionRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<RevokeHostExecutionRequest>): RevokeHostExecutionRequest {
+    const message = createBaseRevokeHostExecutionRequest();
+    message.expectedRevision = (object.expectedRevision !== undefined && object.expectedRevision !== null)
+      ? BigInt(object.expectedRevision)
+      : 0n;
+    return message;
+  },
+};
+
+function createBasePrepareHostWorkRuntimeRequest(): PrepareHostWorkRuntimeRequest {
+  return {};
+}
+
+export const PrepareHostWorkRuntimeRequest: MessageFns<PrepareHostWorkRuntimeRequest> = {
+  encode(_: PrepareHostWorkRuntimeRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PrepareHostWorkRuntimeRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBasePrepareHostWorkRuntimeRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<PrepareHostWorkRuntimeRequest>): PrepareHostWorkRuntimeRequest {
+    return PrepareHostWorkRuntimeRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<PrepareHostWorkRuntimeRequest>): PrepareHostWorkRuntimeRequest {
+    const message = createBasePrepareHostWorkRuntimeRequest();
+    return message;
+  },
+};
+
+function createBaseDeactivateHostWorkRuntimeRequest(): DeactivateHostWorkRuntimeRequest {
+  return {};
+}
+
+export const DeactivateHostWorkRuntimeRequest: MessageFns<DeactivateHostWorkRuntimeRequest> = {
+  encode(_: DeactivateHostWorkRuntimeRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): DeactivateHostWorkRuntimeRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseDeactivateHostWorkRuntimeRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<DeactivateHostWorkRuntimeRequest>): DeactivateHostWorkRuntimeRequest {
+    return DeactivateHostWorkRuntimeRequest.fromPartial(base ?? {});
+  },
+  fromPartial(_: DeepPartial<DeactivateHostWorkRuntimeRequest>): DeactivateHostWorkRuntimeRequest {
+    const message = createBaseDeactivateHostWorkRuntimeRequest();
+    return message;
+  },
+};
+
+function createBaseHostExecutionPolicy(): HostExecutionPolicy {
+  return {
+    revision: 0n,
+    active: false,
+    acknowledgmentVersion: 0,
+    requiredAcknowledgmentVersion: 0,
+    acknowledgedAtUnixMs: 0n,
+    filesystemRead: false,
+    filesystemWrite: false,
+    processExecute: false,
+    pathRoots: [],
+    broadScopeAcknowledged: false,
+    updatedAtUnixMs: 0n,
+    runtimePrepared: false,
+    unavailableReasonCode: "",
+  };
+}
+
+export const HostExecutionPolicy: MessageFns<HostExecutionPolicy> = {
+  encode(message: HostExecutionPolicy, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.revision !== 0n) {
+      if (BigInt.asUintN(64, message.revision) !== message.revision) {
+        throw new globalThis.Error("value provided for field message.revision of type uint64 too large");
+      }
+      writer.uint32(8).uint64(message.revision);
+    }
+    if (message.active !== false) {
+      writer.uint32(16).bool(message.active);
+    }
+    if (message.acknowledgmentVersion !== 0) {
+      writer.uint32(24).uint32(message.acknowledgmentVersion);
+    }
+    if (message.requiredAcknowledgmentVersion !== 0) {
+      writer.uint32(32).uint32(message.requiredAcknowledgmentVersion);
+    }
+    if (message.acknowledgedAtUnixMs !== 0n) {
+      if (BigInt.asUintN(64, message.acknowledgedAtUnixMs) !== message.acknowledgedAtUnixMs) {
+        throw new globalThis.Error("value provided for field message.acknowledgedAtUnixMs of type uint64 too large");
+      }
+      writer.uint32(40).uint64(message.acknowledgedAtUnixMs);
+    }
+    if (message.filesystemRead !== false) {
+      writer.uint32(48).bool(message.filesystemRead);
+    }
+    if (message.filesystemWrite !== false) {
+      writer.uint32(56).bool(message.filesystemWrite);
+    }
+    if (message.processExecute !== false) {
+      writer.uint32(64).bool(message.processExecute);
+    }
+    for (const v of message.pathRoots) {
+      writer.uint32(74).string(v!);
+    }
+    if (message.broadScopeAcknowledged !== false) {
+      writer.uint32(80).bool(message.broadScopeAcknowledged);
+    }
+    if (message.updatedAtUnixMs !== 0n) {
+      if (BigInt.asUintN(64, message.updatedAtUnixMs) !== message.updatedAtUnixMs) {
+        throw new globalThis.Error("value provided for field message.updatedAtUnixMs of type uint64 too large");
+      }
+      writer.uint32(88).uint64(message.updatedAtUnixMs);
+    }
+    if (message.runtimePrepared !== false) {
+      writer.uint32(96).bool(message.runtimePrepared);
+    }
+    if (message.unavailableReasonCode !== "") {
+      writer.uint32(106).string(message.unavailableReasonCode);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): HostExecutionPolicy {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseHostExecutionPolicy();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.revision = reader.uint64() as bigint;
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.active = reader.bool();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.acknowledgmentVersion = reader.uint32();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.requiredAcknowledgmentVersion = reader.uint32();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.acknowledgedAtUnixMs = reader.uint64() as bigint;
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.filesystemRead = reader.bool();
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.filesystemWrite = reader.bool();
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.processExecute = reader.bool();
+          continue;
+        }
+        case 9: {
+          if (tag !== 74) {
+            break;
+          }
+
+          message.pathRoots.push(reader.string());
+          continue;
+        }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.broadScopeAcknowledged = reader.bool();
+          continue;
+        }
+        case 11: {
+          if (tag !== 88) {
+            break;
+          }
+
+          message.updatedAtUnixMs = reader.uint64() as bigint;
+          continue;
+        }
+        case 12: {
+          if (tag !== 96) {
+            break;
+          }
+
+          message.runtimePrepared = reader.bool();
+          continue;
+        }
+        case 13: {
+          if (tag !== 106) {
+            break;
+          }
+
+          message.unavailableReasonCode = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<HostExecutionPolicy>): HostExecutionPolicy {
+    return HostExecutionPolicy.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<HostExecutionPolicy>): HostExecutionPolicy {
+    const message = createBaseHostExecutionPolicy();
+    message.revision = (object.revision !== undefined && object.revision !== null) ? BigInt(object.revision) : 0n;
+    message.active = object.active ?? false;
+    message.acknowledgmentVersion = object.acknowledgmentVersion ?? 0;
+    message.requiredAcknowledgmentVersion = object.requiredAcknowledgmentVersion ?? 0;
+    message.acknowledgedAtUnixMs = (object.acknowledgedAtUnixMs !== undefined && object.acknowledgedAtUnixMs !== null)
+      ? BigInt(object.acknowledgedAtUnixMs)
+      : 0n;
+    message.filesystemRead = object.filesystemRead ?? false;
+    message.filesystemWrite = object.filesystemWrite ?? false;
+    message.processExecute = object.processExecute ?? false;
+    message.pathRoots = object.pathRoots?.map((e) => e) || [];
+    message.broadScopeAcknowledged = object.broadScopeAcknowledged ?? false;
+    message.updatedAtUnixMs = (object.updatedAtUnixMs !== undefined && object.updatedAtUnixMs !== null)
+      ? BigInt(object.updatedAtUnixMs)
+      : 0n;
+    message.runtimePrepared = object.runtimePrepared ?? false;
+    message.unavailableReasonCode = object.unavailableReasonCode ?? "";
     return message;
   },
 };
@@ -7504,7 +8255,17 @@ export const CapabilityStatus: MessageFns<CapabilityStatus> = {
 };
 
 function createBaseRun(): Run {
-  return { id: "", projectId: "", threadId: "", state: 0, revision: 0n, createdAtUnixMs: 0n, updatedAtUnixMs: 0n };
+  return {
+    id: "",
+    projectId: "",
+    threadId: "",
+    state: 0,
+    revision: 0n,
+    createdAtUnixMs: 0n,
+    updatedAtUnixMs: 0n,
+    kind: 0,
+    workBackend: 0,
+  };
 }
 
 export const Run: MessageFns<Run> = {
@@ -7538,6 +8299,12 @@ export const Run: MessageFns<Run> = {
         throw new globalThis.Error("value provided for field message.updatedAtUnixMs of type uint64 too large");
       }
       writer.uint32(56).uint64(message.updatedAtUnixMs);
+    }
+    if (message.kind !== 0) {
+      writer.uint32(64).int32(message.kind);
+    }
+    if (message.workBackend !== 0) {
+      writer.uint32(72).int32(message.workBackend);
     }
     return writer;
   },
@@ -7605,6 +8372,22 @@ export const Run: MessageFns<Run> = {
           message.updatedAtUnixMs = reader.uint64() as bigint;
           continue;
         }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.kind = reader.int32() as any;
+          continue;
+        }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.workBackend = reader.int32() as any;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -7630,6 +8413,8 @@ export const Run: MessageFns<Run> = {
     message.updatedAtUnixMs = (object.updatedAtUnixMs !== undefined && object.updatedAtUnixMs !== null)
       ? BigInt(object.updatedAtUnixMs)
       : 0n;
+    message.kind = object.kind ?? 0;
+    message.workBackend = object.workBackend ?? 0;
     return message;
   },
 };

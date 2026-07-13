@@ -23,7 +23,9 @@ import {
   ProjectState,
   Request,
   RunEventKind,
+  RunKind,
   RunState,
+  WorkExecutionBackend,
   WorkspaceSearchKind,
   type ConversationTurnEvent,
   type HealthResponse,
@@ -892,7 +894,17 @@ describe("DaemonRpcClient", () => {
       idempotencyKey: "",
       payload: {
         $case: "response",
-        value: { result: { $case: "capabilities", value: { statuses: [] } } },
+        value: {
+          result: {
+            $case: "capabilities",
+            value: {
+              statuses: [],
+              workExecutionBackend: WorkExecutionBackend.WORK_EXECUTION_BACKEND_UNSPECIFIED,
+              hostWorkRuntimeReady: false,
+              hostBoundRunActive: false,
+            },
+          },
+        },
       },
     }));
 
@@ -1099,6 +1111,8 @@ describe("DaemonRpcClient", () => {
                 revision: 0n,
                 createdAtUnixMs: 1n,
                 updatedAtUnixMs: 1n,
+                kind: RunKind.RUN_KIND_CHAT,
+                workBackend: WorkExecutionBackend.WORK_EXECUTION_BACKEND_UNSPECIFIED,
               },
               failure: undefined,
               citations: [],
@@ -1162,6 +1176,8 @@ describe("DaemonRpcClient", () => {
                 revision: 0n,
                 createdAtUnixMs: 1n,
                 updatedAtUnixMs: 1n,
+                kind: RunKind.RUN_KIND_CHAT,
+                workBackend: WorkExecutionBackend.WORK_EXECUTION_BACKEND_UNSPECIFIED,
               },
               failure: undefined,
               citations: [],
@@ -1224,6 +1240,8 @@ describe("DaemonRpcClient", () => {
                 revision: 0n,
                 createdAtUnixMs: 3n,
                 updatedAtUnixMs: 3n,
+                kind: RunKind.RUN_KIND_CHAT,
+                workBackend: WorkExecutionBackend.WORK_EXECUTION_BACKEND_UNSPECIFIED,
               },
               failure: undefined,
               citations: [],

@@ -1,5 +1,6 @@
 use grok_domain::{
     AuthMethod, Capability, CapabilityAvailability, CapabilityStatus, CapabilitySurface,
+    WorkExecutionBackend,
 };
 
 /// Current authentication, connectivity, and local-runtime facts.
@@ -30,6 +31,12 @@ pub struct CapabilityFacts {
     pub artifact_content_ready: bool,
     /// Automation scheduler journal is live and occurrence dispatch is armed.
     pub automation_scheduler_ready: bool,
+    /// A current versioned Host Tools enrollment exists.
+    pub host_policy_effective: bool,
+    /// The daemon has prepared and authenticated the constrained Host Work runtime.
+    pub host_work_runtime_ready: bool,
+    /// Current Host Tools enrollment includes exact-command process execution.
+    pub host_process_execute_enabled: bool,
 }
 
 /// Deterministic product capability policy shared by UI and daemon workflows.
@@ -46,6 +53,21 @@ impl CapabilityResolver {
         statuses.extend(execution_capabilities(facts));
         statuses.extend(unavailable_provider_capabilities(facts));
         statuses
+    }
+
+    /// Selects the backend for a new Work run without creating authority.
+    #[must_use]
+    pub fn resolve_work_backend(facts: CapabilityFacts) -> Option<WorkExecutionBackend> {
+        if facts.subscription_authenticated && facts.strong_isolation_ready {
+            Some(WorkExecutionBackend::IsolatedGuest)
+        } else if facts.subscription_authenticated
+            && facts.host_policy_effective
+            && facts.host_work_runtime_ready
+        {
+            Some(WorkExecutionBackend::HostDirect)
+        } else {
+            None
+        }
     }
 }
 
@@ -87,7 +109,9 @@ fn chat_capability(facts: CapabilityFacts) -> CapabilityStatus {
 }
 
 fn execution_capabilities(facts: CapabilityFacts) -> [CapabilityStatus; 5] {
-    let work_ready = facts.subscription_authenticated && facts.strong_isolation_ready;
+    let backend = CapabilityResolver::resolve_work_backend(facts);
+    let work_ready = backend.is_some();
+    let host_ready = backend == Some(WorkExecutionBackend::HostDirect);
     let isolation_ready = facts.strong_isolation_ready;
     [
         status(
@@ -98,23 +122,33 @@ fn execution_capabilities(facts: CapabilityFacts) -> [CapabilityStatus; 5] {
             CapabilityAvailability::Unavailable,
             if facts.strong_isolation_ready {
                 "subscription_session_unavailable"
+            } else if facts.host_policy_effective && !facts.host_work_runtime_ready {
+                "host_tools_runtime_not_prepared"
+            } else if !facts.host_policy_effective {
+                "host_tools_not_enrolled"
             } else {
                 "work_execution_unavailable"
             },
             if facts.strong_isolation_ready {
                 "Work requires an authenticated official Grok Build subscription session in the guest."
+            } else if facts.host_policy_effective {
+                "Prepare the authenticated Host Tools runtime before starting Work."
             } else {
-                "Work requires the qualified guest proxy and subscription session lifecycle."
+                "Work requires Isolated Guest readiness or explicit Host Tools enrollment."
             },
         ),
         status(
             Capability::Shell,
             CapabilitySurface::Desktop,
             AuthMethod::SubscriptionOAuth,
-            work_ready,
+            work_ready && (!host_ready || facts.host_process_execute_enabled),
             CapabilityAvailability::Unavailable,
-            "strong_isolation_unavailable",
-            "Shell tools require the qualified guest execution backend.",
+            if host_ready {
+                "host_process_execution_not_enrolled"
+            } else {
+                "work_execution_unavailable"
+            },
+            "Shell requires Isolated Work or the separately acknowledged Host process-execution class.",
         ),
         status(
             Capability::Mcp,
@@ -236,6 +270,44 @@ fn status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_enrollment_never_enables_work_until_runtime_is_ready() {
+        let facts = CapabilityFacts {
+            subscription_authenticated: true,
+            host_policy_effective: true,
+            host_process_execute_enabled: true,
+            ..CapabilityFacts::default()
+        };
+        assert_eq!(CapabilityResolver::resolve_work_backend(facts), None);
+        let work = CapabilityResolver::resolve(facts)
+            .into_iter()
+            .find(|status| status.capability == Capability::Work)
+            .expect("Work status");
+        assert_eq!(work.reason_code, "host_tools_runtime_not_prepared");
+    }
+
+    #[test]
+    fn ready_host_is_explicit_and_qualified_guest_preempts_it() {
+        let host = CapabilityFacts {
+            subscription_authenticated: true,
+            host_policy_effective: true,
+            host_work_runtime_ready: true,
+            host_process_execute_enabled: true,
+            ..CapabilityFacts::default()
+        };
+        assert_eq!(
+            CapabilityResolver::resolve_work_backend(host),
+            Some(WorkExecutionBackend::HostDirect)
+        );
+        assert_eq!(
+            CapabilityResolver::resolve_work_backend(CapabilityFacts {
+                strong_isolation_ready: true,
+                ..host
+            }),
+            Some(WorkExecutionBackend::IsolatedGuest)
+        );
+    }
 
     #[test]
     fn limited_mode_never_enables_execution() {

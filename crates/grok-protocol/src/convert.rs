@@ -84,6 +84,10 @@ pub fn capability_facts_from_wire(value: Option<v1::CapabilityFacts>) -> Capabil
         artifact_content_ready: false,
         // Scheduler readiness is daemon-owned lifecycle state, never client facts.
         automation_scheduler_ready: false,
+        // Host authority and runtime readiness are daemon-owned.
+        host_policy_effective: false,
+        host_work_runtime_ready: false,
+        host_process_execute_enabled: false,
     }
 }
 
@@ -454,6 +458,21 @@ pub fn run_to_wire(value: Run) -> v1::Run {
         revision: value.revision,
         created_at_unix_ms: value.created_at,
         updated_at_unix_ms: value.updated_at,
+        kind: match value.kind {
+            grok_domain::RunKind::Unspecified => v1::RunKind::Unspecified,
+            grok_domain::RunKind::Chat => v1::RunKind::Chat,
+            grok_domain::RunKind::Work => v1::RunKind::Work,
+            grok_domain::RunKind::Scheduled => v1::RunKind::Scheduled,
+        } as i32,
+        work_backend: match value.work_backend {
+            None => v1::WorkExecutionBackend::Unspecified,
+            Some(grok_domain::WorkExecutionBackend::HostDirect) => {
+                v1::WorkExecutionBackend::HostDirect
+            }
+            Some(grok_domain::WorkExecutionBackend::IsolatedGuest) => {
+                v1::WorkExecutionBackend::IsolatedGuest
+            }
+        } as i32,
     }
 }
 
