@@ -525,9 +525,9 @@ impl Drop for LocalDescriptor {
     }
 }
 
-struct OwnedHandle(HANDLE);
+struct OwnedWinHandle(HANDLE);
 
-impl Drop for OwnedHandle {
+impl Drop for OwnedWinHandle {
     fn drop(&mut self) {
         if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
             unsafe {
@@ -554,7 +554,7 @@ fn current_user_sid_string() -> io::Result<String> {
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
         return Err(last_error());
     }
-    let token = OwnedHandle(token);
+    let token = OwnedWinHandle(token);
     let mut length = 0;
     let first = unsafe { GetTokenInformation(token.0, TokenUser, null_mut(), 0, &raw mut length) };
     if first != 0 || length == 0 || unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER {
