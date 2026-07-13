@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Bounded non-secret approval idempotency fixtures"
+paths = ['''apps/desktop/electron/bridgeValidation\.test\.ts''']
+regexes = ['''approval-decision-[12]''']

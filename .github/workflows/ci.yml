@@ -131,3 +131,36 @@ jobs:
           cargo check -p grok-vm-service-client --all-targets --target aarch64-pc-windows-msvc
       - run: go test ./...
         working-directory: native/windows-vm-service
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  required:
+    name: required CI
+    if: always()
+    needs: [desktop, rust, go-service, guest-runner, windows-contract, secret-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every build and contract job
+        env:
+          DESKTOP: ${{ needs.desktop.result }}
+          RUST: ${{ needs.rust.result }}
+          GO_SERVICE: ${{ needs.go-service.result }}
+          GUEST_RUNNER: ${{ needs.guest-runner.result }}
+          WINDOWS_CONTRACT: ${{ needs.windows-contract.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+        run: |
+          test "$DESKTOP" = success
+          test "$RUST" = success
+          test "$GO_SERVICE" = success
+          test "$GUEST_RUNNER" = success
+          test "$WINDOWS_CONTRACT" = success
+          test "$SECRET_SCAN" = success

@@ -1,0 +1,27 @@
+name: guard master
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  only-dev-into-master:
+    name: only dev into master
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the pull request head
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$HEAD_REF" in
+            dev|release-please--*|release-please-manual-*)
+              echo "OK: '$HEAD_REF' is an approved master promotion head."
+              ;;
+            *)
+              echo "::error::PRs into master must come from dev or an approved release-please branch (got '$HEAD_REF')."
+              exit 1
+              ;;
+          esac

@@ -8,6 +8,7 @@ permissions:
 
 jobs:
   review:
+    name: Dependency review
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -16,4 +17,3 @@ jobs:
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
-
