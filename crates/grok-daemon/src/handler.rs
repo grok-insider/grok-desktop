@@ -5650,13 +5650,13 @@ mod tests {
             )
             .await
             .expect("project");
-        let source_path = "/private/native-picker/customer-secret.txt";
+        let source_path = test_artifact_source_path("customer-secret.txt");
         let import = request::Operation::ImportArtifact(v1::ImportArtifactRequest {
             project_id: project.id.to_string(),
             thread_id: None,
             display_name: "customer-secret.txt".into(),
             media_type: "text/plain".into(),
-            source_path: source_path.into(),
+            source_path: source_path.clone(),
         });
         let first = daemon
             .handle(artifact_request_with_key(import.clone(), "artifact-import"))
@@ -5665,7 +5665,7 @@ mod tests {
         daemon.artifact_content_available = false;
         let mut replay_import = import;
         if let request::Operation::ImportArtifact(request) = &mut replay_import {
-            request.source_path = "/different/ephemeral/selection.txt".into();
+            request.source_path = test_artifact_source_path("different-selection.txt");
         }
         let replay = daemon
             .handle(artifact_request_with_key(replay_import, "artifact-import"))
@@ -5818,7 +5818,7 @@ mod tests {
                     thread_id: None,
                     display_name: "pending.txt".into(),
                     media_type: "text/plain".into(),
-                    source_path: "/private/native-picker/pending.txt".into(),
+                    source_path: test_artifact_source_path("pending.txt"),
                 }),
                 "pending-removal-import",
             ))
@@ -6154,7 +6154,7 @@ mod tests {
             thread_id: None,
             display_name: "budget.txt".into(),
             media_type: "text/plain".into(),
-            source_path: "/private/native-picker/budget.txt".into(),
+            source_path: test_artifact_source_path("budget.txt"),
         });
         let import_minimum =
             artifact_operation_minimum_budget(Some(&import)).expect("import minimum budget");
@@ -6269,7 +6269,7 @@ mod tests {
             thread_id: None,
             display_name: "detached.txt".into(),
             media_type: "text/plain".into(),
-            source_path: "/private/native-picker/detached.txt".into(),
+            source_path: test_artifact_source_path("detached.txt"),
         });
         let timed_out = daemon
             .handle_with_dispatch_limit(
@@ -8487,7 +8487,7 @@ mod tests {
                     thread_id: None,
                     display_name: display_name.into(),
                     media_type: "text/plain".into(),
-                    source_path: format!("/private/native-picker/{display_name}"),
+                    source_path: test_artifact_source_path(display_name),
                 }),
                 key,
             ))
@@ -8510,6 +8510,14 @@ mod tests {
             expected_revision: artifact.revision,
             expected_content_version: artifact.content_version.expect("artifact content version"),
         })
+    }
+
+    fn test_artifact_source_path(display_name: &str) -> String {
+        if cfg!(windows) {
+            format!(r"C:\private\native-picker\{display_name}")
+        } else {
+            format!("/private/native-picker/{display_name}")
+        }
     }
 
     async fn wait_for_removal_recovery(store: &InMemoryExecutionStore) {
