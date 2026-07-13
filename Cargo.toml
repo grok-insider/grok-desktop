@@ -7,6 +7,7 @@ members = [
     "crates/grok-daemon",
     "crates/grok-credential-enrollment",
     "crates/grok-domain",
+    "crates/grok-host-tools-mcp",
     "crates/grok-memory",
     "crates/grok-protocol",
     "crates/grok-sqlcipher",
