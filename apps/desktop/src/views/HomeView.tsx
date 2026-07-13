@@ -1,7 +1,9 @@
 import { ArrowRight, CirclePause, Clock3, FileText, MessageSquareText, MoreHorizontal, Pin, Play, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Composer } from "../components/Composer";
-import { IconButton, RunStatus, SkeletonRows } from "../components/ui";
+import { IconButton } from "../components/IconButton";
+import { RunStatus } from "../components/RunStatus";
+import { SkeletonRows } from "../components/SkeletonRows";
 import { useDesktopSnapshot } from "../services/DesktopClientContext";
 import { useNavigate } from "react-router-dom";
 import { Progress } from "@/components/ui/progress";

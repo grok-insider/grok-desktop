@@ -18,7 +18,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type { DesktopNavigationRoute } from "../contracts/bridge";
 import type { WorkspaceSearchHit } from "../services/desktopClient";
-import { IconButton } from "./ui";
+import { IconButton } from "./IconButton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {

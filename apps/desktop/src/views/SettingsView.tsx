@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -19,10 +20,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { modelDisplayLabel } from "../lib/modelLabels";
 import { formatTokenCount, formatUsageLine } from "../lib/usageFormat";
-import { Button, PageHeader, Toggle } from "../components/ui";
+import { PageHeader } from "../components/PageHeader";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type {
@@ -208,7 +210,7 @@ function AccountSettings() {
             <ShieldCheck size={13} aria-hidden="true" /> Use Setup
           </Badge>
         </div>
-        <Button className="max-[680px]:w-full" onClick={() => navigate("/setup")}>
+        <Button variant="outline" className="max-[680px]:w-full" onClick={() => navigate("/setup")}>
           Open setup
         </Button>
       </div>
@@ -227,7 +229,7 @@ function AccountSettings() {
           <Badge variant={superGrok?.state === "connected" ? "success" : "neutral"}>
             {superGrok?.state === "connected" ? "Connected" : "Not connected"}
           </Badge>
-          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup?step=api")}>Manage SuperGrok</Button>
+          <Button variant="outline" className="max-[680px]:w-full" onClick={() => navigate("/setup?step=api")}>Manage SuperGrok</Button>
         </div>
 
         <header className="flex min-h-16 items-center justify-between gap-4 border-b border-border px-4 py-3">
@@ -250,7 +252,7 @@ function AccountSettings() {
             </strong>
             <span className="text-body-sm text-subtle-foreground">{keyDetail}</span>
           </span>
-          <Button className="max-[680px]:w-full" onClick={() => navigate("/setup?step=api")}>
+          <Button variant="outline" className="max-[680px]:w-full" onClick={() => navigate("/setup?step=api")}>
             {accountError ? "Retry" : keyConfigured ? "Manage" : "Add key"}
           </Button>
         </div>
@@ -355,11 +357,11 @@ function GeneralSettings() {
           description="When on, closing the window hides Grok Desktop so background work can continue. Use Quit from the tray to stop the app."
         >
           <div className="flex flex-col items-end gap-1 max-[680px]:items-start">
-            <Toggle
+            <Switch
               checked={preferences?.keepRunningInNotificationArea ?? true}
               disabled={!preferences || savingPreference}
-              onChange={(checked) => void updateCloseBehavior(checked)}
-              label="Keep running in notification area"
+              onCheckedChange={(checked) => void updateCloseBehavior(checked)}
+              aria-label="Keep running in notification area"
             />
             {savingPreference && (
               <span className="text-label text-muted-foreground" role="status">
@@ -380,12 +382,12 @@ function GeneralSettings() {
           description={updateDescription(update)}
         >
           {update?.phase === "downloaded" ? (
-            <Button onClick={() => void client.installUpdate()}>Restart to update</Button>
+            <Button variant="outline" onClick={() => void client.installUpdate()}>Restart to update</Button>
           ) : (
             <Button
               disabled={!update || update.phase === "unsupported" || checkingUpdate || update.phase === "checking"}
               onClick={() => void checkForUpdates()}
-              variant="secondary"
+              variant="outline"
             >
               <RefreshCw className={cn((checkingUpdate || update?.phase === "checking") && "animate-spin")} size={14} />
               Check now
@@ -447,7 +449,7 @@ function ModelSettings() {
             <h3 className="m-0 text-body font-semibold text-foreground">Model catalog unavailable</h3>
             <p className="m-0 mt-1 text-body-sm text-muted-foreground">{catalogError}</p>
           </div>
-          <Button className="max-[680px]:w-full" onClick={() => void refreshCatalog()} disabled={loading}>
+          <Button variant="outline" className="max-[680px]:w-full" onClick={() => void refreshCatalog()} disabled={loading}>
             <RefreshCw size={15} aria-hidden="true" /> Retry discovery
           </Button>
         </aside>
@@ -526,7 +528,7 @@ function ModelSettings() {
           </p>
         </div>
         {catalog && (
-          <Button className="max-[680px]:w-full" onClick={() => void refreshCatalog()} disabled={loading || saving}>
+          <Button variant="outline" className="max-[680px]:w-full" onClick={() => void refreshCatalog()} disabled={loading || saving}>
             <RefreshCw size={15} aria-hidden="true" /> Refresh
           </Button>
         )}
@@ -580,7 +582,7 @@ function UsageSettings() {
         {status === "error" && (
           <div className="border-b border-warning/20 bg-warning-soft p-4" role="alert">
             <p className="m-0 text-body-sm text-warning">{error}</p>
-            <Button className="mt-2" variant="secondary" onClick={() => void load()}>
+            <Button className="mt-2" variant="outline" onClick={() => void load()}>
               <RefreshCw size={14} aria-hidden="true" /> Retry
             </Button>
           </div>

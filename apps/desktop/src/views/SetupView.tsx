@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
-import { Button as ButtonPrimitive } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { Button, PageHeader } from "../components/ui";
+import { PageHeader } from "../components/PageHeader";
 import { useDesktopClient } from "../services/DesktopClientContext";
 import type {
   AccountSetupState,
@@ -288,7 +288,7 @@ export function SetupView() {
                   <>
                     <Button
                       className="mt-6"
-                      variant="primary"
+                      variant="default"
                       disabled={busy || setup?.checks.find((check) => check.id === "grok_auth")?.state === "unavailable"}
                       title={
                         setup?.checks.find((check) => check.id === "grok_auth")?.state === "unavailable"
@@ -369,7 +369,7 @@ export function SetupView() {
                       </p>
                       <div className="mt-4 flex flex-wrap gap-2">
                         <Button
-                          variant="secondary"
+                          variant="outline"
                           onClick={() => void client.openExternalUrl(superGrok.verificationUri)}
                         >
                           <ExternalLink size={15} aria-hidden="true" /> Open verification page
@@ -380,11 +380,12 @@ export function SetupView() {
                       </div>
                     </div>
                   ) : superGrok?.state === "connected" ? (
-                    <Button className="mt-4" variant="danger" disabled={busy} onClick={() => void disconnectSuperGrok()}>
+                    <Button className="mt-4" variant="destructive" disabled={busy} onClick={() => void disconnectSuperGrok()}>
                       Disconnect SuperGrok
                     </Button>
                   ) : (
-                    <Button className="mt-4" variant="primary" loading={busy} disabled={busy} onClick={() => void beginSuperGrok()}>
+                    <Button className="mt-4" variant="default" disabled={busy} onClick={() => void beginSuperGrok()}>
+                      {busy && <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />}
                       <ExternalLink size={15} aria-hidden="true" /> Connect SuperGrok
                     </Button>
                   )}
@@ -410,7 +411,7 @@ export function SetupView() {
                       detail="The credential is held by the operating system vault."
                     />
                     <div className="mt-4 flex gap-2">
-                      <Button variant="danger" disabled={busy} onClick={() => setConfirmDelete(true)}>
+                      <Button variant="destructive" disabled={busy} onClick={() => setConfirmDelete(true)}>
                         <Trash2 size={15} aria-hidden="true" /> Remove key
                       </Button>
                     </div>
@@ -418,11 +419,11 @@ export function SetupView() {
                 ) : (
                   <div className="mt-6 flex gap-2">
                     <Button
-                      variant="primary"
-                      loading={busy}
+                      variant="default"
                       disabled={busy || !setup}
                       onClick={() => void enrollKey()}
                     >
+                      {busy && <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />}
                       <KeyRound size={15} aria-hidden="true" /> Add xAI API key
                     </Button>
                   </div>
@@ -465,7 +466,7 @@ export function SetupView() {
                   </div>
                 )}
 
-                <Button className="mt-6" variant="primary" onClick={() => navigate("/")}>
+                <Button className="mt-6" variant="default" onClick={() => navigate("/")}>
                   Open Grok Desktop <ArrowRight size={15} aria-hidden="true" />
                 </Button>
               </div>
@@ -598,17 +599,17 @@ function DeleteApiKeyDialog({ busy, onClose, onConfirm }: { busy: boolean; onClo
           affected.
         </p>
         <DialogFooter className="mt-2 max-[480px]:flex-col-reverse max-[480px]:[&>*]:w-full">
-          <ButtonPrimitive variant="outline" disabled={busy} onClick={onClose}>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancel
-          </ButtonPrimitive>
-          <ButtonPrimitive variant="destructive-solid" disabled={busy} onClick={onConfirm}>
+          </Button>
+          <Button variant="destructive-solid" disabled={busy} onClick={onConfirm}>
             {busy ? (
               <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />
             ) : (
               <Trash2 size={15} aria-hidden="true" />
             )}
             Remove key
-          </ButtonPrimitive>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

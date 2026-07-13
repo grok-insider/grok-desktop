@@ -43,7 +43,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "../components/ui";
+import { PageHeader } from "../components/PageHeader";
 import { formatAutomationSchedule, TIME_ZONE_OPTIONS, defaultAutomationSchedule } from "../services/automationSchedule";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type { AutomationDraft, AutomationSchedule, AutomationSummary } from "../services/desktopClient";

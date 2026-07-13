@@ -233,7 +233,12 @@ Chat/reading measure 65–75ch. Body tracking is default; never tighten body tex
 ## 10. Working Agreement
 
 1. Tokens first (§2–§4), components second (§5), views third.
-2. New primitives go in `src/components/ui/` (shadcn-owned); product compositions
-   (RunStatus, AppShell, Composer) stay outside it.
-3. `src/components/ui.tsx` is the product compatibility bridge — evolve its public API deliberately.
+2. New primitives go in `src/components/ui/` (shadcn-owned; the full registry is
+   installed — prefer an existing primitive over hand-rolling). Product
+   compositions (IconButton, PageHeader, RunStatus, SkeletonRows, AppShell,
+   Composer) live in `src/components/` outside it.
+3. CSP guard: primitives that inject `<style>` elements at runtime (chart,
+   sonner, Radix ScrollArea viewport) degrade or are unusable under the
+   production `style-src 'self'` policy — check before adopting one; never
+   relax the CSP.
 4. Verify with: `pnpm --filter @grok-desktop/desktop typecheck && pnpm --filter @grok-desktop/desktop test && pnpm lint`.

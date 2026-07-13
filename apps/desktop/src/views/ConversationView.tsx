@@ -46,7 +46,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { MarkdownMessage } from "../components/MarkdownMessage";
 import { formatUsageLine } from "../lib/usageFormat";
-import { IconButton } from "../components/ui";
+import { IconButton } from "../components/IconButton";
 import { useDesktopClient } from "../services/DesktopClientContext";
 import type {
   ClientResult,

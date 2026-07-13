@@ -51,7 +51,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "../components/ui";
+import { PageHeader } from "../components/PageHeader";
 import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type {
   ArtifactOpenResult,

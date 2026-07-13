@@ -11,7 +11,7 @@ import {
   Search,
   ShieldCheck,
 } from "lucide-react";
-import { PageHeader } from "../components/ui";
+import { PageHeader } from "../components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

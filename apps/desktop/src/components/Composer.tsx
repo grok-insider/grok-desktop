@@ -16,7 +16,7 @@ import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientC
 import type { StartRunInput } from "../services/desktopClient";
 import { useChatModelCatalog } from "../hooks/useChatModelCatalog";
 import { modelDisplayLabel, modelMenuTriggerLabel } from "../lib/modelLabels";
-import { IconButton } from "./ui";
+import { IconButton } from "./IconButton";
 import { VoiceOverlay } from "./VoiceOverlay";
 import { Button } from "@/components/ui/button";
 import {
