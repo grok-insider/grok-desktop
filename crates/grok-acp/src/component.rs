@@ -214,6 +214,7 @@ fn verify_executable_mode(metadata: &std::fs::Metadata) -> Result<(), ComponentV
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // Keep one fallible verifier contract across platforms.
 fn verify_executable_mode(_metadata: &std::fs::Metadata) -> Result<(), ComponentVerificationError> {
     Ok(())
 }

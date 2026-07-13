@@ -5,6 +5,7 @@ use std::{
 };
 
 use fs2::FileExt as _;
+#[cfg(unix)]
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
@@ -425,7 +426,7 @@ fn open_runtime_lock(path: &Path) -> Result<File, GrokHomeError> {
 fn secure_open_runtime_lock(path: &Path, create_new: bool) -> io::Result<File> {
     #[cfg(windows)]
     {
-        return grok_windows_acl::open_private_lock_file(path, create_new);
+        grok_windows_acl::open_private_lock_file(path, create_new)
     }
 
     #[cfg(not(windows))]
@@ -505,7 +506,7 @@ fn verify_regular_file(file: &File, expected_len: Option<u64>) -> Result<(), Gro
 fn secure_open(path: &Path, read: bool, write: bool, create_new: bool) -> io::Result<File> {
     #[cfg(windows)]
     {
-        return grok_windows_acl::open_private_file(path, read, write, create_new);
+        grok_windows_acl::open_private_file(path, read, write, create_new)
     }
 
     #[cfg(not(windows))]
@@ -656,6 +657,7 @@ fn sync_directory(path: &Path) -> Result<(), GrokHomeError> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // Keep one fallible durability contract across platforms.
 fn sync_directory(_path: &Path) -> Result<(), GrokHomeError> {
     Ok(())
 }
