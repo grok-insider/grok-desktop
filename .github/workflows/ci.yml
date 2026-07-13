@@ -148,8 +148,22 @@ jobs:
           rustup target add aarch64-pc-windows-msvc
           cargo check -p grok-credential-enrollment --all-targets --target aarch64-pc-windows-msvc
           cargo check -p grok-vm-service-client --all-targets --target aarch64-pc-windows-msvc
-      - run: go test ./...
+
+  windows-go-contract:
+    name: Windows Go contracts
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
         working-directory: native/windows-vm-service
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: native/windows-vm-service/go.sum
+      - name: Test bounded native Windows contracts
+        run: go test -timeout 2m ./...
 
   secret-scan:
     name: Secret scan
@@ -165,7 +179,7 @@ jobs:
   required:
     name: required CI
     if: always()
-    needs: [desktop, rust, go-service, guest-runner, windows-contract, secret-scan]
+    needs: [desktop, rust, go-service, guest-runner, windows-contract, windows-go-contract, secret-scan]
     runs-on: ubuntu-latest
     steps:
       - name: Require every build and contract job
@@ -175,6 +189,7 @@ jobs:
           GO_SERVICE: ${{ needs.go-service.result }}
           GUEST_RUNNER: ${{ needs.guest-runner.result }}
           WINDOWS_CONTRACT: ${{ needs.windows-contract.result }}
+          WINDOWS_GO_CONTRACT: ${{ needs.windows-go-contract.result }}
           SECRET_SCAN: ${{ needs.secret-scan.result }}
         run: |
           test "$DESKTOP" = success
@@ -182,4 +197,5 @@ jobs:
           test "$GO_SERVICE" = success
           test "$GUEST_RUNNER" = success
           test "$WINDOWS_CONTRACT" = success
+          test "$WINDOWS_GO_CONTRACT" = success
           test "$SECRET_SCAN" = success

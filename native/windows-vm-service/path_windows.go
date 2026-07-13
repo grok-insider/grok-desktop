@@ -108,7 +108,11 @@ func openWindowsHandle(path string, kind pathKind) (windows.Handle, error) {
 	if err != nil {
 		return windows.InvalidHandle, err
 	}
-	access := uint32(windows.FILE_READ_ATTRIBUTES)
+	// Request DELETE while withholding FILE_SHARE_DELETE. Besides making the
+	// intended namespace exclusion explicit, this prevents directory renames on
+	// Windows versions that otherwise permit MoveFileEx with an attributes-only
+	// directory handle. Fail closed when the resource ACL cannot grant it.
+	access := uint32(windows.FILE_READ_ATTRIBUTES | windows.DELETE)
 	if kind == pathFile {
 		access |= windows.GENERIC_READ
 	}
