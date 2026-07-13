@@ -1,0 +1,101 @@
+name: Release preparation
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  preflight:
+    name: Release automation preflight
+    if: >
+      github.repository_owner == 'grok-insider'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event.pull_request.merged == true
+              && !startsWith(github.event.pull_request.head.ref, 'release-please-manual-')))
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.token.outputs.enabled }}
+    steps:
+      - id: token
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -n "$RELEASE_PLZ_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_PLZ_TOKEN is not configured; release preparation remains disabled."
+          fi
+
+  release-please:
+    name: Release Please
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-preparation-master
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'master' }}
+          persist-credentials: true
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Check out the standing release PR
+        if: ${{ steps.release.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          set -euo pipefail
+          pr="$(jq -r '.number // empty' <<<"$PR_JSON")"
+          [ -n "$pr" ] || { echo "No release PR was returned."; exit 0; }
+          gh pr checkout "$pr"
+          version="$(node -p 'require("./package.json").version')"
+          {
+            echo "RELEASE_PR=$pr"
+            echo "RELEASE_VERSION=$version"
+          } >> "$GITHUB_ENV"
+
+      - name: Synchronize every release version site
+        if: ${{ env.RELEASE_PR != '' }}
+        run: node scripts/sync-release-version.mjs "$RELEASE_VERSION"
+
+      - name: Generate bounded release highlights
+        if: ${{ env.RELEASE_PR != '' }}
+        uses: grok-insider/release-changelog-action@v1
+        with:
+          version: ${{ env.RELEASE_VERSION }}
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          update-mode: highlights
+          fallback-mode: preserve
+          commit-detail: subjects
+          project-description: "Windows-first local desktop workspace for official Grok Build and xAI contracts"
+
+      - name: Commit synchronized versions and highlights
+        if: ${{ env.RELEASE_PR != '' }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json apps/desktop/package.json Cargo.toml Cargo.lock crates/*/Cargo.toml flake.nix CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "Release PR is already synchronized."
+          else
+            git commit -m "chore(release): synchronize v${RELEASE_VERSION}"
+            git push
+          fi

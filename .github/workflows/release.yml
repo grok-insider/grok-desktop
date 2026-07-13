@@ -13,10 +13,36 @@ permissions:
   contents: read
 
 jobs:
+  resolve:
+    name: Resolve release contract
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      windows_environment: ${{ steps.release.outputs.windows_environment }}
+      publish_environment: ${{ steps.release.outputs.publish_environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        name: Verify tag, source version, and channel
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          test "$GITHUB_REF_NAME" = "v$version"
+          channel=stable
+          if [[ "$version" == *-* ]]; then channel=beta; fi
+          {
+            echo "channel=$channel"
+            echo "windows_environment=${channel}-windows-signing"
+            echo "publish_environment=${channel}-release"
+          } >> "$GITHUB_OUTPUT"
+
   linux:
     name: Build Linux x64
+    needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment:
+      name: ${{ needs.resolve.outputs.publish_environment }}
     env:
       UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
       APPIMAGETOOL_SHA256: b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2
@@ -35,9 +61,8 @@ jobs:
         run: |
           version="$(node -p 'require("./package.json").version')"
           test "$GITHUB_REF_NAME" = "v$version"
-          channel=stable
-          [[ "$version" == *-* ]] && channel=beta
-          echo "RELEASE_CHANNEL=$channel" >> "$GITHUB_ENV"
+          test "${{ needs.resolve.outputs.channel }}" = stable -o "${{ needs.resolve.outputs.channel }}" = beta
+          echo "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" >> "$GITHUB_ENV"
       - run: pnpm build
       - name: Build native runtime with tracked official Grok pin
         shell: bash
@@ -97,11 +122,32 @@ jobs:
 
   windows:
     name: Build Windows x64 core
+    needs: resolve
     runs-on: [self-hosted, windows, x64]
     timeout-minutes: 90
-    environment: stable-windows-signing
+    environment:
+      name: ${{ needs.resolve.outputs.windows_environment }}
     env:
+      GROK_MSIX_IDENTITY: ${{ vars.GROK_MSIX_IDENTITY }}
+      GROK_MSIX_PUBLISHER: ${{ vars.GROK_MSIX_PUBLISHER }}
+      GROK_MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.GROK_MSIX_PUBLISHER_DISPLAY_NAME }}
+      GROK_WINDOWS_MAX_TESTED_VERSION: ${{ vars.GROK_WINDOWS_MAX_TESTED_VERSION }}
+      GROK_WINDOWS_SIGNTOOL_PATH: ${{ vars.GROK_WINDOWS_SIGNTOOL_PATH }}
+      GROK_WINDOWS_POWERSHELL_PATH: ${{ vars.GROK_WINDOWS_POWERSHELL_PATH }}
+      GROK_WINDOWS_TIMESTAMP_SERVER: ${{ vars.GROK_WINDOWS_TIMESTAMP_SERVER }}
+      GROK_WINDOWS_SIGNER_SHA1: ${{ vars.GROK_WINDOWS_SIGNER_SHA1 }}
+      GROK_WINDOWS_SIGN_ARGS_JSON: ${{ vars.GROK_WINDOWS_SIGN_ARGS_JSON }}
+      GROK_WINDOWS_CARGO_PATH: ${{ vars.GROK_WINDOWS_CARGO_PATH }}
+      GROK_WINDOWS_RUSTC_PATH: ${{ vars.GROK_WINDOWS_RUSTC_PATH }}
+      GROK_WINDOWS_LINKER_PATH: ${{ vars.GROK_WINDOWS_LINKER_PATH }}
+      GROK_WINDOWS_CARGO_CACHE: ${{ vars.GROK_WINDOWS_CARGO_CACHE }}
+      GROK_WINDOWS_TOOLCHAIN_ENV_JSON: ${{ vars.GROK_WINDOWS_TOOLCHAIN_ENV_JSON }}
+      GROK_WINDOWS_GO_PATH: ${{ vars.GROK_WINDOWS_GO_PATH }}
+      GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON: ${{ vars.GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON }}
       GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+      GROK_ACP_CATALOG_TRUSTED_KEYS: ${{ vars.GROK_ACP_CATALOG_TRUSTED_KEYS }}
+      GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID }}
+      GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -116,8 +162,8 @@ jobs:
           if ($env:GITHUB_REF_NAME -ne "v$((Get-Content package.json | ConvertFrom-Json).version)") { throw "tag/version mismatch" }
           if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $channel = if ($version.Contains("-")) { "beta" } else { "stable" }
-          "RELEASE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Append
+          if ($env:GROK_UPDATE_TRUSTED_KEYS_JSON.Length -gt 65536) { throw "update trust is oversized" }
+          "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: pnpm build
       - name: Build and stage source-pinned native runtime
         shell: pwsh
@@ -150,16 +196,17 @@ jobs:
           retention-days: 3
           path: |
             out/release/windows/*/x64/GrokDesktop-*-x64.msix
-            out/release/windows/*/x64/GrokDesktop-stable-x64.appinstaller
+            out/release/windows/*/x64/GrokDesktop-*-x64.appinstaller
             out/release/windows/*/x64/*.json
             apps/desktop/release/components/grok-build/windows-x64.json
 
   publish:
     name: Sign metadata and publish
-    needs: [linux, windows]
+    needs: [resolve, linux, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: stable-release
+    environment:
+      name: ${{ needs.resolve.outputs.publish_environment }}
     permissions:
       contents: write
     env:
@@ -190,8 +237,20 @@ jobs:
           install -m 600 /dev/null "$RUNNER_TEMP/update-trusted-keys.json"
           printf '%s\n' "$UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/update-private-key.pem"
           printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
-          printf '# Grok Desktop %s\n\nSee the public release notes and verified assets attached to this release.\n' \
-            "$GITHUB_REF_NAME" > release-assets/release-notes.md
+          version="${GITHUB_REF_NAME#v}"
+          awk -v version="$version" '
+            function hver(line, value) {
+              value=line
+              sub(/^##+[ \t]+/, "", value)
+              sub(/^\[/, "", value)
+              sub(/\].*/, "", value)
+              sub(/[ \t].*/, "", value)
+              return value
+            }
+            /^## / { if (found) exit; if (hver($0) == version) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md > release-assets/release-notes.md
+          test -s release-assets/release-notes.md
       - name: Generate and verify signed update manifests
         shell: bash
         run: |

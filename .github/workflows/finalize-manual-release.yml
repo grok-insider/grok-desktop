@@ -1,0 +1,47 @@
+name: Finalize manual release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: Tag approved manual release
+    if: >
+      github.repository_owner == 'grok-insider'
+      && github.event.pull_request.merged == true
+      && startsWith(github.event.pull_request.head.ref, 'release-please-manual-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require the release token
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: test -n "$RELEASE_PLZ_TOKEN"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Verify and create the immutable tag
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          node scripts/sync-release-version.mjs "$version" --check
+          test "$(jq -r '.["."]' .release-please-manifest.json)" = "$version"
+          grep -Eq "^## \\[$version\\]|^## $version([[:space:]]|$)" CHANGELOG.md
+          if git rev-parse "v${version}" >/dev/null 2>&1; then
+            echo "::error::Tag v${version} already exists."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${version}" -m "Grok Desktop v${version}"
+          git push origin "v${version}"

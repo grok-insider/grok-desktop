@@ -37,9 +37,10 @@ Start here if you are new to the repository. Canonical agent checklist:
 ### Release readiness
 
 1. [plan/README.md](plan/README.md) — audited recovery and completion plan
-2. [quality/implementation-status.md](quality/implementation-status.md)
-3. [quality/linux-ga.md](quality/linux-ga.md) — Linux full product GA contract
-4. [quality/release-qualification.md](quality/release-qualification.md)
+2. [development/releasing.md](development/releasing.md) — branch, version, and protected release operations
+3. [quality/implementation-status.md](quality/implementation-status.md)
+4. [quality/linux-ga.md](quality/linux-ga.md) — Linux full product GA contract
+5. [quality/release-qualification.md](quality/release-qualification.md)
 
 ## Catalog
 
@@ -59,6 +60,7 @@ Start here if you are new to the repository. Canonical agent checklist:
 | [development/local-development.md](development/local-development.md) | Bootstrap, dev loops, gates |
 | [development/debugging-and-qa.md](development/debugging-and-qa.md) | CDP, e2e, Hyprland, Wisp |
 | [development/coding-guidelines.md](development/coding-guidelines.md) | Checklists and definition of done |
+| [development/releasing.md](development/releasing.md) | Release PRs, synchronized versions, protected environments |
 | [apps/desktop/scripts/README.md](../apps/desktop/scripts/README.md) | CDP harness implementation detail |
 
 ### Decisions and quality

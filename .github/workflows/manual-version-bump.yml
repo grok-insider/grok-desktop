@@ -1,0 +1,116 @@
+name: Manual Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version component to bump
+        required: true
+        type: choice
+        options: [minor, major]
+      reason:
+        description: Reason for the milestone
+        required: true
+        type: string
+      dry_run:
+        description: Validate and show the diff without opening a PR
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: manual version bump
+    if: github.repository_owner == 'grok-insider'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+    steps:
+      - name: Require the release token
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: test -n "$RELEASE_PLZ_TOKEN"
+
+      - name: Verify the actor is an administrator
+        run: |
+          set -euo pipefail
+          permission="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" --jq '.permission')"
+          test "$permission" = admin
+
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Compute the milestone version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          current="$(jq -r '.["."] // empty' .release-please-manifest.json)"
+          [[ "$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || {
+            echo "::error::The initial release must be completed before a manual major/minor bump."
+            exit 1
+          }
+          case "$BUMP" in
+            minor) next="${BASH_REMATCH[1]}.$((BASH_REMATCH[2] + 1)).0" ;;
+            major) next="$((BASH_REMATCH[1] + 1)).0.0" ;;
+          esac
+          {
+            echo "current=$current"
+            echo "next=$next"
+            echo "branch=release-please-manual-v${next}-${GITHUB_RUN_NUMBER}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Synchronize milestone version
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          node scripts/sync-release-version.mjs "$NEXT"
+          manifest="$(mktemp)"
+          jq --arg version "$NEXT" ".[\".\"] = \$version" .release-please-manifest.json > "$manifest"
+          mv "$manifest" .release-please-manifest.json
+
+      - name: Generate milestone changelog
+        if: ${{ !inputs.dry_run }}
+        uses: grok-insider/release-changelog-action@v1
+        with:
+          version: ${{ steps.version.outputs.next }}
+          range: v${{ steps.version.outputs.current }}..HEAD
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          fallback-mode: commit-list
+          commit-detail: subjects
+          project-description: "Windows-first local desktop workspace for official Grok Build and xAI contracts"
+
+      - name: Show dry-run diff
+        if: ${{ inputs.dry_run }}
+        run: git diff -- package.json apps/desktop/package.json Cargo.toml Cargo.lock crates flake.nix .release-please-manifest.json CHANGELOG.md
+
+      - name: Open the protected milestone PR
+        if: ${{ !inputs.dry_run }}
+        env:
+          BRANCH: ${{ steps.version.outputs.branch }}
+          CURRENT: ${{ steps.version.outputs.current }}
+          NEXT: ${{ steps.version.outputs.next }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --state open --base master --search "chore(release): v${NEXT} in:title" --json url --jq '.[0].url // empty')"
+          [ -z "$existing" ] || { echo "::notice::Release PR already exists: $existing"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add package.json apps/desktop/package.json Cargo.toml Cargo.lock crates/*/Cargo.toml flake.nix .release-please-manifest.json CHANGELOG.md
+          git commit -m "chore(release): prepare v${NEXT}"
+          git push --set-upstream origin "$BRANCH"
+          body="$(mktemp)"
+          printf "Administrator milestone from v%s to v%s.\n\nReason: %s\n\nMerging this protected PR creates tag v%s; artifact publication remains gated by the protected release environments.\n" "$CURRENT" "$NEXT" "$REASON" "$NEXT" > "$body"
+          gh pr create --base master --head "$BRANCH" --title "chore(release): v${NEXT}" --body-file "$body" --label release
