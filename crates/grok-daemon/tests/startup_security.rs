@@ -6,7 +6,10 @@ use std::{
     time::Duration,
 };
 
-use tokio::{io::AsyncWriteExt, net::TcpStream, process::Command, time::Instant};
+use tokio::{io::AsyncWriteExt, process::Command};
+
+#[cfg(target_os = "linux")]
+use tokio::{net::TcpStream, time::Instant};
 
 const STARTUP_NONCE: [u8; 32] = [0x5a; 32];
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);

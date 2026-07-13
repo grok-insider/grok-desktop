@@ -909,6 +909,12 @@ async fn recover_artifact_operations(
     Ok(content_ready)
 }
 
+// Preserve one awaited composition contract even when this platform has no
+// qualified private artifact-content adapter.
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(clippy::unused_async, unused_variables)
+)]
 async fn configured_artifact_content(
     stores: &Stores,
 ) -> (

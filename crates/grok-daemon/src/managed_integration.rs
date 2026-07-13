@@ -21,7 +21,7 @@ use std::{
     sync::Mutex,
 };
 
-#[cfg(any(test, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use std::io::Write;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
