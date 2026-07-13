@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{
         Arc, Weak,
         atomic::{AtomicBool, Ordering},
@@ -16,16 +17,17 @@ use grok_application::{
     ConversationService, ConversationTurnSnapshot, CreateAutomation, CreateProject, CreateThread,
     CredentialEnrollmentRequest, CredentialEnrollmentService, CredentialService,
     DesktopPreferencesService, EditAndBranchConversationTurn, GetUsageSummary,
-    GrokBuildAuthService, GrokBuildAuthStatus, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH,
-    OAuthCancellation, RegenerateConversationTurn, RetryConversationTurn, RunService,
-    SelectChatModel, StartConversationTurn, StartedConversationFork, StartedConversationTurn,
-    SuperGrokEnrollmentService, SuperGrokEnrollmentStatus, UpdateAutomation,
-    UpdateDesktopPreferences, UpdateProject, UpdateThread, UsageScope, UsageWindow,
-    WorkspaceService,
+    GrokBuildAuthService, GrokBuildAuthStatus, HostExecutionPolicyStore, IsolationRuntime,
+    MAX_ARTIFACT_RECOVERY_BATCH, OAuthCancellation, RegenerateConversationTurn,
+    RetryConversationTurn, RunService, SelectChatModel, StartConversationTurn,
+    StartedConversationFork, StartedConversationTurn, SuperGrokEnrollmentService,
+    SuperGrokEnrollmentStatus, UpdateAutomation, UpdateDesktopPreferences, UpdateProject,
+    UpdateThread, UsageScope, UsageWindow, WorkspaceService,
 };
 use grok_domain::{
-    ApprovalId, ArtifactId, AutomationId, ConversationTurnId, ConversationTurnState, MessageId,
-    MissedRunPolicy, OverlapPolicy, ProjectId, RunId, ThreadId,
+    ApprovalId, ArtifactId, AutomationId, ConversationTurnId, ConversationTurnState,
+    HOST_ACKNOWLEDGMENT_VERSION, HostExecutionPolicy, HostToolClasses, MAX_HOST_EXECUTION_ROOTS,
+    MessageId, MissedRunPolicy, OverlapPolicy, ProjectId, RunId, ThreadId,
 };
 use grok_protocol::{
     ConversationRetryEligibility, EnvelopeError, PROTOCOL_VERSION, account_state_to_wire,
@@ -374,6 +376,75 @@ fn mutation_key(value: Option<&str>) -> Result<&str, ApplicationError> {
     value.ok_or_else(|| ApplicationError::InvalidInput("idempotency key is required".into()))
 }
 
+fn canonical_host_roots(values: &[String]) -> Result<Vec<PathBuf>, ApplicationError> {
+    if values.is_empty() || values.len() > MAX_HOST_EXECUTION_ROOTS {
+        return Err(ApplicationError::InvalidInput(
+            "Host Tools requires between one and eight roots".into(),
+        ));
+    }
+    let mut unique = HashSet::with_capacity(values.len());
+    let mut roots = Vec::with_capacity(values.len());
+    for value in values {
+        let path = PathBuf::from(value);
+        if !path.is_absolute() || value.len() > 4096 {
+            return Err(ApplicationError::InvalidInput(
+                "Host Tools roots must be bounded absolute directories".into(),
+            ));
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|_| ApplicationError::InvalidInput("Host Tools root is unavailable".into()))?;
+        if !canonical.is_dir() || !unique.insert(canonical.clone()) {
+            return Err(ApplicationError::InvalidInput(
+                "Host Tools roots must be unique directories".into(),
+            ));
+        }
+        roots.push(canonical);
+    }
+    Ok(roots)
+}
+
+fn host_root_is_broad(root: &Path) -> bool {
+    if root.parent().is_none() {
+        return true;
+    }
+    [std::env::var_os("HOME"), std::env::var_os("USERPROFILE")]
+        .into_iter()
+        .flatten()
+        .filter_map(|home| PathBuf::from(home).canonicalize().ok())
+        .any(|home| home == root)
+}
+
+fn host_execution_policy_to_wire(
+    policy: HostExecutionPolicy,
+    runtime_prepared: bool,
+) -> v1::HostExecutionPolicy {
+    let unavailable_reason_code = if runtime_prepared {
+        ""
+    } else if policy.is_effectively_active() {
+        "host_tools_runtime_not_prepared"
+    } else if policy.active {
+        "host_tools_acknowledgment_outdated"
+    } else {
+        "host_tools_not_enrolled"
+    };
+    v1::HostExecutionPolicy {
+        revision: policy.revision,
+        active: policy.active,
+        acknowledgment_version: policy.acknowledgment_version,
+        required_acknowledgment_version: HOST_ACKNOWLEDGMENT_VERSION,
+        acknowledged_at_unix_ms: policy.acknowledged_at,
+        filesystem_read: policy.tool_classes.filesystem_read,
+        filesystem_write: policy.tool_classes.filesystem_write,
+        process_execute: policy.tool_classes.process_execute,
+        path_roots: policy.canonical_roots,
+        broad_scope_acknowledged: policy.broad_scope_acknowledged,
+        updated_at_unix_ms: policy.updated_at,
+        runtime_prepared,
+        unavailable_reason_code: unavailable_reason_code.into(),
+    }
+}
+
 fn artifact_task_join_failure() -> ApplicationError {
     ApplicationError::Unavailable("artifact operation task failed".into())
 }
@@ -554,6 +625,7 @@ pub struct Daemon {
     conversation_tasks: Arc<ConversationTaskRegistry>,
     credential_enrollment: Option<Arc<CredentialEnrollmentService>>,
     desktop_preferences: Option<Arc<DesktopPreferencesService>>,
+    host_execution_policy: Option<Arc<dyn HostExecutionPolicyStore>>,
     chat_models: Option<Arc<ChatModelService>>,
     runtime_capability_facts: CapabilityFacts,
     grok_build_auth: Option<Arc<GrokBuildAuthService>>,
@@ -602,6 +674,7 @@ impl Daemon {
             conversation_tasks: Arc::new(ConversationTaskRegistry::new(MAX_CONVERSATION_TASKS)),
             credential_enrollment: None,
             desktop_preferences: None,
+            host_execution_policy: None,
             chat_models: None,
             runtime_capability_facts: CapabilityFacts::default(),
             grok_build_auth: None,
@@ -707,6 +780,13 @@ impl Daemon {
         desktop_preferences: Arc<DesktopPreferencesService>,
     ) -> Self {
         self.desktop_preferences = Some(desktop_preferences);
+        self
+    }
+
+    /// Adds the durable daemon-owned Host Tools enrollment store.
+    #[must_use]
+    pub fn with_host_execution_policy(mut self, store: Arc<dyn HostExecutionPolicyStore>) -> Self {
+        self.host_execution_policy = Some(store);
         self
     }
 
@@ -964,11 +1044,17 @@ impl Daemon {
             Some(v1::request::Operation::GetUsageSummary(request)) => {
                 self.get_usage_summary(request).await
             }
+            Some(v1::request::Operation::GetHostExecutionPolicy(_)) => {
+                self.get_host_execution_policy().await
+            }
+            Some(v1::request::Operation::EnrollHostExecution(request)) => {
+                self.enroll_host_execution(request, idempotency_key).await
+            }
+            Some(v1::request::Operation::RevokeHostExecution(request)) => {
+                self.revoke_host_execution(request, idempotency_key).await
+            }
             Some(
-                v1::request::Operation::GetHostExecutionPolicy(_)
-                | v1::request::Operation::EnrollHostExecution(_)
-                | v1::request::Operation::RevokeHostExecution(_)
-                | v1::request::Operation::PrepareHostWorkRuntime(_)
+                v1::request::Operation::PrepareHostWorkRuntime(_)
                 | v1::request::Operation::DeactivateHostWorkRuntime(_),
             ) => Err(ApplicationError::Unavailable(
                 "Host Tools runtime is not composed".into(),
@@ -1086,6 +1172,12 @@ impl Daemon {
             };
         if let Some(auth) = &self.grok_build_auth {
             facts.subscription_authenticated = auth.is_authenticated().await;
+        }
+        if let Some(store) = &self.host_execution_policy {
+            let policy = store.get_host_execution_policy().await?;
+            facts.host_policy_effective = policy.is_effectively_active();
+            facts.host_process_execute_enabled =
+                facts.host_policy_effective && policy.tool_classes.process_execute;
         }
         if let Some(isolation) = &self.isolation_runtime {
             // Refresh is best-effort; probe unavailability clears readiness.
@@ -1440,6 +1532,95 @@ impl Daemon {
         Ok(v1::response::Result::AccountState(account_state_to_wire(
             state,
         )))
+    }
+
+    async fn get_host_execution_policy(&self) -> Result<v1::response::Result, ApplicationError> {
+        let policy = self
+            .host_execution_policy_store()?
+            .get_host_execution_policy()
+            .await?;
+        Ok(v1::response::Result::HostExecutionPolicy(
+            host_execution_policy_to_wire(policy, false),
+        ))
+    }
+
+    async fn enroll_host_execution(
+        &self,
+        request: v1::EnrollHostExecutionRequest,
+        key: Option<&str>,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let _key = mutation_key(key)?;
+        let roots = canonical_host_roots(&request.path_roots)?;
+        let broad = roots.iter().any(|root| host_root_is_broad(root));
+        if broad && !request.broad_scope_acknowledged {
+            return Err(ApplicationError::InvalidInput(
+                "broad Host Tools scope requires the additional acknowledgment".into(),
+            ));
+        }
+        let classes = HostToolClasses {
+            filesystem_read: request.filesystem_read,
+            filesystem_write: request.filesystem_write,
+            process_execute: request.process_execute,
+        };
+        let root_strings = roots
+            .iter()
+            .map(|root| root.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        HostExecutionPolicy::validate_enrollment(
+            request.acknowledgment_version,
+            &request.typed_acknowledgment,
+            classes,
+            &root_strings,
+        )
+        .map_err(|error| ApplicationError::InvalidInput(error.to_string()))?;
+        let now = self.clock.now();
+        let policy = HostExecutionPolicy {
+            revision: request.expected_revision.saturating_add(1),
+            active: true,
+            acknowledgment_version: request.acknowledgment_version,
+            acknowledged_at: now,
+            tool_classes: classes,
+            canonical_roots: root_strings,
+            broad_scope_acknowledged: request.broad_scope_acknowledged,
+            updated_at: now,
+        };
+        let policy = self
+            .host_execution_policy_store()?
+            .replace_host_execution_policy(policy, request.expected_revision)
+            .await?;
+        Ok(v1::response::Result::HostExecutionPolicy(
+            host_execution_policy_to_wire(policy, false),
+        ))
+    }
+
+    async fn revoke_host_execution(
+        &self,
+        request: v1::RevokeHostExecutionRequest,
+        key: Option<&str>,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        let _key = mutation_key(key)?;
+        let store = self.host_execution_policy_store()?;
+        let mut policy = store.get_host_execution_policy().await?;
+        if policy.revision != request.expected_revision {
+            return Err(ApplicationError::Conflict);
+        }
+        policy.revision = policy.revision.saturating_add(1);
+        policy.active = false;
+        policy.updated_at = self.clock.now();
+        let policy = store
+            .replace_host_execution_policy(policy, request.expected_revision)
+            .await?;
+        Ok(v1::response::Result::HostExecutionPolicy(
+            host_execution_policy_to_wire(policy, false),
+        ))
+    }
+
+    fn host_execution_policy_store(
+        &self,
+    ) -> Result<&Arc<dyn HostExecutionPolicyStore>, ApplicationError> {
+        self.host_execution_policy.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("Host Tools policy is not configured".into())
+        })
     }
 
     async fn get_desktop_preferences(&self) -> Result<v1::response::Result, ApplicationError> {
@@ -4072,7 +4253,8 @@ mod tests {
             clock.clone(),
             ids,
         ));
-        let desktop_preferences = Arc::new(DesktopPreferencesService::new(store, clock.clone()));
+        let desktop_preferences =
+            Arc::new(DesktopPreferencesService::new(store.clone(), clock.clone()));
         let credentials = Arc::new(CredentialService::new(
             vault,
             credential_store.clone(),
@@ -4095,6 +4277,7 @@ mod tests {
             .with_workspace(workspace)
             .with_artifacts(artifacts, false, false)
             .with_desktop_preferences(desktop_preferences)
+            .with_host_execution_policy(store)
             .with_credential_enrollment(enrollment),
             clock,
         )
@@ -4617,6 +4800,68 @@ mod tests {
             panic!("response")
         };
         assert!(matches!(response.result, Some(response::Result::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn host_enrollment_is_canonical_revisioned_and_does_not_imply_readiness() {
+        let (daemon, clock) = daemon();
+        let directory = tempfile::tempdir().expect("Host Tools root");
+        let enrolled = daemon
+            .handle(request_with_key(
+                request::Operation::EnrollHostExecution(v1::EnrollHostExecutionRequest {
+                    expected_revision: 0,
+                    acknowledgment_version: HOST_ACKNOWLEDGMENT_VERSION,
+                    typed_acknowledgment: grok_domain::HOST_ACKNOWLEDGMENT_PHRASE.into(),
+                    filesystem_read: true,
+                    filesystem_write: true,
+                    process_execute: true,
+                    path_roots: vec![directory.path().to_string_lossy().into_owned()],
+                    broad_scope_acknowledged: false,
+                }),
+                "enroll-host-tools",
+            ))
+            .await
+            .expect("enroll response");
+        let response::Result::HostExecutionPolicy(enrolled) = response_result(enrolled) else {
+            panic!("Host policy")
+        };
+        assert!(enrolled.active);
+        assert_eq!(enrolled.revision, 1);
+        assert!(!enrolled.runtime_prepared);
+        assert_eq!(
+            enrolled.unavailable_reason_code,
+            "host_tools_runtime_not_prepared"
+        );
+
+        let capabilities = daemon
+            .handle(request(request::Operation::ResolveCapabilities(
+                v1::ResolveCapabilitiesRequest::default(),
+            )))
+            .await
+            .expect("capabilities");
+        let response::Result::Capabilities(capabilities) = response_result(capabilities) else {
+            panic!("capabilities")
+        };
+        assert_eq!(
+            capabilities.work_execution_backend,
+            v1::WorkExecutionBackend::Unspecified as i32
+        );
+
+        clock.set(20);
+        let revoked = daemon
+            .handle(request_with_key(
+                request::Operation::RevokeHostExecution(v1::RevokeHostExecutionRequest {
+                    expected_revision: 1,
+                }),
+                "revoke-host-tools",
+            ))
+            .await
+            .expect("revoke response");
+        let response::Result::HostExecutionPolicy(revoked) = response_result(revoked) else {
+            panic!("revoked policy")
+        };
+        assert!(!revoked.active);
+        assert_eq!(revoked.revision, 2);
     }
 
     #[tokio::test]

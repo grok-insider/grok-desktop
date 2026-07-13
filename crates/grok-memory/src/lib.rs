@@ -32,18 +32,18 @@ use grok_application::{
     ConversationThreadCredentialBinding, ConversationThreadModelBinding, ConversationTurnEventPage,
     ConversationTurnReservation, ConversationTurnReservationSource, ConversationTurnSnapshot,
     ConversationTurnStore, CredentialMutationReservation, CredentialMutationStore, DatabaseKey,
-    DesktopPreferencesStore, ExecutionMutationOutcome, ExecutionStore, IdGenerator,
-    KeyProviderError, MAX_ARTIFACT_FILE_BYTES, MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES,
-    MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS,
-    MAX_CONVERSATION_CONTEXT_BYTES, MAX_CONVERSATION_CONTEXT_MESSAGES,
-    MAX_CONVERSATION_EVENT_BATCH, MAX_CONVERSATION_FORK_DELIVERY_ALIASES,
-    MAX_CONVERSATION_FORK_DIRECT_CHILDREN, MAX_CONVERSATION_FORK_FAMILY_THREADS,
-    MAX_CONVERSATION_FORK_INHERITED_OUTCOMES, MAX_GLOBAL_ARTIFACT_BYTES,
-    MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_COUNT, MutationCommand, NewRunEvent,
-    PrivilegedDispatchAttempt, PrivilegedOperationStore, PrivilegedPreparation,
-    PrivilegedRecoveryCandidate, ProviderStartCommit, SecretName, SecretValue, SecretVault,
-    SecureKeyProvider, StoreError, TerminalTurnCommit, UsageScope, UsageSummary, UsageWindow,
-    VaultError, WorkspaceSearchHit, WorkspaceSearchKind, WorkspaceStore,
+    DesktopPreferencesStore, ExecutionMutationOutcome, ExecutionStore, HostExecutionPolicyStore,
+    IdGenerator, KeyProviderError, MAX_ARTIFACT_FILE_BYTES,
+    MAX_AUTOMATION_SCHEDULER_EVALUATION_OCCURRENCES, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
+    MAX_AUTOMATION_SCHEDULER_TICK_DEFINITIONS, MAX_CONVERSATION_CONTEXT_BYTES,
+    MAX_CONVERSATION_CONTEXT_MESSAGES, MAX_CONVERSATION_EVENT_BATCH,
+    MAX_CONVERSATION_FORK_DELIVERY_ALIASES, MAX_CONVERSATION_FORK_DIRECT_CHILDREN,
+    MAX_CONVERSATION_FORK_FAMILY_THREADS, MAX_CONVERSATION_FORK_INHERITED_OUTCOMES,
+    MAX_GLOBAL_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_COUNT,
+    MutationCommand, NewRunEvent, PrivilegedDispatchAttempt, PrivilegedOperationStore,
+    PrivilegedPreparation, PrivilegedRecoveryCandidate, ProviderStartCommit, SecretName,
+    SecretValue, SecretVault, SecureKeyProvider, StoreError, TerminalTurnCommit, UsageScope,
+    UsageSummary, UsageWindow, VaultError, WorkspaceSearchHit, WorkspaceSearchKind, WorkspaceStore,
     automation_occurrence_is_active, conversation_fork_metadata_is_within_bounds,
     window_lower_bound,
 };
@@ -56,7 +56,7 @@ use grok_domain::{
     ConversationMessageDerivation, ConversationMessageDerivationKind, ConversationThreadOrigin,
     ConversationTurn, ConversationTurnEvent, ConversationTurnEventKind, ConversationTurnEventLog,
     ConversationTurnId, ConversationTurnLineage, ConversationTurnOrigin, ConversationTurnState,
-    DesktopPreferences, EffectId, EffectKind, Idempotency,
+    DesktopPreferences, EffectId, EffectKind, HostExecutionPolicy, HostToolClasses, Idempotency,
     MAX_AUTOMATION_OCCURRENCE_CLAIM_ATTEMPTS, MAX_AUTOMATION_SCHEDULE_DECISIONS,
     MAX_AUTOMATION_SCHEDULER_LEASE_MS, MAX_CONVERSATION_TEXT_CHUNK_BYTES, Message, MessageId,
     MessageRole, MessageState, MissedRunPolicy, OverlapPolicy, PrivilegedOperation,
@@ -157,6 +157,7 @@ struct State {
     execution_commands: HashMap<(String, String), ExecutionCommandRecord>,
     workspace_commands: HashMap<(String, String), CommandRecord>,
     desktop_preferences: DesktopPreferences,
+    host_execution_policy: Option<HostExecutionPolicy>,
     desktop_preference_commands: HashMap<(String, String), DesktopPreferenceCommandRecord>,
     chat_model_preference: ChatModelPreference,
     chat_model_preference_commands: HashMap<(String, String), ChatModelPreferenceCommandRecord>,
@@ -166,6 +167,53 @@ struct State {
     privileged_operation_attempts:
         HashMap<PrivilegedOperationId, Vec<StoredPrivilegedDispatchAttempt>>,
     privileged_transport_ids: HashSet<String>,
+}
+
+fn inactive_host_execution_policy() -> HostExecutionPolicy {
+    HostExecutionPolicy {
+        revision: 0,
+        active: false,
+        acknowledgment_version: 0,
+        acknowledged_at: 0,
+        tool_classes: HostToolClasses {
+            filesystem_read: false,
+            filesystem_write: false,
+            process_execute: false,
+        },
+        canonical_roots: Vec::new(),
+        broad_scope_acknowledged: false,
+        updated_at: 0,
+    }
+}
+
+#[async_trait]
+impl HostExecutionPolicyStore for InMemoryExecutionStore {
+    async fn get_host_execution_policy(&self) -> Result<HostExecutionPolicy, StoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .host_execution_policy
+            .clone()
+            .unwrap_or_else(inactive_host_execution_policy))
+    }
+
+    async fn replace_host_execution_policy(
+        &self,
+        policy: HostExecutionPolicy,
+        expected_revision: u64,
+    ) -> Result<HostExecutionPolicy, StoreError> {
+        let mut state = self.state.lock().await;
+        let current = state
+            .host_execution_policy
+            .as_ref()
+            .map_or(0, |current| current.revision);
+        if current != expected_revision || policy.revision != expected_revision.saturating_add(1) {
+            return Err(StoreError::Conflict);
+        }
+        state.host_execution_policy = Some(policy.clone());
+        Ok(policy)
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -31,13 +31,14 @@ use grok_application::{
     CapabilityFacts, ChatModelPreferenceStore, ChatModelService, ChatRailSelection, Clock,
     ConversationModelFactory, ConversationService, ConversationTurnStore,
     CredentialEnrollmentService, CredentialMutationStore, CredentialService,
-    DesktopPreferencesService, DesktopPreferencesStore, ExecutionStore, IdGenerator,
-    IsolationProbe, IsolationProbeError, IsolationRuntime, MAX_ARTIFACT_RECOVERY_BATCH,
-    MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH, MAX_CONVERSATION_RECOVERY_BATCH,
-    MAX_PRIVILEGED_RECOVERY_BATCH, ManagedIntegrationLifecycleStore, PrivilegedGatewayError,
-    PrivilegedGuestControlTransport, PrivilegedOperationService, PrivilegedOperationStore,
-    RunService, ScheduledGuestDispatcher, SecretName, SecretValue, SecretVault,
-    SuperGrokEnrollmentService, VaultError, WorkspaceService, WorkspaceStore,
+    DesktopPreferencesService, DesktopPreferencesStore, ExecutionStore, HostExecutionPolicyStore,
+    IdGenerator, IsolationProbe, IsolationProbeError, IsolationRuntime,
+    MAX_ARTIFACT_RECOVERY_BATCH, MAX_AUTOMATION_SCHEDULER_RECOVERY_BATCH,
+    MAX_CONVERSATION_RECOVERY_BATCH, MAX_PRIVILEGED_RECOVERY_BATCH,
+    ManagedIntegrationLifecycleStore, PrivilegedGatewayError, PrivilegedGuestControlTransport,
+    PrivilegedOperationService, PrivilegedOperationStore, RunService, ScheduledGuestDispatcher,
+    SecretName, SecretValue, SecretVault, SuperGrokEnrollmentService, VaultError, WorkspaceService,
+    WorkspaceStore,
 };
 #[cfg(target_os = "linux")]
 use grok_artifact_storage::LinuxArtifactContent;
@@ -288,6 +289,7 @@ async fn run(startup_nonce: StartupNonce) -> Result<(), DynError> {
         artifact_open_available,
     )
     .with_desktop_preferences(desktop_preferences)
+    .with_host_execution_policy(stores.host_execution_policy.clone())
     .with_chat_models(chat_models)
     .with_conversation(conversation)
     .with_runtime_capability_facts(runtime_capability_facts);
@@ -1305,6 +1307,7 @@ struct Stores {
     conversation: Arc<dyn ConversationTurnStore>,
     credential_mutations: Arc<dyn CredentialMutationStore>,
     desktop_preferences: Arc<dyn DesktopPreferencesStore>,
+    host_execution_policy: Arc<dyn HostExecutionPolicyStore>,
     chat_model_preferences: Arc<dyn ChatModelPreferenceStore>,
     privileged_operations: Arc<dyn PrivilegedOperationStore>,
     managed_integrations: Arc<dyn ManagedIntegrationLifecycleStore>,
@@ -1327,6 +1330,7 @@ impl Stores {
             + CredentialMutationStore
             + DesktopPreferencesStore
             + ExecutionStore
+            + HostExecutionPolicyStore
             + PrivilegedOperationStore
             + WorkspaceStore
             + 'static,
@@ -1338,6 +1342,7 @@ impl Stores {
             artifacts: store.clone(),
             conversation: store.clone(),
             desktop_preferences: store.clone(),
+            host_execution_policy: store.clone(),
             chat_model_preferences: store.clone(),
             privileged_operations: store.clone(),
             credential_mutations: store,
