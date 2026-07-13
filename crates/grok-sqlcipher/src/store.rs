@@ -1,7 +1,8 @@
 use std::{
+    collections::HashSet,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 #[cfg(target_os = "linux")]
@@ -198,6 +199,12 @@ impl DatabaseLock {
     /// the lock, or an I/O error when the lock file cannot be secured.
     pub fn acquire(path: impl AsRef<Path>) -> Result<Self, SqlCipherStoreError> {
         let database_path = canonical_database_path(path.as_ref())?;
+        let mut process_locks = process_database_locks()
+            .lock()
+            .map_err(|_| std::io::Error::other("database lock registry is poisoned"))?;
+        if process_locks.contains(&database_path) {
+            return Err(SqlCipherStoreError::DatabaseInUse);
+        }
         let file_name = database_path
             .file_name()
             .ok_or_else(|| std::io::Error::other("database path has no file name"))?;
@@ -225,11 +232,26 @@ impl DatabaseLock {
             }
             return Err(error.into());
         }
+        process_locks.insert(database_path.clone());
         Ok(Self {
             database_path,
             _file: file,
         })
     }
+}
+
+impl Drop for DatabaseLock {
+    fn drop(&mut self) {
+        let mut process_locks = process_database_locks()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        process_locks.remove(&self.database_path);
+    }
+}
+
+fn process_database_locks() -> &'static Mutex<HashSet<PathBuf>> {
+    static LOCKS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// Result of `SQLCipher` and `SQLite` integrity checks.
@@ -1011,7 +1033,6 @@ fn open_backup_destination(
         "PRAGMA foreign_keys = ON;
          PRAGMA synchronous = FULL;
          PRAGMA secure_delete = ON;
-         PRAGMA cipher_memory_security = ON;
          PRAGMA temp_store = MEMORY;
          PRAGMA trusted_schema = OFF;",
     )?;

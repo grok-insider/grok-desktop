@@ -329,6 +329,17 @@ block reclamation. Storage readiness is now independent from portal-open
 readiness, allowing import/removal recovery while OpenURI is unavailable. See
 [ADR 0024](../decisions/0024-daemon-owned-artifact-removal-and-retention.md).
 
+## Encrypted-memory policy
+
+The daemon leaves SQLCipher's process-global `cipher_memory_security` allocator
+disabled. SQLCipher 4.12 applies the option to every SQLite allocation, cannot
+disable it after enabling it, and continues with pageable memory after
+`mlock`/`VirtualLock` quota failures. Grok Desktop does not report that
+best-effort behavior as successful memory locking. Database keys remain
+daemon-owned and zeroized by the Rust key boundary, while SQLCipher continues
+to wipe its dedicated key allocations. Database-at-rest encryption remains
+mandatory on every platform.
+
 ## Backup publication
 
 SQLCipher backup publication is likewise fail-closed. Linux retains validated

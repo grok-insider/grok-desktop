@@ -25,9 +25,14 @@ pub(crate) fn open_encrypted(
          PRAGMA journal_mode = WAL;
          PRAGMA synchronous = FULL;
          PRAGMA secure_delete = ON;
-         PRAGMA cipher_memory_security = ON;
          PRAGMA temp_store = MEMORY;",
     )?;
+    // SQLCipher 4.12 applies cipher_memory_security process-wide to every
+    // SQLite allocation and cannot turn it off again. Once the OS page-lock
+    // quota is exhausted, SQLCipher logs every failed mlock/VirtualLock while
+    // continuing with pageable memory. Do not claim that best-effort mode as
+    // a security boundary. DatabaseKey still zeroizes its Rust buffer, and
+    // SQLCipher continues to wipe its dedicated key allocations on release.
     migrate(&mut connection)?;
     connection.execute_batch("PRAGMA trusted_schema = OFF;")?;
     harden_database_files(path)?;
@@ -4510,6 +4515,16 @@ mod tests {
         assert_eq!(tombstone.1, None);
         assert_eq!(tombstone.2.len(), 32);
         assert_eq!(tombstone.3.len(), 32);
+    }
+
+    #[test]
+    fn encrypted_opener_applies_the_platform_memory_security_policy() {
+        let (_directory, connection) = open_test_database(4);
+        let enabled: String = connection
+            .query_row("PRAGMA cipher_memory_security", [], |row| row.get(0))
+            .expect("memory security state");
+
+        assert_eq!(enabled, "0");
     }
 
     #[test]

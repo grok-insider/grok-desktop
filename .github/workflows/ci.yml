@@ -139,6 +139,8 @@ jobs:
         run: cargo test -p grok-application --lib
       - name: Test daemon contracts
         run: cargo test -p grok-daemon --lib
+      - name: Test encrypted persistence contracts
+        run: cargo test -p grok-sqlcipher
       - run: cargo test --workspace
       - name: Cross-check audited Windows boundaries on ARM64
         shell: pwsh
