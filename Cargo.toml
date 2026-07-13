@@ -8,6 +8,7 @@ members = [
     "crates/grok-credential-enrollment",
     "crates/grok-domain",
     "crates/grok-host-tools-mcp",
+    "crates/grok-host-tools",
     "crates/grok-memory",
     "crates/grok-protocol",
     "crates/grok-sqlcipher",
@@ -29,6 +30,7 @@ async-trait = "0.1.89"
 async-stream = "0.3.6"
 agent-client-protocol = "1.2.0"
 bytes = "1.11.1"
+cap-std = "4.0.2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 chrono-tz = "0.10.4"
 directories = "6.0.0"

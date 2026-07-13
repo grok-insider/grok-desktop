@@ -13,6 +13,7 @@ mod credentials;
 mod effects;
 mod error;
 mod grok_build_auth;
+mod host_tools;
 mod isolation;
 mod isolation_runtime;
 mod managed_integrations;
@@ -97,6 +98,9 @@ pub use effects::{PrepareEffect, SideEffectService};
 pub use error::ApplicationError;
 pub use grok_build_auth::{GrokBuildAuthService, GrokBuildAuthStatus};
 pub use grok_domain::DEFAULT_XAI_CHAT_MODEL_ID;
+pub use host_tools::{
+    HostDirectoryEntry, HostFilesystemError, HostFilesystemErrorKind, HostFilesystemReader,
+};
 pub use isolation::{
     IsolationBackend, IsolationBrokerCapabilities, IsolationBrokerOperation,
     IsolationContractVersion, IsolationProbe, IsolationProbeError, IsolationWorkspaceMode,

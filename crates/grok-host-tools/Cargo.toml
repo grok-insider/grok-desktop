@@ -1,0 +1,19 @@
+[package]
+name = "grok-host-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+cap-std.workspace = true
+grok-application = { path = "../grok-application", version = "0.1.0" }
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"
