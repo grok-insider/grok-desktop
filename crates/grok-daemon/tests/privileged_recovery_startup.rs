@@ -121,6 +121,7 @@ fn daemon_command(path: &std::path::Path, address: SocketAddr) -> Command {
     command
         .env("GROK_DATABASE_PATH", path)
         .env("GROK_DATABASE_KEY_HEX", hex::encode(DATABASE_KEY))
+        .env("GROK_DAEMON_TEST_EPHEMERAL_VAULT", "1")
         .env("GROK_DAEMON_DEV_TCP_ADDR", address.to_string())
         .env("GROK_DAEMON_STARTUP_NONCE_STDIN", "1")
         .env("GROK_INSTALLATION_ID", "startup-recovery-test")
