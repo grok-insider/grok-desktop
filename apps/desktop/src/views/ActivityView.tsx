@@ -15,6 +15,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -160,19 +161,11 @@ export function ActivityView() {
                   </span>
                   <RunStatus state={run.state} />
                   <span className="flex items-center gap-2 max-[680px]:hidden">
-                    <span
-                      className="h-1 w-16 overflow-hidden rounded-full bg-secondary max-[1120px]:w-10"
-                      role="progressbar"
+                    <Progress
+                      value={runProgress}
                       aria-label={`${run.title} progress`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={runProgress}
-                    >
-                      <span
-                        className="block h-full origin-left rounded-full bg-info"
-                        style={{ transform: `scaleX(${runProgress / 100})` }}
-                      />
-                    </span>
+                      className="h-1 w-16 bg-secondary max-[1120px]:w-10 [&>[data-slot=progress-indicator]]:bg-info"
+                    />
                     <small className="font-mono text-label text-subtle-foreground tabular-nums">{runProgress}%</small>
                   </span>
                   <time className="font-mono text-label text-subtle-foreground tabular-nums max-[680px]:hidden">
@@ -247,19 +240,11 @@ function RunInspector({ run }: { run: RunSummary }) {
           <h3 id="run-progress-heading" className="m-0 text-body-sm font-medium text-muted-foreground">Progress</h3>
           <strong className="font-mono text-body-sm font-semibold text-foreground tabular-nums">{runProgress}%</strong>
         </div>
-        <div
-          className="h-1 w-full overflow-hidden rounded-full bg-secondary"
-          role="progressbar"
+        <Progress
+          value={runProgress}
           aria-label="Run progress"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={runProgress}
-        >
-          <span
-            className="block h-full origin-left rounded-full bg-info"
-            style={{ transform: `scaleX(${runProgress / 100})` }}
-          />
-        </div>
+          className="h-1 bg-secondary [&>[data-slot=progress-indicator]]:bg-info"
+        />
         <p className="m-0 mt-2 text-body-sm leading-5 text-muted-foreground">{run.detail}</p>
       </section>
 

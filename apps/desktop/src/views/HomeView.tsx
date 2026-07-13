@@ -4,6 +4,7 @@ import { Composer } from "../components/Composer";
 import { IconButton, RunStatus, SkeletonRows } from "../components/ui";
 import { useDesktopSnapshot } from "../services/DesktopClientContext";
 import { useNavigate } from "react-router-dom";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { GROK_EXECUTION_UNAVAILABLE_REASON } from "../services/productAvailability";
 
@@ -99,19 +100,11 @@ export function HomeView() {
                 </div>
                 <h3 className="m-0 mt-2 mb-1 text-body leading-snug font-semibold">{run.title}</h3>
                 <p className="m-0 mb-2 min-h-7 text-body-sm leading-relaxed text-subtle-foreground">{run.detail}</p>
-                <div
-                  className="h-1 w-full overflow-hidden rounded-full bg-secondary"
-                  role="progressbar"
+                <Progress
+                  value={run.progress}
                   aria-label={`${run.progress}% complete`}
-                  aria-valuenow={run.progress}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                >
-                  <span
-                    className="block h-full w-full origin-left rounded-full bg-info transition-transform duration-250"
-                    style={{ transform: `scaleX(${run.progress / 100})` }}
-                  />
-                </div>
+                  className="h-1 bg-secondary [&>[data-slot=progress-indicator]]:bg-info [&>[data-slot=progress-indicator]]:duration-250"
+                />
                 <div className="mt-1.5 flex items-center justify-between gap-2 text-label text-subtle-foreground">
                   <span>{run.projectName}</span>
                   <IconButton

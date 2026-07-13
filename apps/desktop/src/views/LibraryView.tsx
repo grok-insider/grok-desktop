@@ -46,6 +46,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -1162,19 +1163,11 @@ export function MediaLibrary({ kind }: { kind: "image" | "video" }) {
                     <span className="mt-0.5 block text-body-sm text-muted-foreground">
                       {item.status === "queued" ? "Waiting for capacity" : `${progress}% complete`}
                     </span>
-                    <div
-                      className="mt-1.5 h-1 overflow-hidden rounded-full bg-secondary"
-                      role="progressbar"
+                    <Progress
+                      value={progress}
                       aria-label={`Progress for ${item.prompt}`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={progress}
-                    >
-                      <span
-                        className="block h-full origin-left rounded-full bg-info transition-transform duration-200 ease-fluid"
-                        style={{ transform: `scaleX(${progress / 100})` }}
-                      />
-                    </div>
+                      className="mt-1.5 h-1 bg-secondary [&>[data-slot=progress-indicator]]:bg-info [&>[data-slot=progress-indicator]]:duration-200 [&>[data-slot=progress-indicator]]:ease-fluid"
+                    />
                   </div>
                   <Button
                     variant="ghost"

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -903,9 +904,9 @@ function ConversationForkDialog({
             </div>
           )}
           {error ? (
-            <p className="m-0 rounded-md bg-destructive-soft px-3 py-2 text-body-sm text-destructive" role="alert">
-              {error}
-            </p>
+            <Alert variant="destructive" className="rounded-md border-transparent px-3 py-2">
+              <AlertDescription className="text-body-sm text-destructive">{error}</AlertDescription>
+            </Alert>
           ) : null}
           <DialogFooter className="max-[480px]:flex-col-reverse max-[480px]:[&>*]:w-full">
             <Button disabled={busy} onClick={onClose} type="button" variant="outline">

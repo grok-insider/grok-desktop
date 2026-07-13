@@ -10,7 +10,12 @@ const alertVariants = cva(
       variant: {
         default: "bg-card text-card-foreground",
         destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 [&>svg]:text-current",
+          "border-destructive/25 bg-destructive-soft text-destructive *:data-[slot=alert-description]:text-destructive/90 [&>svg]:text-current",
+        /* Semantic soft variants against DESIGN.md §2 tokens. */
+        warning:
+          "border-warning/30 bg-warning-soft text-warning *:data-[slot=alert-description]:text-muted-foreground [&>svg]:text-current",
+        info:
+          "border-info/25 bg-info-soft text-info *:data-[slot=alert-description]:text-muted-foreground [&>svg]:text-current",
       },
     },
     defaultVariants: {

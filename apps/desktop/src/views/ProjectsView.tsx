@@ -19,6 +19,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -608,10 +609,10 @@ function CreateProjectDialog({
             />
           </label>
           {error && (
-            <div className="flex items-start gap-2 rounded-lg bg-destructive-soft px-3 py-2 text-body-sm text-destructive" role="alert">
-              <CircleAlert className="mt-0.5 shrink-0" size={15} aria-hidden="true" />
-              <span>{error}</span>
-            </div>
+            <Alert variant="destructive" className="border-transparent px-3 py-2">
+              <CircleAlert size={15} aria-hidden="true" />
+              <AlertDescription className="text-body-sm text-destructive">{error}</AlertDescription>
+            </Alert>
           )}
           <DialogFooter className="mt-1 max-[480px]:flex-col-reverse">
             <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>

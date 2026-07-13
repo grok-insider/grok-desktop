@@ -19,8 +19,10 @@ import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientC
 import type { DesktopNavigationRoute } from "../contracts/bridge";
 import type { WorkspaceSearchHit } from "../services/desktopClient";
 import { IconButton } from "./ui";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Kbd } from "@/components/ui/kbd";
 import {
   Sidebar,
   SidebarContent,
@@ -286,9 +288,9 @@ export function AppShell() {
           >
             <Search size={16} aria-hidden="true" />
             <span className="truncate">Search conversations, projects, and files</span>
-            <kbd className="ml-auto rounded-sm border border-border bg-muted px-1.5 font-mono text-label text-subtle-foreground max-[900px]:hidden">
+            <Kbd className="ml-auto h-auto border border-border px-1.5 font-mono text-label text-subtle-foreground max-[900px]:hidden">
               Ctrl K
-            </kbd>
+            </Kbd>
           </button>
           <div className="ml-auto flex items-center gap-2">
             <span
@@ -319,42 +321,40 @@ export function AppShell() {
         </header>
         <div className="min-h-0 min-w-0 flex-1 scroll-smooth overflow-auto">
           {snapshot && interfacePreview && (
-            <div
-              className="mx-[clamp(24px,3.2vw,48px)] mt-3 -mb-4 flex min-h-[42px] items-center gap-2 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-warning max-[680px]:mx-3.5"
+            <Alert
+              variant="warning"
               role="status"
+              className="mx-[clamp(24px,3.2vw,48px)] mt-3 -mb-4 w-auto items-center px-3 py-2 max-[680px]:mx-3.5"
             >
               <AlertTriangle size={16} />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <strong className="text-label">Interface preview</strong>
-                <small className="truncate text-label text-muted-foreground max-[680px]:whitespace-normal">
-                  Sample data only. No Grok provider request or local tool execution is available.
-                </small>
-              </span>
-            </div>
+              <AlertTitle className="text-label">Interface preview</AlertTitle>
+              <AlertDescription className="text-label">
+                Sample data only. No Grok provider request or local tool execution is available.
+              </AlertDescription>
+            </Alert>
           )}
           {snapshot && !daemonConnected && !interfacePreview && (
-            <div
-              className={cn(
-                "mx-[clamp(24px,3.2vw,48px)] mt-3 -mb-4 flex min-h-[42px] items-center gap-2 rounded-lg border px-3 py-2 max-[680px]:mx-3.5",
-                daemonConnecting ? "border-info/25 bg-info-soft text-info" : "border-warning/30 bg-warning-soft text-warning",
-              )}
+            <Alert
+              variant={daemonConnecting ? "info" : "warning"}
               role="status"
+              className="mx-[clamp(24px,3.2vw,48px)] mt-3 -mb-4 w-auto grid-cols-[0_1fr_auto] items-center px-3 py-2 has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr_auto] max-[680px]:mx-3.5"
             >
               {daemonConnecting ? <LoaderCircle size={16} className="animate-spin" /> : <AlertTriangle size={16} />}
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <strong className="text-label">{daemonConnecting ? "Starting local daemon" : "Limited Mode"}</strong>
-                {snapshot.connection.reason && (
-                  <small className="truncate text-label text-muted-foreground max-[680px]:whitespace-normal">
-                    {snapshot.connection.reason}
-                  </small>
-                )}
-              </span>
+              <AlertTitle className="text-label">{daemonConnecting ? "Starting local daemon" : "Limited Mode"}</AlertTitle>
+              {snapshot.connection.reason && (
+                <AlertDescription className="text-label">
+                  {snapshot.connection.reason}
+                </AlertDescription>
+              )}
               {!daemonConnecting && (
-                <NavLink to="/settings" className="text-label font-semibold underline-offset-2 hover:underline">
+                <NavLink
+                  to="/settings"
+                  className="col-start-3 row-span-2 row-start-1 self-center text-label font-semibold underline-offset-2 hover:underline"
+                >
                   Open settings
                 </NavLink>
               )}
-            </div>
+            </Alert>
           )}
           {outlet}
         </div>
@@ -508,17 +508,23 @@ function SearchDialog({
           </span>
           {searching && <SearchResultsSkeleton />}
           {!searching && queryValidationError && (
-            <div className="m-2 rounded-lg border border-destructive/25 bg-destructive-soft p-3" role="alert">
-              <p className="m-0 text-body-sm leading-5 text-destructive">{queryValidationError}</p>
-            </div>
+            <Alert variant="destructive" className="m-2 w-auto p-3">
+              <AlertDescription className="text-body-sm leading-5 text-destructive">{queryValidationError}</AlertDescription>
+            </Alert>
           )}
           {!searching && !queryValidationError && matchingSearchError && (
-            <div className="m-2 rounded-lg border border-destructive/25 bg-destructive-soft p-3" role="alert">
-              <p className="m-0 text-body-sm leading-5 text-destructive">{matchingSearchError}</p>
-              <Button className="mt-3" type="button" size="sm" variant="outline" onClick={() => setRetry((value) => value + 1)}>
+            <Alert variant="destructive" className="m-2 w-auto p-3">
+              <AlertDescription className="text-body-sm leading-5 text-destructive">{matchingSearchError}</AlertDescription>
+              <Button
+                className="col-start-2 mt-3 justify-self-start"
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setRetry((value) => value + 1)}
+              >
                 Retry search
               </Button>
-            </div>
+            </Alert>
           )}
           {!searching && !queryValidationError && !matchingSearchError && results.map((result) => (
             <button

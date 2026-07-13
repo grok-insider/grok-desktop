@@ -12,6 +12,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -692,10 +693,10 @@ function AutomationEditor({
             </div>
 
             {error && (
-              <div className="col-span-2 flex items-start gap-2 rounded-lg bg-destructive-soft p-3 text-destructive max-[680px]:col-span-1" role="alert">
-                <CircleAlert className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
-                <span className="text-body-sm">{error}</span>
-              </div>
+              <Alert variant="destructive" className="col-span-2 border-transparent p-3 max-[680px]:col-span-1">
+                <CircleAlert size={16} aria-hidden="true" />
+                <AlertDescription className="text-body-sm text-destructive">{error}</AlertDescription>
+              </Alert>
             )}
           </div>
 
