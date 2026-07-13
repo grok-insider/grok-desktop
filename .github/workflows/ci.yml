@@ -135,6 +135,8 @@ jobs:
         run: cargo test -p grok-windows-acl
       - name: Test Windows ACP isolation boundary
         run: cargo test -p grok-acp --lib
+      - name: Test platform-neutral application contracts
+        run: cargo test -p grok-application --lib
       - run: cargo test --workspace
       - name: Cross-check audited Windows boundaries on ARM64
         shell: pwsh

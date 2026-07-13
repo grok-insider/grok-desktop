@@ -3312,8 +3312,8 @@ mod tests {
 
     #[test]
     fn selected_source_path_never_debugs_or_errors_with_path_text() {
-        let selected =
-            SelectedSourcePath::new(PathBuf::from("/private/secret.txt")).expect("absolute source");
+        let selected = SelectedSourcePath::new(std::env::temp_dir().join("private-secret.txt"))
+            .expect("absolute source");
         assert_eq!(format!("{selected:?}"), "SelectedSourcePath([REDACTED])");
         let error = SelectedSourcePath::new(PathBuf::from("relative/secret.txt"))
             .expect_err("relative rejected");
@@ -3806,17 +3806,17 @@ mod tests {
             Arc::new(FixedIds),
         )
         .with_inner_timeouts(1, 1);
-        let request = |path: &str| ImportArtifact {
+        let request = |name: &str| ImportArtifact {
             project_id: "project-test".into(),
             thread_id: None,
             display_name: "report.txt".into(),
             media_type: "text/plain".into(),
-            source: SelectedSourcePath::new(PathBuf::from(path)).expect("source"),
+            source: SelectedSourcePath::new(std::env::temp_dir().join(name)).expect("source"),
         };
 
         assert_eq!(
             service
-                .import_artifact(request("/tmp/report.txt"), "import-command")
+                .import_artifact(request("report.txt"), "import-command")
                 .await
                 .expect_err("timeout")
                 .to_string(),
@@ -3837,7 +3837,7 @@ mod tests {
         .with_inner_timeouts(1, 1);
         assert!(matches!(
             replay_service
-                .import_artifact(request("/different/selection.txt"), "import-command")
+                .import_artifact(request("different-selection.txt"), "import-command")
                 .await,
             Err(ApplicationError::Unavailable(_))
         ));
