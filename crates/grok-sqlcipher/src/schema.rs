@@ -71,6 +71,8 @@ fn prepare_database_file(path: &Path) -> Result<(), SqlCipherStoreError> {
 }
 
 #[cfg(not(target_os = "linux"))]
+// Keep one fallible platform contract so callers cannot bypass preparation.
+#[allow(clippy::unnecessary_wraps)]
 fn prepare_database_file(_path: &Path) -> Result<(), SqlCipherStoreError> {
     Ok(())
 }
@@ -92,6 +94,8 @@ fn harden_database_files(path: &Path) -> Result<(), SqlCipherStoreError> {
 }
 
 #[cfg(not(target_os = "linux"))]
+// Keep one fallible platform contract so callers cannot bypass hardening.
+#[allow(clippy::unnecessary_wraps)]
 fn harden_database_files(_path: &Path) -> Result<(), SqlCipherStoreError> {
     Ok(())
 }

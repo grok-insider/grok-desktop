@@ -2,8 +2,10 @@ use std::{
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
 };
+
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 use async_trait::async_trait;
 use fs2::FileExt;
