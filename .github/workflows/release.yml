@@ -112,7 +112,7 @@ jobs:
             --appimageupdatetool "$RUNNER_TEMP/appimageupdatetool.AppImage" \
             --appimageupdatetool-sha256 "$APPIMAGEUPDATETOOL_SHA256" \
             --update-trust-file "$RUNNER_TEMP/update-trusted-keys.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-linux-x64
           if-no-files-found: error
@@ -195,7 +195,7 @@ jobs:
         run: |
           pnpm --filter @grok-desktop/desktop package:windows-core -- `
             --arch x64 --channel $env:RELEASE_CHANNEL --stage $env:CORE_STAGE
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-windows-x64
           if-no-files-found: error
@@ -229,7 +229,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release-assets

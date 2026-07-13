@@ -50,7 +50,7 @@ jobs:
           persist-credentials: true
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
