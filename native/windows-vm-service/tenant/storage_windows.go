@@ -297,7 +297,11 @@ func validateStorageDirectoryHandle(handle windows.Handle, expectedPath string) 
 	if err != nil {
 		return nil, err
 	}
-	if !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(expectedPath)) {
+	canonicalExpected, err := storageLongPath(expectedPath)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(canonicalExpected)) {
 		return nil, fmt.Errorf("service storage directory resolved to an unexpected path")
 	}
 	return &securedStorageDirectory{
@@ -468,6 +472,30 @@ func storageFinalPath(handle windows.Handle) (string, error) {
 		return `\\` + resolved[len(`\\?\UNC\`):], nil
 	}
 	return strings.TrimPrefix(resolved, `\\?\`), nil
+}
+
+// storageLongPath normalizes valid 8.3 aliases before comparing a trusted
+// component path with the canonical path returned for its already-open handle.
+// Hosted Windows runners commonly expose their temporary root through such an
+// alias; the handle identity and no-reparse checks remain the security boundary.
+func storageLongPath(path string) (string, error) {
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return "", fmt.Errorf("encode service storage path: %w", err)
+	}
+	size, err := windows.GetLongPathName(pathPointer, nil, 0)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize service storage path: %w", err)
+	}
+	buffer := make([]uint16, size+1)
+	written, err := windows.GetLongPathName(pathPointer, &buffer[0], uint32(len(buffer)))
+	if err != nil {
+		return "", fmt.Errorf("canonicalize service storage path: %w", err)
+	}
+	if written == 0 || written >= uint32(len(buffer)) {
+		return "", fmt.Errorf("canonical service storage path is truncated")
+	}
+	return windows.UTF16ToString(buffer[:written]), nil
 }
 
 func isASCIIAlpha(value byte) bool {
