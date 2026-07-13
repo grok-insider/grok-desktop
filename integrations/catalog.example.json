@@ -1,5 +1,11 @@
 {
   "version": 1,
   "revision": 1,
+  "publisherId": "grok-insider",
+  "signature": {
+    "algorithm": "ed25519",
+    "keyId": "replace-with-release-key-id",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  },
   "bundles": []
 }
