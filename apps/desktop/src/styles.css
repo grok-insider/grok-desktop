@@ -5,6 +5,11 @@
  */
 @import "tailwindcss";
 @import "tw-animate-css";
+/*
+ * Class-gate the `dark:` variant. The product is light-only (DESIGN.md §2);
+ * without this, generated shadcn primitives would follow the OS color scheme.
+ */
+@custom-variant dark (&:is(.dark *));
 
 :root {
   /* Semantic tokens (DESIGN.md §2) — hex documented alongside OKLCH there. */
@@ -192,3 +197,4 @@
     }
   }
 }
+
