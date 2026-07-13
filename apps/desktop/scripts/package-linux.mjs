@@ -46,7 +46,7 @@ export function parseLinuxPackageArguments(argv) {
     if (!option?.startsWith("--") || value === undefined) {
       throw new Error("linux package arguments must be option/value pairs");
     }
-    if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-pinned-manifest", "--acp-component", "--appimagetool", "--appimagetool-sha256",
+    if (!["--arch", "--channel", "--out", "--daemon", "--acp-catalog", "--acp-pinned-manifest", "--acp-component", "--appimagetool", "--appimagetool-sha256",
       "--appimageupdatetool", "--appimageupdatetool-sha256",
       "--update-trust-file", "--host-tools-helper",
       "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
@@ -59,6 +59,8 @@ export function parseLinuxPackageArguments(argv) {
   if (!LINUX_PACKAGE_ARCHITECTURES.has(architecture)) {
     throw new Error("--arch must be x64 or arm64");
   }
+  const channel = values["--channel"] ?? "stable";
+  if (channel !== "stable" && channel !== "beta") throw new Error("--channel must be stable or beta");
   const acpValues = [values["--acp-catalog"], values["--acp-component"], values["--acp-trust-file"]];
   if ((values["--acp-catalog"] || values["--acp-trust-file"]) && !acpValues.every(Boolean)) {
     throw new Error("signed ACP staging requires catalog, component, and trust file together");
@@ -99,6 +101,7 @@ export function parseLinuxPackageArguments(argv) {
   }
   return {
     architecture,
+    channel,
     out: values["--out"]
       ? path.resolve(values["--out"])
       : path.join(repositoryRoot, "out", "release", "linux", architecture),
@@ -123,9 +126,10 @@ export function parseLinuxPackageArguments(argv) {
   };
 }
 
-export function linuxAppImageUpdateInformation(architecture) {
+export function linuxAppImageUpdateInformation(architecture, channel = "stable") {
   if (!LINUX_PACKAGE_ARCHITECTURES.has(architecture)) throw new Error("unsupported AppImage architecture");
-  return `gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-stable-${architecture}.AppImage.zsync`;
+  if (channel !== "stable" && channel !== "beta") throw new Error("unsupported AppImage channel");
+  return `gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-${channel}-${architecture}.AppImage.zsync`;
 }
 
 async function createLinuxAppImage(appDirectory, out, options, version) {
@@ -166,9 +170,9 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   );
   await symlink("usr/share/applications/grok-desktop.desktop", path.join(appDir, "grok-desktop.desktop"));
   await symlink("usr/share/icons/hicolor/32x32/apps/grok-desktop.png", path.join(appDir, "grok-desktop.png"));
-  const appImage = path.join(out, `GrokDesktop-stable-${options.architecture}.AppImage`);
+  const appImage = path.join(out, `GrokDesktop-${options.channel}-${options.architecture}.AppImage`);
   await new Promise((resolve, reject) => {
-    const child = spawn(options.appimagetool, ["--updateinformation", linuxAppImageUpdateInformation(options.architecture), appDir, appImage], {
+    const child = spawn(options.appimagetool, ["--updateinformation", linuxAppImageUpdateInformation(options.architecture, options.channel), appDir, appImage], {
       cwd: out,
       env: {
         PATH: process.env.PATH ?? "",
@@ -716,6 +720,7 @@ async function main() {
       execPath: executable,
       iconPath: path.join(appDirectory, "resources", "tray", "tray-dark-32.png"),
       version: packageMetadata.version,
+      channel: options.channel,
     });
     await writeFile(path.join(appDirectory, "grok-desktop.desktop"), desktopEntry, {
       encoding: "utf8",

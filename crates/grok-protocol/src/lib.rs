@@ -5,12 +5,11 @@ mod validation;
 
 /// Current compatibility epoch accepted by the daemon.
 ///
-/// Epoch twenty-four binds the closed official xAI Search preset into durable
-/// conversation intent while retaining prior `SuperGrok` enrollment and withdrawn
-/// scheduler or managed-integration mutation semantics. The Protobuf package remains the
-/// canonical v1 schema family; the envelope version prevents either side from
-/// silently accepting a different operation set.
-pub const PROTOCOL_VERSION: u32 = 28;
+/// Epoch twenty-nine adds the daemon-owned signed update-channel preference while
+/// retaining Host Work, `SuperGrok`, and Search contracts from earlier epochs. The
+/// Protobuf package remains the canonical v1 schema family; the envelope version
+/// prevents either side from silently accepting a different operation set.
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// Generated messages for the canonical daemon schema family.
 #[allow(clippy::all, clippy::pedantic, missing_docs)]

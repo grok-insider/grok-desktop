@@ -14,9 +14,10 @@ import {
 } from "./update-manifest.mjs";
 
 const baseManifest = () => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   product: "grok-desktop",
   version: "1.2.3",
+  nativePackageVersion: "1.2.3.65535",
   channel: "stable",
   platform: "win32",
   architecture: "x64",

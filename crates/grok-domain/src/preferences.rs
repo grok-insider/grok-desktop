@@ -18,11 +18,34 @@ pub enum DesktopPreferencesError {
     RevisionExhausted,
 }
 
+/// Public signed application update channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DesktopUpdateChannel {
+    /// Production releases only.
+    #[default]
+    Stable,
+    /// Signed prerelease builds plus later stable releases.
+    Beta,
+}
+
+impl DesktopUpdateChannel {
+    /// Stable wire and persistence label.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+}
+
 /// Durable desktop behavior that must remain authoritative outside the renderer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopPreferences {
     /// Closing the primary window hides it while the process remains available in the tray.
     pub keep_running_in_notification_area: bool,
+    /// Signed public application update channel.
+    pub update_channel: DesktopUpdateChannel,
     /// Optimistic concurrency revision.
     pub revision: u64,
     /// Last successful update timestamp.
@@ -35,19 +58,21 @@ impl DesktopPreferences {
     pub const fn default_at(now: UnixMillis) -> Self {
         Self {
             keep_running_in_notification_area: true,
+            update_channel: DesktopUpdateChannel::Stable,
             revision: 0,
             updated_at: now,
         }
     }
 
-    /// Updates close behavior with optimistic revision metadata.
+    /// Updates desktop behavior with optimistic revision metadata.
     ///
     /// # Errors
     ///
     /// Returns [`DesktopPreferencesError`] for clock regression or revision overflow.
-    pub fn set_keep_running_in_notification_area(
+    pub fn update(
         &mut self,
         keep_running: bool,
+        update_channel: DesktopUpdateChannel,
         now: UnixMillis,
     ) -> Result<(), DesktopPreferencesError> {
         if now < self.updated_at {
@@ -59,6 +84,7 @@ impl DesktopPreferences {
             .ok_or(DesktopPreferencesError::RevisionExhausted)?;
         self.updated_at = now;
         self.keep_running_in_notification_area = keep_running;
+        self.update_channel = update_channel;
         Ok(())
     }
 }
@@ -181,9 +207,10 @@ mod tests {
         let mut preferences = DesktopPreferences::default_at(10);
         assert!(preferences.keep_running_in_notification_area);
         preferences
-            .set_keep_running_in_notification_area(false, 11)
+            .update(false, DesktopUpdateChannel::Beta, 11)
             .expect("valid preference update");
         assert!(!preferences.keep_running_in_notification_area);
+        assert_eq!(preferences.update_channel, DesktopUpdateChannel::Beta);
         assert_eq!(preferences.revision, 1);
         assert_eq!(preferences.updated_at, 11);
     }
@@ -192,7 +219,7 @@ mod tests {
     fn rejects_clock_regression() {
         let mut preferences = DesktopPreferences::default_at(10);
         assert_eq!(
-            preferences.set_keep_running_in_notification_area(false, 9),
+            preferences.update(false, DesktopUpdateChannel::Stable, 9),
             Err(DesktopPreferencesError::ClockRegression)
         );
     }

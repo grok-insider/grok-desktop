@@ -53,6 +53,7 @@ export class MockDesktopClient implements DesktopClient {
   private voiceSession: VoiceSession | undefined;
   private desktopPreferences: DesktopPreferences = {
     keepRunningInNotificationArea: true,
+    updateChannel: "stable",
     revision: 0,
     updatedAtUnixMs: 0,
   };
@@ -335,12 +336,14 @@ export class MockDesktopClient implements DesktopClient {
   async updateDesktopPreferences(input: {
     expectedRevision: number;
     keepRunningInNotificationArea: boolean;
+    updateChannel: "stable" | "beta";
   }): Promise<DesktopPreferences> {
     if (input.expectedRevision !== this.desktopPreferences.revision) {
       throw new Error("revision conflict");
     }
     this.desktopPreferences = {
       keepRunningInNotificationArea: input.keepRunningInNotificationArea,
+      updateChannel: input.updateChannel,
       revision: input.expectedRevision + 1,
       updatedAtUnixMs: Date.now(),
     };

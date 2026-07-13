@@ -8685,6 +8685,7 @@ mod tests {
         assert_eq!(initial.revision, 0);
 
         let input = UpdateDesktopPreferences {
+            update_channel: grok_domain::DesktopUpdateChannel::Stable,
             expected_revision: 0,
             keep_running_in_notification_area: false,
         };
@@ -8707,6 +8708,7 @@ mod tests {
             service
                 .update(
                     UpdateDesktopPreferences {
+                        update_channel: grok_domain::DesktopUpdateChannel::Stable,
                         keep_running_in_notification_area: true,
                         ..input
                     },

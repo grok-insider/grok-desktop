@@ -26,8 +26,9 @@ use grok_application::{
 };
 use grok_domain::{
     ApprovalId, ArtifactId, AutomationId, ConversationTurnId, ConversationTurnState,
-    HOST_ACKNOWLEDGMENT_VERSION, HostExecutionPolicy, HostToolClasses, MAX_HOST_EXECUTION_ROOTS,
-    MessageId, MissedRunPolicy, OverlapPolicy, ProjectId, RunId, ThreadId,
+    DesktopUpdateChannel, HOST_ACKNOWLEDGMENT_VERSION, HostExecutionPolicy, HostToolClasses,
+    MAX_HOST_EXECUTION_ROOTS, MessageId, MissedRunPolicy, OverlapPolicy, ProjectId, RunId,
+    ThreadId,
 };
 use grok_protocol::{
     ConversationRetryEligibility, EnvelopeError, PROTOCOL_VERSION, account_state_to_wire,
@@ -1891,6 +1892,15 @@ impl Daemon {
                 UpdateDesktopPreferences {
                     expected_revision: request.expected_revision,
                     keep_running_in_notification_area: request.keep_running_in_notification_area,
+                    update_channel: match request.update_channel.as_str() {
+                        "stable" => DesktopUpdateChannel::Stable,
+                        "beta" => DesktopUpdateChannel::Beta,
+                        _ => {
+                            return Err(ApplicationError::InvalidInput(
+                                "desktop update channel is invalid".into(),
+                            ));
+                        }
+                    },
                 },
                 mutation_key(key)?,
             )
@@ -5031,6 +5041,7 @@ mod tests {
 
         let operation =
             request::Operation::UpdateDesktopPreferences(v1::UpdateDesktopPreferencesRequest {
+                update_channel: "stable".into(),
                 expected_revision: 0,
                 keep_running_in_notification_area: false,
             });
@@ -5052,6 +5063,7 @@ mod tests {
         let conflict = daemon
             .handle(request(request::Operation::UpdateDesktopPreferences(
                 v1::UpdateDesktopPreferencesRequest {
+                    update_channel: "stable".into(),
                     expected_revision: 0,
                     keep_running_in_notification_area: true,
                 },

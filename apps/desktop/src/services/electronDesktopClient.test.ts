@@ -3273,7 +3273,12 @@ describe("ElectronDesktopClient", () => {
       if (request.kind === "daemon.getDesktopPreferences") {
         return {
           kind: "daemon.desktopPreferences",
-          preferences: { keepRunningInNotificationArea: true, revision: 0, updatedAtUnixMs: 1 },
+          preferences: {
+            keepRunningInNotificationArea: true,
+            updateChannel: "stable",
+            revision: 0,
+            updatedAtUnixMs: 1,
+          },
         };
       }
       if (request.kind === "daemon.updateDesktopPreferences") {
@@ -3286,6 +3291,7 @@ describe("ElectronDesktopClient", () => {
           kind: "daemon.desktopPreferences",
           preferences: {
             keepRunningInNotificationArea: request.keepRunningInNotificationArea,
+            updateChannel: request.updateChannel,
             revision: request.expectedRevision + 1,
             updatedAtUnixMs: 2,
           },
@@ -3299,7 +3305,11 @@ describe("ElectronDesktopClient", () => {
       keepRunningInNotificationArea: true,
       revision: 0,
     });
-    const update = { expectedRevision: 0, keepRunningInNotificationArea: false };
+    const update = {
+      expectedRevision: 0,
+      keepRunningInNotificationArea: false,
+      updateChannel: "beta" as const,
+    };
     await expect(client.updateDesktopPreferences(update)).rejects.toThrow("transport timed out");
     await expect(client.updateDesktopPreferences(update)).resolves.toMatchObject({
       keepRunningInNotificationArea: false,

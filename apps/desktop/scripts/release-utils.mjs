@@ -92,13 +92,24 @@ export function parseReleaseArguments(releaseArguments) {
   return { architecture: result["--arch"], channel: result["--channel"], stage: result["--stage"], out: result["--out"] };
 }
 
-export function normalizeMsixVersion(version) {
+export function normalizeMsixVersion(version, channel = "stable") {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
   if (!match) throw new Error("application version is not valid semantic versioning");
   const parts = match.slice(1, 4).map(Number);
   if (parts.some((part) => part > 65_535)) throw new Error("application version exceeds the MSIX component limit");
-  if (match[4]) throw new Error("prerelease versions require an explicit four-part release version");
-  return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
+  const prerelease = match[4];
+  if (channel === "stable") {
+    if (prerelease) throw new Error("stable releases cannot use a prerelease version");
+    return `${parts[0]}.${parts[1]}.${parts[2]}.65535`;
+  }
+  if (channel !== "beta" || !prerelease) {
+    throw new Error("beta releases require a prerelease version");
+  }
+  const ordinal = /(?:^|\.)(\d+)$/.exec(prerelease)?.[1];
+  if (!ordinal || Number(ordinal) < 1 || Number(ordinal) > 65_534) {
+    throw new Error("beta prerelease must end in an ordinal from 1 through 65534");
+  }
+  return `${parts[0]}.${parts[1]}.${parts[2]}.${Number(ordinal)}`;
 }
 
 export function readReleaseEnvironment(environment) {

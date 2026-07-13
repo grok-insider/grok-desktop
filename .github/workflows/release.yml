@@ -1,4 +1,4 @@
-name: Stable release
+name: Public release
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
 
 concurrency:
-  group: stable-release
+  group: public-release
   cancel-in-progress: false
 
 permissions:
@@ -32,7 +32,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify tag matches package version
         shell: bash
-        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "$GITHUB_REF_NAME" = "v$version"
+          channel=stable
+          [[ "$version" == *-* ]] && channel=beta
+          echo "RELEASE_CHANNEL=$channel" >> "$GITHUB_ENV"
       - run: pnpm build
       - name: Build native runtime with tracked official Grok pin
         shell: bash
@@ -71,7 +76,7 @@ jobs:
           chmod 700 "$RUNNER_TEMP/appimagetool.AppImage" "$RUNNER_TEMP/appimageupdatetool.AppImage"
       - name: Package updateable AppImage
         run: |
-          pnpm package:linux -- --arch x64 \
+          pnpm package:linux -- --arch x64 --channel "$RELEASE_CHANNEL" \
             --acp-pinned-manifest apps/desktop/release/components/grok-build/linux-x64.json \
             --acp-component "$RUNNER_TEMP/grok" \
             --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \
@@ -85,8 +90,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           path: |
-            out/release/linux/x64/GrokDesktop-stable-x64.AppImage
-            out/release/linux/x64/GrokDesktop-stable-x64.AppImage.zsync
+            out/release/linux/x64/GrokDesktop-*-x64.AppImage
+            out/release/linux/x64/GrokDesktop-*-x64.AppImage.zsync
             out/release/linux/x64/linux-package.json
             apps/desktop/release/components/grok-build/linux-x64.json
 
@@ -110,6 +115,9 @@ jobs:
         run: |
           if ($env:GITHUB_REF_NAME -ne "v$((Get-Content package.json | ConvertFrom-Json).version)") { throw "tag/version mismatch" }
           if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $channel = if ($version.Contains("-")) { "beta" } else { "stable" }
+          "RELEASE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: pnpm build
       - name: Build and stage source-pinned native runtime
         shell: pwsh
@@ -134,16 +142,16 @@ jobs:
         shell: pwsh
         run: |
           pnpm --filter @grok-desktop/desktop package:windows-core -- `
-            --arch x64 --channel stable --stage $env:CORE_STAGE
+            --arch x64 --channel $env:RELEASE_CHANNEL --stage $env:CORE_STAGE
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows-x64
           if-no-files-found: error
           retention-days: 3
           path: |
-            out/release/windows/stable/x64/GrokDesktop-stable-x64.msix
-            out/release/windows/stable/x64/GrokDesktop-stable-x64.appinstaller
-            out/release/windows/stable/x64/*.json
+            out/release/windows/*/x64/GrokDesktop-*-x64.msix
+            out/release/windows/*/x64/GrokDesktop-stable-x64.appinstaller
+            out/release/windows/*/x64/*.json
             apps/desktop/release/components/grok-build/windows-x64.json
 
   publish:
@@ -188,14 +196,26 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
+          channel=stable
+          native_version="${version}.65535"
+          if [[ "$version" == *-* ]]; then
+            channel=beta
+            core="${version%%-*}"
+            ordinal="${version##*.}"
+            [[ "$ordinal" =~ ^[1-9][0-9]*$ ]] && (( ordinal <= 65534 ))
+            native_version="${core}.${ordinal}"
+          fi
           for target in linux:x64:AppImage win32:x64:msix; do
             IFS=: read -r platform architecture extension <<< "$target"
-            artifact="release-assets/GrokDesktop-stable-$architecture.$extension"
-            manifest="release-assets/GrokDesktop-stable-$platform-$architecture.update.json"
+            native_package_version="$native_version"
+            [[ "$platform" == linux ]] && native_package_version="$version"
+            artifact="release-assets/GrokDesktop-$channel-$architecture.$extension"
+            manifest="release-assets/GrokDesktop-$channel-$platform-$architecture.update.json"
             pnpm --filter @grok-desktop/desktop release:update-manifest -- \
-              --artifact "$artifact" --architecture "$architecture" --channel stable \
+              --artifact "$artifact" --architecture "$architecture" --channel "$channel" \
               --key-id "$UPDATE_KEY_ID" --out "$manifest" --platform "$platform" \
               --private-key "$RUNNER_TEMP/update-private-key.pem" --version "$version" \
+              --native-package-version "$native_package_version" \
               --artifact-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/$(basename "$artifact")" \
               --release-notes-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/release-notes.md"
             pnpm --filter @grok-desktop/desktop release:verify-update-manifest -- \
@@ -209,6 +229,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           test "$(git tag --points-at HEAD)" = "$GITHUB_REF_NAME"
+          release_flags=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && release_flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo grok-insider/grok-desktop --title "Grok Desktop $GITHUB_REF_NAME" \
-            --notes-file release-assets/release-notes.md --verify-tag
+            --notes-file release-assets/release-notes.md --verify-tag "${release_flags[@]}"

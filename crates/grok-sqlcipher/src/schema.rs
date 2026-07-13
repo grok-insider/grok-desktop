@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 26;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 27;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -149,6 +149,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             24 => migrate_conversation_search_grant_v24(&transaction)?,
             25 => migrate_host_execution_v25(&transaction)?,
             26 => transaction.execute_batch(MIGRATION_26)?,
+            27 => transaction.execute_batch(MIGRATION_27)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -246,6 +247,13 @@ CREATE TABLE host_execution_commands (
   outcome_json TEXT NOT NULL CHECK (length(outcome_json) BETWEEN 2 AND 65536),
   PRIMARY KEY (scope, idempotency_key)
 ) STRICT;
+";
+
+const MIGRATION_27: &str = r"
+ALTER TABLE desktop_preferences
+ADD COLUMN update_channel INTEGER NOT NULL DEFAULT 0 CHECK (update_channel BETWEEN 0 AND 1);
+ALTER TABLE desktop_preference_commands
+ADD COLUMN update_channel INTEGER NOT NULL DEFAULT 0 CHECK (update_channel BETWEEN 0 AND 1);
 ";
 
 // Bind a canonical model to each conversation thread. Existing threads are
@@ -4084,7 +4092,9 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
                  DROP TABLE IF EXISTS host_execution_commands;
-                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24,25,26);
+                 ALTER TABLE desktop_preferences DROP COLUMN update_channel;
+                 ALTER TABLE desktop_preference_commands DROP COLUMN update_channel;
+                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24,25,26,27);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4143,7 +4153,7 @@ mod tests {
                      WHERE new.state=0;
                  END;
                  DROP TABLE IF EXISTS host_execution_commands;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25,26);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25,26,27);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4168,7 +4178,7 @@ mod tests {
                  DROP TABLE artifact_removal_commands;
                  DROP TABLE artifact_version_retention;
                  DROP TABLE IF EXISTS host_execution_commands;
-                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24,25,26);
+                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24,25,26,27);
                  PRAGMA user_version=17;
                  PRAGMA foreign_keys=ON;",
             )
@@ -5395,7 +5405,7 @@ mod tests {
                      WHERE new.state=0;
                  END;
                  DROP TABLE IF EXISTS host_execution_commands;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25,26);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25,26,27);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;
 
@@ -5440,7 +5450,7 @@ mod tests {
                  END;
 
                  DROP TABLE IF EXISTS host_execution_commands;
-                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24,25,26);
+                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24,25,26,27);
                  PRAGMA user_version=15;
                  CREATE TRIGGER block_artifact_search_rebuild
                  BEFORE INSERT ON search_documents WHEN new.kind='artifact' BEGIN
@@ -7302,5 +7312,36 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn migration_twenty_seven_adds_stable_update_channel_and_restarts_once() {
+        let (directory, connection) = open_test_database(61);
+        connection
+            .execute_batch(
+                "ALTER TABLE desktop_preferences DROP COLUMN update_channel;
+                 ALTER TABLE desktop_preference_commands DROP COLUMN update_channel;
+                 DELETE FROM schema_migrations WHERE version=27;
+                 PRAGMA user_version=26;",
+            )
+            .expect("construct schema twenty-six fixture");
+        drop(connection);
+
+        let key = DatabaseKey::from_slice(&[61; 32]).expect("key");
+        let path = directory.path().join("state.db");
+        let migrated = open_encrypted(&path, &key).expect("migrate update channel");
+        let channel: i64 = migrated
+            .query_row(
+                "SELECT update_channel FROM desktop_preferences WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("stable channel default");
+        assert_eq!(channel, 0);
+        assert_eq!(migration_history_count(&migrated, 27), 1);
+        drop(migrated);
+
+        let restarted = open_encrypted(&path, &key).expect("restart migrated database");
+        assert_eq!(migration_history_count(&restarted, 27), 1);
     }
 }

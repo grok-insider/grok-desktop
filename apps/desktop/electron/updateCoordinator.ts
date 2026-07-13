@@ -13,7 +13,7 @@ export interface DesktopUpdateState {
   phase: DesktopUpdatePhase;
   currentVersion: string;
   targetVersion: string;
-  channel: "stable";
+  channel: "stable" | "beta";
   checkedAtUnixMs: number;
   reasonCode: "" | "development_install" | "platform_unsupported" | "check_failed";
 }
@@ -40,6 +40,7 @@ export class UpdateCoordinator {
   private readonly restart: (() => void) | undefined;
   private readonly authorizer: UpdateAuthorizer | undefined;
   private authorizedVersion = "";
+  private channelGeneration = 0;
 
   constructor(
     private readonly updater: NativeAutoUpdater | undefined,
@@ -51,6 +52,7 @@ export class UpdateCoordinator {
       linuxUpdater?: LinuxAppImageUpdater;
       restart?: () => void;
       authorizer?: UpdateAuthorizer;
+      channel?: "stable" | "beta";
     },
   ) {
     this.linuxUpdater = options.linuxUpdater;
@@ -65,23 +67,32 @@ export class UpdateCoordinator {
       phase: supported ? "idle" : "unsupported",
       currentVersion: options.version,
       targetVersion: "",
-      channel: "stable",
+      channel: options.channel ?? "stable",
       checkedAtUnixMs: 0,
       reasonCode: options.packaged ? "platform_unsupported" : "development_install",
     };
     if (!supported) return;
     this.state.reasonCode = "";
-    if (updater && options.platform === "win32") {
-      updater.setFeedURL({
-        url: `https://github.com/grok-insider/grok-desktop/releases/latest/download/GrokDesktop-stable-${options.architecture}.msix`,
-        allowAnyVersion: false,
-      });
-      this.bindEvents(updater);
-    }
+    if (updater && options.platform === "win32") this.bindEvents(updater);
   }
 
   getState(): DesktopUpdateState {
     return structuredClone(this.state);
+  }
+
+  setChannel(channel: "stable" | "beta"): DesktopUpdateState {
+    if (channel === this.state.channel) return this.getState();
+    this.channelGeneration += 1;
+    this.authorizedVersion = "";
+    this.state = {
+      ...this.state,
+      phase: this.state.phase === "unsupported" ? "unsupported" : "idle",
+      channel,
+      targetVersion: "",
+      checkedAtUnixMs: 0,
+      reasonCode: this.state.phase === "unsupported" ? this.state.reasonCode : "",
+    };
+    return this.getState();
   }
 
   start(): void {
@@ -109,7 +120,9 @@ export class UpdateCoordinator {
     }
     if (this.state.phase === "checking" || this.state.phase === "available") return this.getState();
     this.state = { ...this.state, phase: "checking", reasonCode: "" };
-    void this.authorizer.authorize().then((authorized) => {
+    const generation = this.channelGeneration;
+    void this.authorizer.authorize(this.state.channel).then((authorized) => {
+      if (generation !== this.channelGeneration) return;
       if (!authorized.available) {
         this.state = {
           ...this.state,
@@ -124,6 +137,7 @@ export class UpdateCoordinator {
       this.state = { ...this.state, phase: "available", targetVersion: authorized.version, reasonCode: "" };
       if (this.linuxUpdater) {
         void this.linuxUpdater.download(authorized.artifact).then((changed) => {
+          if (generation !== this.channelGeneration) return;
           this.state = {
             ...this.state,
             phase: changed ? "downloaded" : "not_available",
@@ -131,15 +145,20 @@ export class UpdateCoordinator {
             targetVersion: changed ? authorized.version : "",
             reasonCode: "",
           };
-        }, () => this.fail());
+        }, () => {
+          if (generation === this.channelGeneration) this.fail();
+        });
         return;
       }
       try {
+        this.updater?.setFeedURL({ url: authorized.artifact.url, allowAnyVersion: false });
         this.updater?.checkForUpdates();
       } catch {
         this.fail();
       }
-    }, () => this.fail());
+    }, () => {
+      if (generation === this.channelGeneration) this.fail();
+    });
     return this.getState();
   }
 

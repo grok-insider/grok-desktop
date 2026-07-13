@@ -228,10 +228,7 @@ async fn oversized_privileged_recovery_blocks_ipc_then_later_startup_finishes_wi
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr)
     );
-    assert!(
-        diagnostics
-            .contains("privileged-operation recovery backlog exceeds the bounded startup pass")
-    );
+    assert!(diagnostics.contains("privileged_operation_recovery_backlog"));
     assert!(!diagnostics.contains("daemon development transport ready"));
     assert!(TcpStream::connect(address).await.is_err());
 

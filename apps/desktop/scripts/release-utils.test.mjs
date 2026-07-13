@@ -57,8 +57,9 @@ const signerThumbprint = "0123456789ABCDEF0123456789ABCDEF01234567";
 const acpNow = 1_800_000_000;
 
 test("normalizes versions and parses explicit release targets", () => {
-  assert.equal(normalizeMsixVersion("12.34.56"), "12.34.56.0");
-  assert.throws(() => normalizeMsixVersion("1.2.3-beta.1"), /prerelease/);
+  assert.equal(normalizeMsixVersion("12.34.56"), "12.34.56.65535");
+  assert.equal(normalizeMsixVersion("1.2.3-beta.7", "beta"), "1.2.3.7");
+  assert.throws(() => normalizeMsixVersion("1.2.3-beta.1"), /stable/);
   assert.throws(() => normalizeMsixVersion("1.70000.0"), /component limit/);
   assert.deepEqual(parseReleaseArguments(["--arch", "arm64", "--channel", "stable"]), {
     architecture: "arm64", channel: "stable", stage: undefined, out: undefined,

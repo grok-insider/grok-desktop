@@ -39,7 +39,7 @@ import {
 } from "../generated/daemon/v1/daemon.js";
 
 // Epoch twenty-eight adds bounded durable Host Work activity reload.
-export const PROTOCOL_VERSION = 28;
+export const PROTOCOL_VERSION = 29;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const AGENT_ROLE_SWITCH_TIMEOUT_MS = 45_000;
@@ -1081,13 +1081,14 @@ export class DaemonProtocolClient {
   async updateDesktopPreferences(
     expectedRevision: bigint,
     keepRunningInNotificationArea: boolean,
+    updateChannel: "stable" | "beta",
     idempotencyKey: string,
   ): Promise<DesktopPreferences> {
     return expectResult(
       await this.rpc.request(
         {
           $case: "updateDesktopPreferences",
-          value: { expectedRevision, keepRunningInNotificationArea },
+          value: { expectedRevision, keepRunningInNotificationArea, updateChannel },
         },
         idempotencyKey,
       ),

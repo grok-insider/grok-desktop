@@ -99,6 +99,9 @@ preview command fails closed instead of loading interactive sample data.
 `package-linux.mjs` always supports a daemon-only Limited Mode package. Its
 product-only inputs are all-or-nothing:
 
+- `--channel stable|beta` selects the immutable public artifact name. Signed
+  manifests authorize the exact AppImage URL, size, and digest at runtime.
+
 - `--acp-catalog`, `--acp-component`, and `--acp-trust-file` stage the official
   signed Linux Grok Build component without changing its bytes.
 - `--acp-pinned-manifest` and `--acp-component` stage the exact tracked xAI

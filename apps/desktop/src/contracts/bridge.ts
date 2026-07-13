@@ -292,6 +292,7 @@ export interface DaemonAccountState {
 
 export interface DaemonDesktopPreferences {
   keepRunningInNotificationArea: boolean;
+  updateChannel: "stable" | "beta";
   revision: number;
   updatedAtUnixMs: number;
 }
@@ -452,7 +453,7 @@ export interface DesktopUpdateState {
   phase: "unsupported" | "idle" | "checking" | "available" | "downloaded" | "not_available" | "failed";
   currentVersion: string;
   targetVersion: string;
-  channel: "stable";
+  channel: "stable" | "beta";
   checkedAtUnixMs: number;
   reasonCode: "" | "development_install" | "platform_unsupported" | "check_failed";
 }
@@ -509,7 +510,7 @@ export type BridgeRequest =
     }
   | { kind: "daemon.cancelHostWork"; runId: string; idempotencyKey: string }
   | { kind: "daemon.listHostWorkRuns"; limit: number }
-  | { kind: "daemon.updateDesktopPreferences"; expectedRevision: number; keepRunningInNotificationArea: boolean; idempotencyKey: string }
+  | { kind: "daemon.updateDesktopPreferences"; expectedRevision: number; keepRunningInNotificationArea: boolean; updateChannel: "stable" | "beta"; idempotencyKey: string }
   | { kind: "daemon.getChatModelCatalog" }
   | {
       kind: "daemon.getUsageSummary";

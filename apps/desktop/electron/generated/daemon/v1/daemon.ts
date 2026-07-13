@@ -704,12 +704,14 @@ export interface GetDesktopPreferencesRequest {
 export interface UpdateDesktopPreferencesRequest {
   expectedRevision: bigint;
   keepRunningInNotificationArea: boolean;
+  updateChannel: string;
 }
 
 export interface DesktopPreferences {
   keepRunningInNotificationArea: boolean;
   revision: bigint;
   updatedAtUnixMs: bigint;
+  updateChannel: string;
 }
 
 export interface GetChatModelCatalogRequest {
@@ -6329,7 +6331,7 @@ export const GetDesktopPreferencesRequest: MessageFns<GetDesktopPreferencesReque
 };
 
 function createBaseUpdateDesktopPreferencesRequest(): UpdateDesktopPreferencesRequest {
-  return { expectedRevision: 0n, keepRunningInNotificationArea: false };
+  return { expectedRevision: 0n, keepRunningInNotificationArea: false, updateChannel: "" };
 }
 
 export const UpdateDesktopPreferencesRequest: MessageFns<UpdateDesktopPreferencesRequest> = {
@@ -6342,6 +6344,9 @@ export const UpdateDesktopPreferencesRequest: MessageFns<UpdateDesktopPreference
     }
     if (message.keepRunningInNotificationArea !== false) {
       writer.uint32(16).bool(message.keepRunningInNotificationArea);
+    }
+    if (message.updateChannel !== "") {
+      writer.uint32(26).string(message.updateChannel);
     }
     return writer;
   },
@@ -6369,6 +6374,14 @@ export const UpdateDesktopPreferencesRequest: MessageFns<UpdateDesktopPreference
           message.keepRunningInNotificationArea = reader.bool();
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.updateChannel = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -6387,12 +6400,13 @@ export const UpdateDesktopPreferencesRequest: MessageFns<UpdateDesktopPreference
       ? BigInt(object.expectedRevision)
       : 0n;
     message.keepRunningInNotificationArea = object.keepRunningInNotificationArea ?? false;
+    message.updateChannel = object.updateChannel ?? "";
     return message;
   },
 };
 
 function createBaseDesktopPreferences(): DesktopPreferences {
-  return { keepRunningInNotificationArea: false, revision: 0n, updatedAtUnixMs: 0n };
+  return { keepRunningInNotificationArea: false, revision: 0n, updatedAtUnixMs: 0n, updateChannel: "" };
 }
 
 export const DesktopPreferences: MessageFns<DesktopPreferences> = {
@@ -6411,6 +6425,9 @@ export const DesktopPreferences: MessageFns<DesktopPreferences> = {
         throw new globalThis.Error("value provided for field message.updatedAtUnixMs of type uint64 too large");
       }
       writer.uint32(24).uint64(message.updatedAtUnixMs);
+    }
+    if (message.updateChannel !== "") {
+      writer.uint32(34).string(message.updateChannel);
     }
     return writer;
   },
@@ -6446,6 +6463,14 @@ export const DesktopPreferences: MessageFns<DesktopPreferences> = {
           message.updatedAtUnixMs = reader.uint64() as bigint;
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.updateChannel = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -6465,6 +6490,7 @@ export const DesktopPreferences: MessageFns<DesktopPreferences> = {
     message.updatedAtUnixMs = (object.updatedAtUnixMs !== undefined && object.updatedAtUnixMs !== null)
       ? BigInt(object.updatedAtUnixMs)
       : 0n;
+    message.updateChannel = object.updateChannel ?? "";
     return message;
   },
 };

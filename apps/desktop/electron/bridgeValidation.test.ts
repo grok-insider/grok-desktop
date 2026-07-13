@@ -650,23 +650,34 @@ describe("parseBridgeRequest", () => {
       kind: "daemon.updateDesktopPreferences",
       expectedRevision: 2,
       keepRunningInNotificationArea: false,
+      updateChannel: "beta",
       idempotencyKey: "desktop-preference-1",
     })).toEqual({
       kind: "daemon.updateDesktopPreferences",
       expectedRevision: 2,
       keepRunningInNotificationArea: false,
+      updateChannel: "beta",
       idempotencyKey: "desktop-preference-1",
     });
     expect(() => parseBridgeRequest({
       kind: "daemon.updateDesktopPreferences",
       expectedRevision: -1,
       keepRunningInNotificationArea: false,
+      updateChannel: "stable",
       idempotencyKey: "desktop-preference-2",
     })).toThrow("desktop preference revision must be a non-negative safe integer");
     expect(() => parseBridgeRequest({
       kind: "daemon.updateDesktopPreferences",
+      expectedRevision: 2,
+      keepRunningInNotificationArea: false,
+      updateChannel: "nightly",
+      idempotencyKey: "desktop-preference-channel",
+    })).toThrow("invalid desktop update channel");
+    expect(() => parseBridgeRequest({
+      kind: "daemon.updateDesktopPreferences",
       expectedRevision: 0,
       keepRunningInNotificationArea: false,
+      updateChannel: "stable",
       localPath: "/tmp/preferences.json",
       idempotencyKey: "desktop-preference-3",
     })).toThrow("desktop preference request contains unsupported fields");

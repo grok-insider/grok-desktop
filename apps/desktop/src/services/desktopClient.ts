@@ -400,6 +400,7 @@ export interface DesktopSnapshot {
 
 export interface DesktopPreferences {
   keepRunningInNotificationArea: boolean;
+  updateChannel: "stable" | "beta";
   revision: number;
   updatedAtUnixMs: number;
 }
@@ -477,7 +478,7 @@ export interface UpdateState {
   phase: "unsupported" | "idle" | "checking" | "available" | "downloaded" | "not_available" | "failed";
   currentVersion: string;
   targetVersion: string;
-  channel: "stable";
+  channel: "stable" | "beta";
   checkedAtUnixMs: number;
   reasonCode: "" | "development_install" | "platform_unsupported" | "check_failed";
 }
@@ -513,7 +514,7 @@ export interface DesktopClient {
   deactivateHostWorkRuntime(): Promise<HostExecutionPolicy>;
   cancelHostWork(runId: string): Promise<void>;
   decideHostWorkApproval(input: { approvalId: string; expectedRevision: number; approved: boolean }): Promise<void>;
-  updateDesktopPreferences(input: { expectedRevision: number; keepRunningInNotificationArea: boolean }): Promise<DesktopPreferences>;
+  updateDesktopPreferences(input: { expectedRevision: number; keepRunningInNotificationArea: boolean; updateChannel: "stable" | "beta" }): Promise<DesktopPreferences>;
   getChatModelCatalog(): Promise<ChatModelCatalog>;
   getUsageSummary(input: GetUsageSummaryInput): Promise<UsageSummary>;
   getUpdateState(): Promise<UpdateState>;

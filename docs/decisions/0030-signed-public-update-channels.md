@@ -17,14 +17,20 @@ authority.
   artifact origin.
 - Every platform, architecture, and channel has a canonical schema-versioned
   manifest signed with an offline Ed25519 release key. Applications embed only
-  public trust roots.
+  public trust roots. Manifest schema 2 binds both the semantic application
+  version and the platform-native package version.
 - Stable manifests reject prerelease versions. Unknown fields, unknown keys,
   invalid signatures, unsupported channels, noncanonical URLs, and invalid
   bounds fail closed before download.
-- Windows retains one signed MSIX identity and publisher. Linux publishes a
-  signed AppImage update path. Platform installation remains Electron-main
+- Windows retains one signed MSIX identity and publisher. Linux downloads the
+  exact AppImage URL authorized by the signed manifest and verifies its size and
+  digest before atomic replacement. Platform installation remains Electron-main
   owned; the renderer receives bounded state and commands only.
-- Downgrades and remote channel switches are unsupported. A future key rotation
+- Stable is the default. A user may opt into beta in Settings; this preference
+  is revisioned and persisted by the daemon. Stable discovery uses the latest
+  release, while beta discovery considers bounded GitHub prereleases and still
+  requires an exact signed beta manifest. Renderers cannot provide feed URLs.
+- Downgrades and remotely initiated channel switches are unsupported. A future key rotation
   requires an application release that trusts the new public key before the old
   key is removed.
 

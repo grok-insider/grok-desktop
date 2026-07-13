@@ -47,23 +47,38 @@ describe("UpdateCoordinator", () => {
     }).getState()).toMatchObject({ phase: "unsupported", reasonCode: "platform_unsupported" });
   });
 
-  it("uses only the fixed stable MSIX feed and never enables downgrade", async () => {
+  it("sets only the signed authorized MSIX feed and never enables downgrade", async () => {
     const updater = new FakeUpdater();
     const coordinator = new UpdateCoordinator(updater, {
       packaged: true, platform: "win32", architecture: "arm64", version: "1.0.0",
       authorizer: authorizer(),
     });
-    expect(updater.setFeedURL).toHaveBeenCalledWith({
-      url: "https://github.com/grok-insider/grok-desktop/releases/latest/download/GrokDesktop-stable-arm64.msix",
-      allowAnyVersion: false,
-    });
+    expect(updater.setFeedURL).not.toHaveBeenCalled();
     coordinator.check();
     await vi.waitFor(() => expect(updater.checkForUpdates).toHaveBeenCalledOnce());
+    expect(updater.setFeedURL).toHaveBeenCalledWith({
+      url: authorizedUpdate.artifact.url,
+      allowAnyVersion: false,
+    });
     updater.emit("update-available", { version: "1.1.0" });
     expect(coordinator.getState()).toMatchObject({ phase: "available", targetVersion: "1.1.0" });
     updater.emit("update-downloaded", {}, "1.1.0");
     expect(coordinator.install()).toBe(true);
     expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("persists channel semantics through authorization and resets stale state when changed", async () => {
+    const updater = new FakeUpdater();
+    const authorize = vi.fn(async () => authorizedUpdate);
+    const coordinator = new UpdateCoordinator(updater, {
+      packaged: true, platform: "win32", architecture: "x64", version: "1.0.0",
+      channel: "beta", authorizer: { authorize },
+    });
+    coordinator.check();
+    await vi.waitFor(() => expect(authorize).toHaveBeenCalledWith("beta"));
+    expect(coordinator.setChannel("stable")).toMatchObject({
+      channel: "stable", phase: "idle", targetVersion: "",
+    });
   });
 
   it("bounds failures without exposing native error details", async () => {

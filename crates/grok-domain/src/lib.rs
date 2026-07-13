@@ -51,7 +51,7 @@ pub use id::{
 };
 pub use preferences::{
     ChatModelPreference, ChatModelPreferenceError, DEFAULT_XAI_CHAT_MODEL_ID, DesktopPreferences,
-    DesktopPreferencesError,
+    DesktopPreferencesError, DesktopUpdateChannel,
 };
 pub use privileged_operation::{
     AuthorityGrantId, PayloadDigest, PrivilegedAuthority, PrivilegedIdempotency,

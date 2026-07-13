@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use grok_application::{DesktopPreferencesStore, MutationCommand, StoreError};
-use grok_domain::DesktopPreferences;
+use grok_domain::{DesktopPreferences, DesktopUpdateChannel};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{
@@ -50,12 +50,14 @@ impl DesktopPreferencesStore for SqlCipherStore {
             let changed = transaction
                 .execute(
                     "UPDATE desktop_preferences
-                     SET keep_running_in_notification_area=?1, revision=?2, updated_at=?3
-                     WHERE singleton=1 AND revision=?4",
+                     SET keep_running_in_notification_area=?1, revision=?2,
+                         updated_at=?3, update_channel=?4
+                     WHERE singleton=1 AND revision=?5",
                     params![
                         i64::from(preferences.keep_running_in_notification_area),
                         number(preferences.revision)?,
                         number(preferences.updated_at)?,
+                        update_channel_number(preferences.update_channel),
                         number(expected_revision)?,
                     ],
                 )
@@ -67,8 +69,8 @@ impl DesktopPreferencesStore for SqlCipherStore {
                 .execute(
                     "INSERT INTO desktop_preference_commands(
                          scope,idempotency_key,request_fingerprint,
-                         keep_running_in_notification_area,revision,updated_at
-                     ) VALUES (?1,?2,?3,?4,?5,?6)",
+                         keep_running_in_notification_area,revision,updated_at,update_channel
+                     ) VALUES (?1,?2,?3,?4,?5,?6,?7)",
                     params![
                         command.scope,
                         command.key,
@@ -76,6 +78,7 @@ impl DesktopPreferencesStore for SqlCipherStore {
                         i64::from(preferences.keep_running_in_notification_area),
                         number(preferences.revision)?,
                         number(preferences.updated_at)?,
+                        update_channel_number(preferences.update_channel),
                     ],
                 )
                 .map_err(map_sqlite)?;
@@ -89,10 +92,10 @@ impl DesktopPreferencesStore for SqlCipherStore {
 fn load_preferences(connection: &mut Connection) -> Result<DesktopPreferences, StoreError> {
     connection
         .query_row(
-            "SELECT keep_running_in_notification_area,revision,updated_at
+            "SELECT keep_running_in_notification_area,revision,updated_at,update_channel
              FROM desktop_preferences WHERE singleton=1",
             [],
-            |row| preference_from_row(row.get(0)?, row.get(1)?, row.get(2)?),
+            |row| preference_from_row(row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?),
         )
         .map_err(map_sqlite)
 }
@@ -103,7 +106,7 @@ fn prior_mutation(
 ) -> Result<Option<DesktopPreferences>, StoreError> {
     let record = connection
         .query_row(
-            "SELECT request_fingerprint,keep_running_in_notification_area,revision,updated_at
+            "SELECT request_fingerprint,keep_running_in_notification_area,revision,updated_at,update_channel
              FROM desktop_preference_commands WHERE scope=?1 AND idempotency_key=?2",
             params![command.scope, command.key],
             |row| {
@@ -112,19 +115,21 @@ fn prior_mutation(
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
             },
         )
         .optional()
         .map_err(map_sqlite)?;
-    let Some((fingerprint, keep_running, revision, updated_at)) = record else {
+    let Some((fingerprint, keep_running, revision, updated_at, update_channel)) = record else {
         return Ok(None);
     };
     if fingerprint.as_slice() != command.fingerprint {
         return Err(StoreError::Conflict);
     }
     Ok(Some(
-        preference_from_row(keep_running, revision, updated_at).map_err(map_sqlite)?,
+        preference_from_row(keep_running, revision, updated_at, update_channel)
+            .map_err(map_sqlite)?,
     ))
 }
 
@@ -132,17 +137,31 @@ fn preference_from_row(
     keep_running: i64,
     revision: i64,
     updated_at: i64,
+    update_channel: i64,
 ) -> rusqlite::Result<DesktopPreferences> {
     let keep_running_in_notification_area = match keep_running {
         0 => false,
         1 => true,
         _ => return Err(rusqlite::Error::IntegralValueOutOfRange(0, keep_running)),
     };
+    let update_channel = match update_channel {
+        0 => DesktopUpdateChannel::Stable,
+        1 => DesktopUpdateChannel::Beta,
+        value => return Err(rusqlite::Error::IntegralValueOutOfRange(3, value)),
+    };
     Ok(DesktopPreferences {
         keep_running_in_notification_area,
+        update_channel,
         revision: u64::try_from(revision)
             .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, revision))?,
         updated_at: u64::try_from(updated_at)
             .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, updated_at))?,
     })
+}
+
+const fn update_channel_number(value: DesktopUpdateChannel) -> i64 {
+    match value {
+        DesktopUpdateChannel::Stable => 0,
+        DesktopUpdateChannel::Beta => 1,
+    }
 }

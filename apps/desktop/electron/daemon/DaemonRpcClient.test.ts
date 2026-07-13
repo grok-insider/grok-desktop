@@ -1064,12 +1064,12 @@ describe("DaemonRpcClient", () => {
   it("sends revisioned desktop preference updates with an idempotency key", async () => {
     const stream = new FakeDuplex();
     const protocol = client(stream);
-    const updated = protocol.updateDesktopPreferences(2n, false, "desktop-preference-1");
+    const updated = protocol.updateDesktopPreferences(2n, false, "beta", "desktop-preference-1");
     const request = decodeFrame(await stream.nextWrite());
     expect(request.idempotencyKey).toBe("desktop-preference-1");
     expect(request.payload?.$case === "request" && request.payload.value.operation).toMatchObject({
       $case: "updateDesktopPreferences",
-      value: { expectedRevision: 2n, keepRunningInNotificationArea: false },
+      value: { expectedRevision: 2n, keepRunningInNotificationArea: false, updateChannel: "beta" },
     });
     stream.receive(encodeFrame({
       protocolVersion: PROTOCOL_VERSION,
@@ -1084,6 +1084,7 @@ describe("DaemonRpcClient", () => {
             $case: "desktopPreferences",
             value: {
               keepRunningInNotificationArea: false,
+              updateChannel: "beta",
               revision: 3n,
               updatedAtUnixMs: 10n,
             },
@@ -1094,6 +1095,7 @@ describe("DaemonRpcClient", () => {
 
     await expect(updated).resolves.toEqual({
       keepRunningInNotificationArea: false,
+      updateChannel: "beta",
       revision: 3n,
       updatedAtUnixMs: 10n,
     });

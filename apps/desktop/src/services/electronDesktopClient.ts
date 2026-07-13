@@ -173,6 +173,7 @@ export class ElectronDesktopClient implements DesktopClient {
   private desktopPreferenceMutation: {
     expectedRevision: number;
     keepRunningInNotificationArea: boolean;
+    updateChannel: "stable" | "beta";
     idempotencyKey: string;
   } | undefined;
   private chatModelMutation: {
@@ -654,12 +655,14 @@ export class ElectronDesktopClient implements DesktopClient {
   async updateDesktopPreferences(input: {
     expectedRevision: number;
     keepRunningInNotificationArea: boolean;
+    updateChannel: "stable" | "beta";
   }): Promise<DesktopPreferences> {
     await this.ensureBootstrap();
     const pending = this.desktopPreferenceMutation;
     const mutation = pending
       && pending.expectedRevision === input.expectedRevision
       && pending.keepRunningInNotificationArea === input.keepRunningInNotificationArea
+      && pending.updateChannel === input.updateChannel
       ? pending
       : {
           ...input,
@@ -670,6 +673,7 @@ export class ElectronDesktopClient implements DesktopClient {
       kind: "daemon.updateDesktopPreferences",
       expectedRevision: input.expectedRevision,
       keepRunningInNotificationArea: input.keepRunningInNotificationArea,
+      updateChannel: input.updateChannel,
       idempotencyKey: mutation.idempotencyKey,
     });
     if (response.kind !== "daemon.desktopPreferences") {
@@ -2257,7 +2261,8 @@ function mapUpdateState(value: DesktopUpdateState): UpdateState {
   const reasons = new Set<UpdateState["reasonCode"]>([
     "", "development_install", "platform_unsupported", "check_failed",
   ]);
-  if (!phases.has(value.phase) || !reasons.has(value.reasonCode) || value.channel !== "stable"
+  if (!phases.has(value.phase) || !reasons.has(value.reasonCode)
+      || (value.channel !== "stable" && value.channel !== "beta")
       || typeof value.currentVersion !== "string" || value.currentVersion.length > 64
       || typeof value.targetVersion !== "string" || value.targetVersion.length > 64
       || !Number.isSafeInteger(value.checkedAtUnixMs) || value.checkedAtUnixMs < 0) {
@@ -2269,6 +2274,7 @@ function mapUpdateState(value: DesktopUpdateState): UpdateState {
 function mapDesktopPreferences(value: DaemonDesktopPreferences): DesktopPreferences {
   return {
     keepRunningInNotificationArea: value.keepRunningInNotificationArea,
+    updateChannel: value.updateChannel,
     revision: value.revision,
     updatedAtUnixMs: value.updatedAtUnixMs,
   };

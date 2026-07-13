@@ -116,11 +116,12 @@ pub const fn account_state_to_wire(value: AccountState) -> v1::AccountState {
 
 /// Converts daemon-owned desktop behavior to its wire form.
 #[must_use]
-pub const fn desktop_preferences_to_wire(value: &DesktopPreferences) -> v1::DesktopPreferences {
+pub fn desktop_preferences_to_wire(value: &DesktopPreferences) -> v1::DesktopPreferences {
     v1::DesktopPreferences {
         keep_running_in_notification_area: value.keep_running_in_notification_area,
         revision: value.revision,
         updated_at_unix_ms: value.updated_at,
+        update_channel: value.update_channel.as_str().into(),
     }
 }
 

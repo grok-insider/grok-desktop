@@ -15,15 +15,20 @@ export class LinuxAppImageUpdateRunner {
     private readonly spawnProcess: SpawnProcess = spawn,
   ) {}
 
-  async download(expected?: { size: number; sha256: string }): Promise<boolean> {
+  async download(expected?: { url?: string; size: number; sha256: string }): Promise<boolean> {
     const backupPath = `${this.appImagePath}.grok-update-backup`;
+    const downloadPath = `${this.appImagePath}.grok-update-download`;
     await restoreInterruptedBackup(backupPath, this.appImagePath);
     await assertExecutable(this.helperPath, "AppImage update helper");
     await assertExecutable(this.appImagePath, "running AppImage");
     const before = await fingerprint(this.appImagePath);
     await copyFile(this.appImagePath, backupPath, fsConstants.COPYFILE_EXCL);
     try {
-      await new Promise<void>((resolve, reject) => {
+      if (expected?.url) {
+        await downloadSignedArtifact(expected, downloadPath);
+        await rename(downloadPath, this.appImagePath);
+      } else {
+        await new Promise<void>((resolve, reject) => {
         const child = this.spawnProcess(
           this.helperPath,
           ["--appimage-extract-and-run", "--overwrite", this.appImagePath],
@@ -39,7 +44,8 @@ export class LinuxAppImageUpdateRunner {
           if (code === 0 && signal === null) resolve();
           else reject(new Error("AppImage update helper failed"));
         });
-      });
+        });
+      }
       await assertExecutable(this.appImagePath, "updated AppImage");
       const after = await fingerprint(this.appImagePath);
       if (expected) {
@@ -51,9 +57,53 @@ export class LinuxAppImageUpdateRunner {
       await rm(backupPath);
       return before !== after;
     } catch (error) {
+      await rm(downloadPath, { force: true });
       await rename(backupPath, this.appImagePath);
       throw error;
     }
+  }
+}
+
+async function downloadSignedArtifact(
+  expected: { url?: string; size: number; sha256: string },
+  destination: string,
+): Promise<void> {
+  if (!expected.url || !Number.isSafeInteger(expected.size) || expected.size < 1
+      || expected.size > MAX_APPIMAGE_BYTES || !/^[a-f0-9]{64}$/.test(expected.sha256)) {
+    throw new Error("signed AppImage update metadata is invalid");
+  }
+  const url = new URL(expected.url);
+  if (url.origin !== "https://github.com"
+      || !url.pathname.startsWith("/grok-insider/grok-desktop/releases/download/")
+      || url.search || url.hash || url.username || url.password) {
+    throw new Error("signed AppImage update URL is invalid");
+  }
+  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+  if (!response.ok || !response.body) throw new Error("signed AppImage update is unavailable");
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared !== expected.size) {
+    throw new Error("signed AppImage update size is invalid");
+  }
+  const handle = await open(destination, "wx", 0o700);
+  const hash = createHash("sha256");
+  let written = 0;
+  try {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      written += value.byteLength;
+      if (written > expected.size) throw new Error("signed AppImage update is too large");
+      hash.update(value);
+      await handle.write(value);
+    }
+    if (written !== expected.size || hash.digest("hex") !== expected.sha256) {
+      throw new Error("signed AppImage update does not match the manifest");
+    }
+    await handle.sync();
+    await handle.chmod(0o700);
+  } finally {
+    await handle.close();
   }
 }
 

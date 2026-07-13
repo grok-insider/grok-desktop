@@ -344,6 +344,7 @@ describe("Grok Desktop shell", () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith({
       expectedRevision: 0,
       keepRunningInNotificationArea: false,
+      updateChannel: "stable",
     }));
     await waitFor(() => expect(toggle).not.toBeChecked());
   });

@@ -2,7 +2,7 @@ import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
@@ -13,10 +13,42 @@ export interface AuthorizedUpdate {
 }
 
 export interface UpdateAuthorizer {
-  authorize(): Promise<AuthorizedUpdate>;
+  authorize(channel: "stable" | "beta"): Promise<AuthorizedUpdate>;
 }
 
 type FetchBytes = (url: string) => Promise<Uint8Array>;
+
+async function discoverBetaManifest(assetName: string, fetchBytes: FetchBytes): Promise<string> {
+  const bytes = await fetchBytes(
+    "https://api.github.com/repos/grok-insider/grok-desktop/releases?per_page=20",
+  );
+  if (bytes.byteLength < 1 || bytes.byteLength > MAX_MANIFEST_BYTES) {
+    throw new Error("beta release discovery is unavailable");
+  }
+  let releases: unknown;
+  try { releases = JSON.parse(Buffer.from(bytes).toString("utf8")); } catch {
+    throw new Error("beta release discovery is invalid");
+  }
+  if (!Array.isArray(releases) || releases.length > 20) {
+    throw new Error("beta release discovery is invalid");
+  }
+  for (const candidate of releases) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const release = candidate as Record<string, unknown>;
+    if (release.draft !== false || release.prerelease !== true || !Array.isArray(release.assets)
+        || release.assets.length > 100) continue;
+    for (const candidateAsset of release.assets) {
+      if (!candidateAsset || typeof candidateAsset !== "object" || Array.isArray(candidateAsset)) continue;
+      const asset = candidateAsset as Record<string, unknown>;
+      if (asset.name !== assetName || typeof asset.browser_download_url !== "string") continue;
+      assertReleaseUrl(asset.browser_download_url);
+      if (new URL(asset.browser_download_url).pathname.split("/").at(-1) === assetName) {
+        return asset.browser_download_url;
+      }
+    }
+  }
+  throw new Error("beta update manifest is unavailable");
+}
 
 export class SignedUpdateManifestAuthorizer implements UpdateAuthorizer {
   constructor(
@@ -31,11 +63,30 @@ export class SignedUpdateManifestAuthorizer implements UpdateAuthorizer {
     private readonly fetchBytes: FetchBytes = fetchBounded,
   ) {}
 
-  async authorize(): Promise<AuthorizedUpdate> {
-    const asset = `GrokDesktop-stable-${this.options.platform}-${this.options.architecture}.update.json`;
-    const bytes = await this.fetchBytes(
-      `https://github.com/grok-insider/grok-desktop/releases/latest/download/${asset}`,
-    );
+  async authorize(channel: "stable" | "beta"): Promise<AuthorizedUpdate> {
+    if (channel === "stable") return this.authorizeExact("stable");
+    const candidates = await Promise.allSettled([
+      this.authorizeExact("beta"),
+      this.authorizeExact("stable"),
+    ]);
+    const authorized = candidates
+      .filter((candidate): candidate is PromiseFulfilledResult<AuthorizedUpdate> => candidate.status === "fulfilled")
+      .map((candidate) => candidate.value);
+    if (authorized.length === 0) throw new Error("beta update manifests are unavailable");
+    const eligible = authorized.some((candidate) => candidate.available)
+      ? authorized.filter((candidate) => candidate.available)
+      : authorized;
+    return eligible.reduce((newest, candidate) => (
+      compareVersions(candidate.version, newest.version) > 0 ? candidate : newest
+    ));
+  }
+
+  private async authorizeExact(channel: "stable" | "beta"): Promise<AuthorizedUpdate> {
+    const asset = `GrokDesktop-${channel}-${this.options.platform}-${this.options.architecture}.update.json`;
+    const manifestUrl = channel === "stable"
+      ? `https://github.com/grok-insider/grok-desktop/releases/latest/download/${asset}`
+      : await discoverBetaManifest(asset, this.fetchBytes);
+    const bytes = await this.fetchBytes(manifestUrl);
     if (bytes.byteLength < 1 || bytes.byteLength > MAX_MANIFEST_BYTES) throw new Error("update manifest is unavailable");
     const envelope = parseObject(Buffer.from(bytes).toString("utf8"), "signed update manifest");
     exactKeys(envelope, ["manifest", "signature"], "signed update manifest");
@@ -45,7 +96,7 @@ export class SignedUpdateManifestAuthorizer implements UpdateAuthorizer {
         || !KEY_ID_PATTERN.test(signature.keyId)) throw new Error("update signature is unsupported");
     const key = this.options.trustedKeys.get(signature.keyId);
     if (!key || typeof signature.value !== "string") throw new Error("update signature is untrusted");
-    const manifest = validateManifest(envelope.manifest, this.options);
+    const manifest = validateManifest(envelope.manifest, { ...this.options, channel });
     const signingBytes = Buffer.from(`${JSON.stringify(manifest)}\n`, "utf8");
     const signatureBytes = Buffer.from(signature.value, "base64");
     if (signatureBytes.length !== 64 || !verify(null, signingBytes, key, signatureBytes)) {
@@ -105,17 +156,21 @@ async function fetchBounded(url: string): Promise<Uint8Array> {
 }
 
 function validateManifest(value: unknown, target: {
-  platform: "linux" | "win32"; architecture: "arm64" | "x64";
+  platform: "linux" | "win32"; architecture: "arm64" | "x64"; channel: "stable" | "beta";
 }) {
   const manifest = objectValue(value, "update manifest");
   exactKeys(manifest, [
-    "schemaVersion", "product", "version", "channel", "platform", "architecture", "publishedAt",
+    "schemaVersion", "product", "version", "nativePackageVersion", "channel", "platform", "architecture", "publishedAt",
     "minimumProtocolVersion", "minimumSchemaVersion", "rolloutPercentage", "critical", "artifact",
     "releaseNotesUrl",
   ], "update manifest");
-  if (manifest.schemaVersion !== 1 || manifest.product !== "grok-desktop" || manifest.channel !== "stable"
+  if (manifest.schemaVersion !== 2 || manifest.product !== "grok-desktop" || manifest.channel !== target.channel
       || manifest.platform !== target.platform || manifest.architecture !== target.architecture
-      || typeof manifest.version !== "string" || !VERSION_PATTERN.test(manifest.version)) {
+      || typeof manifest.version !== "string" || !VERSION_PATTERN.test(manifest.version)
+      || typeof manifest.nativePackageVersion !== "string"
+      || (target.platform === "linux" && manifest.nativePackageVersion !== manifest.version)
+      || (target.platform === "win32"
+        && !/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){3}$/.test(manifest.nativePackageVersion))) {
     throw new Error("update manifest target is invalid");
   }
   if (!positiveInteger(manifest.publishedAt) || !positiveInteger(manifest.minimumProtocolVersion)
@@ -127,19 +182,23 @@ function validateManifest(value: unknown, target: {
       || !SHA256_PATTERN.test(artifact.sha256) || !positiveInteger(artifact.size)
       || artifact.size > 8 * 1024 * 1024 * 1024) throw new Error("update artifact is invalid");
   assertReleaseUrl(artifact.url);
+  if (target.channel === "stable" && manifest.version.includes("-")) {
+    throw new Error("stable update manifest cannot be a prerelease");
+  }
   const expectedArtifact = target.platform === "linux"
-    ? `GrokDesktop-stable-${target.architecture}.AppImage`
-    : `GrokDesktop-stable-${target.architecture}.msix`;
+    ? `GrokDesktop-${target.channel}-${target.architecture}.AppImage`
+    : `GrokDesktop-${target.channel}-${target.architecture}.msix`;
   if (new URL(artifact.url).pathname.split("/").at(-1) !== expectedArtifact) {
     throw new Error("update artifact target is invalid");
   }
   if (typeof manifest.releaseNotesUrl !== "string") throw new Error("release notes URL is invalid");
   assertReleaseUrl(manifest.releaseNotesUrl);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "grok-desktop",
     version: manifest.version,
-    channel: "stable",
+    nativePackageVersion: manifest.nativePackageVersion,
+    channel: target.channel,
     platform: target.platform,
     architecture: target.architecture,
     publishedAt: manifest.publishedAt,
@@ -159,11 +218,32 @@ function assertReleaseUrl(raw: string): void {
 }
 
 function compareVersions(left: string, right: string): number {
-  if (!VERSION_PATTERN.test(right)) throw new Error("current version is invalid");
-  const leftParts = left.split(".").map(Number);
-  const rightParts = right.split(".").map(Number);
+  const leftMatch = VERSION_PATTERN.exec(left);
+  const rightMatch = VERSION_PATTERN.exec(right);
+  if (!leftMatch || !rightMatch) throw new Error("current version is invalid");
+  const leftParts = leftMatch.slice(1, 4).map(Number);
+  const rightParts = rightMatch.slice(1, 4).map(Number);
   for (let index = 0; index < 3; index += 1) {
     if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  const leftPrerelease = leftMatch[4]?.split(".");
+  const rightPrerelease = rightMatch[4]?.split(".");
+  if (!leftPrerelease && !rightPrerelease) return 0;
+  if (!leftPrerelease) return 1;
+  if (!rightPrerelease) return -1;
+  const length = Math.max(leftPrerelease.length, rightPrerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = leftPrerelease[index];
+    const rightPart = rightPrerelease[index];
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    if (leftPart === rightPart) continue;
+    const leftNumber = /^\d+$/.test(leftPart) ? Number(leftPart) : undefined;
+    const rightNumber = /^\d+$/.test(rightPart) ? Number(rightPart) : undefined;
+    if (leftNumber !== undefined && rightNumber !== undefined) return leftNumber - rightNumber;
+    if (leftNumber !== undefined) return -1;
+    if (rightNumber !== undefined) return 1;
+    return leftPart < rightPart ? -1 : 1;
   }
   return 0;
 }

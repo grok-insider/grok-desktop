@@ -11,8 +11,9 @@ const { values } = parseArgs({
     channel: { type: "string" },
     "critical": { type: "boolean", default: false },
     "key-id": { type: "string" },
-    "minimum-protocol": { type: "string", default: "24" },
-    "minimum-schema": { type: "string", default: "24" },
+    "minimum-protocol": { type: "string", default: "29" },
+    "minimum-schema": { type: "string", default: "27" },
+    "native-package-version": { type: "string" },
     out: { type: "string" },
     platform: { type: "string" },
     "private-key": { type: "string" },
@@ -43,9 +44,10 @@ const artifact = await stat(artifactPath);
 if (!artifact.isFile()) throw new Error("--artifact must be a regular file");
 const privateKey = await readFile(privateKeyPath, "utf8");
 const signed = signUpdateManifest({
-  schemaVersion: 1,
+  schemaVersion: 2,
   product: "grok-desktop",
   version: required("version"),
+  nativePackageVersion: required("native-package-version"),
   channel: required("channel"),
   platform: required("platform"),
   architecture: required("architecture"),

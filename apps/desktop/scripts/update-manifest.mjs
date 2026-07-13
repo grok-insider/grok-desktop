@@ -1,6 +1,6 @@
 import { createPublicKey, sign, verify } from "node:crypto";
 
-export const UPDATE_MANIFEST_SCHEMA_VERSION = 1;
+export const UPDATE_MANIFEST_SCHEMA_VERSION = 2;
 export const UPDATE_CHANNELS = new Set(["beta", "stable"]);
 export const UPDATE_PLATFORMS = new Set(["linux", "win32"]);
 export const UPDATE_ARCHITECTURES = new Set(["arm64", "x64"]);
@@ -10,6 +10,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ED25519_SIGNATURE_PATTERN = /^[A-Za-z0-9+/]{86}==$/;
 const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const WINDOWS_VERSION_PATTERN = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){3}$/;
 
 function exactObject(value, keys, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -46,7 +47,7 @@ export function canonicalUpdateManifestBytes(manifest) {
 
 export function validateUnsignedUpdateManifest(value) {
   exactObject(value, [
-    "schemaVersion", "product", "version", "channel", "platform", "architecture",
+    "schemaVersion", "product", "version", "nativePackageVersion", "channel", "platform", "architecture",
     "publishedAt", "minimumProtocolVersion", "minimumSchemaVersion", "rolloutPercentage",
     "critical", "artifact", "releaseNotesUrl",
   ], "update manifest");
@@ -55,9 +56,14 @@ export function validateUnsignedUpdateManifest(value) {
   }
   const version = boundedString(value.version, 64, "version");
   if (!VERSION_PATTERN.test(version)) throw new Error("version is not canonical semantic versioning");
+  const nativePackageVersion = boundedString(value.nativePackageVersion, 64, "native package version");
   if (!UPDATE_CHANNELS.has(value.channel)) throw new Error("update channel is unsupported");
   if (value.channel === "stable" && version.includes("-")) throw new Error("stable updates cannot be prereleases");
   if (!UPDATE_PLATFORMS.has(value.platform)) throw new Error("update platform is unsupported");
+  if ((value.platform === "linux" && nativePackageVersion !== version)
+      || (value.platform === "win32" && !WINDOWS_VERSION_PATTERN.test(nativePackageVersion))) {
+    throw new Error("native package version is invalid");
+  }
   if (!UPDATE_ARCHITECTURES.has(value.architecture)) throw new Error("update architecture is unsupported");
   if (!Number.isSafeInteger(value.publishedAt) || value.publishedAt <= 0) throw new Error("publication time is invalid");
   for (const field of ["minimumProtocolVersion", "minimumSchemaVersion"]) {
@@ -80,6 +86,7 @@ export function validateUnsignedUpdateManifest(value) {
     schemaVersion: value.schemaVersion,
     product: value.product,
     version,
+    nativePackageVersion,
     channel: value.channel,
     platform: value.platform,
     architecture: value.architecture,

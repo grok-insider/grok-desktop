@@ -46,6 +46,10 @@ test("pins AppImage updates to the canonical stable GitHub release asset", () =>
     linuxAppImageUpdateInformation("x64"),
     "gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-stable-x64.AppImage.zsync",
   );
+  assert.equal(
+    linuxAppImageUpdateInformation("x64", "beta"),
+    "gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-beta-x64.AppImage.zsync",
+  );
   assert.throws(() => linuxAppImageUpdateInformation("ia32"), /architecture/);
 });
 

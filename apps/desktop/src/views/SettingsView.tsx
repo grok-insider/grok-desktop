@@ -655,11 +655,34 @@ function GeneralSettings() {
       const updated = await client.updateDesktopPreferences({
         expectedRevision: previous.revision,
         keepRunningInNotificationArea,
+        updateChannel: previous.updateChannel,
       });
       setPreferences(updated);
     } catch {
       setPreferences(previous);
       setPreferenceError("Close behavior was not saved. The previous setting has been restored; try again.");
+    } finally {
+      setSavingPreference(false);
+    }
+  };
+
+  const updateChannel = async (channel: "stable" | "beta") => {
+    if (!preferences || savingPreference || channel === preferences.updateChannel) return;
+    const previous = preferences;
+    setPreferenceError("");
+    setSavingPreference(true);
+    setPreferences({ ...previous, updateChannel: channel });
+    try {
+      const updated = await client.updateDesktopPreferences({
+        expectedRevision: previous.revision,
+        keepRunningInNotificationArea: previous.keepRunningInNotificationArea,
+        updateChannel: channel,
+      });
+      setPreferences(updated);
+      setUpdate(await client.getUpdateState());
+    } catch {
+      setPreferences(previous);
+      setPreferenceError("Update channel was not saved. The previous setting has been restored; try again.");
     } finally {
       setSavingPreference(false);
     }
@@ -695,6 +718,24 @@ function GeneralSettings() {
       </SettingsGroup>
       <SettingsGroup>
         <SettingRow
+          title="Update channel"
+          description="Stable receives production releases. Beta receives signed previews and may change more frequently."
+        >
+          <Select
+            value={preferences?.updateChannel ?? "stable"}
+            disabled={!preferences || savingPreference || update?.phase === "downloaded"}
+            onValueChange={(value) => void updateChannel(value as "stable" | "beta")}
+          >
+            <SelectTrigger className="h-9 w-32" aria-label="Update channel">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" align="end">
+              <SelectItem value="stable">Stable</SelectItem>
+              <SelectItem value="beta">Beta</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <SettingRow
           title="Application updates"
           description={updateDescription(update)}
         >
@@ -723,12 +764,12 @@ function updateDescription(update: UpdateState | null): string {
       ? `Version ${update.currentVersion}. Automatic updates are available in signed public installations.`
       : `Version ${update.currentVersion}. This installation is updated by its package manager.`;
   }
-  if (update.phase === "checking") return `Version ${update.currentVersion}. Checking the stable channel.`;
+  if (update.phase === "checking") return `Version ${update.currentVersion}. Checking the ${update.channel} channel.`;
   if (update.phase === "available") return `Downloading version ${update.targetVersion || "the latest release"}.`;
   if (update.phase === "downloaded") return `Version ${update.targetVersion || "the latest release"} is ready to install.`;
   if (update.phase === "failed") return `Version ${update.currentVersion}. The update check failed; try again.`;
-  if (update.phase === "not_available") return `Version ${update.currentVersion} is current on the stable channel.`;
-  return `Version ${update.currentVersion}. Automatic stable-channel updates are enabled.`;
+  if (update.phase === "not_available") return `Version ${update.currentVersion} is current on the ${update.channel} channel.`;
+  return `Version ${update.currentVersion}. Automatic ${update.channel}-channel updates are enabled.`;
 }
 
 function ModelSettings() {

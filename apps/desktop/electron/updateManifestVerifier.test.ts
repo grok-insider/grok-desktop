@@ -29,7 +29,7 @@ describe("SignedUpdateManifestAuthorizer", () => {
       schemaVersion: 23,
       trustedKeys: new Map([["stable-2026", publicKey]]),
     }, async () => Buffer.from(JSON.stringify(envelope)));
-    await expect(authorizer.authorize()).resolves.toMatchObject({ available: true, version: "1.1.0" });
+    await expect(authorizer.authorize("stable")).resolves.toMatchObject({ available: true, version: "1.1.0" });
   });
 
   it("fails closed for tamper, target confusion, and newer contract requirements", async () => {
@@ -48,7 +48,71 @@ describe("SignedUpdateManifestAuthorizer", () => {
       protocolVersion: 23, schemaVersion: 23,
       trustedKeys: new Map([["stable-2026", publicKey]]),
     }, async () => Buffer.from(JSON.stringify(envelope)));
-    await expect(authorizer.authorize()).rejects.toThrow();
+    await expect(authorizer.authorize("stable")).rejects.toThrow();
+  });
+
+  it("discovers only an exact signed beta manifest from a GitHub prerelease", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const manifest = {
+      ...updateManifest(),
+      version: "1.2.0-beta.3",
+      nativePackageVersion: "1.2.0-beta.3",
+      channel: "beta",
+      artifact: {
+        ...updateManifest().artifact,
+        url: "https://github.com/grok-insider/grok-desktop/releases/download/v1.2.0-beta.3/GrokDesktop-beta-x64.AppImage",
+      },
+    };
+    const envelope = {
+      manifest,
+      signature: {
+        algorithm: "ed25519",
+        keyId: "stable-2026",
+        value: sign(null, Buffer.from(`${JSON.stringify(manifest)}\n`), privateKey).toString("base64"),
+      },
+    };
+    const manifestName = "GrokDesktop-beta-linux-x64.update.json";
+    const fetchBytes = async (url: string) => Buffer.from(url.includes("api.github.com")
+      ? JSON.stringify([{
+          draft: false,
+          prerelease: true,
+          assets: [{
+            name: manifestName,
+            browser_download_url: `https://github.com/grok-insider/grok-desktop/releases/download/v1.2.0-beta.3/${manifestName}`,
+          }],
+        }])
+      : JSON.stringify(envelope));
+    const authorizer = new SignedUpdateManifestAuthorizer({
+      platform: "linux", architecture: "x64", currentVersion: "1.1.0",
+      protocolVersion: 29, schemaVersion: 27,
+      trustedKeys: new Map([["stable-2026", publicKey]]),
+    }, fetchBytes);
+    await expect(authorizer.authorize("beta")).resolves.toMatchObject({
+      available: true,
+      version: "1.2.0-beta.3",
+    });
+  });
+
+  it("keeps beta installations eligible for a later signed stable release", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const manifest = updateManifest();
+    const envelope = {
+      manifest,
+      signature: {
+        algorithm: "ed25519",
+        keyId: "stable-2026",
+        value: sign(null, Buffer.from(`${JSON.stringify(manifest)}\n`), privateKey).toString("base64"),
+      },
+    };
+    const authorizer = new SignedUpdateManifestAuthorizer({
+      platform: "linux", architecture: "x64", currentVersion: "1.0.0-beta.9",
+      protocolVersion: 29, schemaVersion: 27,
+      trustedKeys: new Map([["stable-2026", publicKey]]),
+    }, async (url) => Buffer.from(url.includes("api.github.com") ? "[]" : JSON.stringify(envelope)));
+    await expect(authorizer.authorize("beta")).resolves.toMatchObject({
+      available: true,
+      version: "1.1.0",
+    });
   });
 
   it("loads a bounded canonical Ed25519 SPKI trust set", async () => {
@@ -67,9 +131,10 @@ describe("SignedUpdateManifestAuthorizer", () => {
 
 function updateManifest() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "grok-desktop",
     version: "1.1.0",
+    nativePackageVersion: "1.1.0",
     channel: "stable",
     platform: "linux",
     architecture: "x64",

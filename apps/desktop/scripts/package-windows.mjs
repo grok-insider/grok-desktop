@@ -29,7 +29,7 @@ async function main() {
   const releaseArguments = parseReleaseArguments(process.argv.slice(2));
   const environment = readReleaseEnvironment(process.env);
   const packageMetadata = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
-  const msixVersion = normalizeMsixVersion(packageMetadata.version);
+  const msixVersion = normalizeMsixVersion(packageMetadata.version, releaseArguments.channel);
   const stageRoot = path.resolve(releaseArguments.stage ?? path.join(repositoryRoot, "out", "release-inputs", "windows", releaseArguments.architecture));
   const outputRoot = path.resolve(releaseArguments.out ?? path.join(repositoryRoot, "out", "release", "windows", releaseArguments.channel, releaseArguments.architecture));
   const inputs = await validateReleaseInputs(stageRoot, {

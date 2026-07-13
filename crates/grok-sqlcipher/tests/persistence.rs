@@ -1770,6 +1770,7 @@ async fn desktop_preferences_survive_restart_with_exact_idempotent_replay() {
     let key = Arc::new(EphemeralKeyProvider::new([41; 32]));
     let store = open(&path, key.clone()).await;
     let input = UpdateDesktopPreferences {
+        update_channel: grok_domain::DesktopUpdateChannel::Beta,
         expected_revision: 0,
         keep_running_in_notification_area: false,
     };
@@ -1798,6 +1799,7 @@ async fn desktop_preferences_survive_restart_with_exact_idempotent_replay() {
         preferences
             .update(
                 UpdateDesktopPreferences {
+                    update_channel: grok_domain::DesktopUpdateChannel::Beta,
                     keep_running_in_notification_area: true,
                     ..input
                 },

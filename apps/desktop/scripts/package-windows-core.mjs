@@ -41,7 +41,7 @@ async function main() {
   }
   const environment = readCoreWindowsReleaseEnvironment(process.env);
   const packageMetadata = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
-  const msixVersion = normalizeMsixVersion(packageMetadata.version);
+  const msixVersion = normalizeMsixVersion(packageMetadata.version, releaseArguments.channel);
   const stageRoot = path.resolve(releaseArguments.stage ??
     path.join(repositoryRoot, "out", "release-inputs", "windows-core", "x64"));
   const outputRoot = path.resolve(releaseArguments.out ??
@@ -145,10 +145,10 @@ async function main() {
       path.join(outputRoot, `${packageName}.json`), `${JSON.stringify(releaseRecord, null, 2)}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
+    await cp(msixPackage, path.join(outputRoot, `GrokDesktop-${releaseArguments.channel}-x64.msix`), {
+      errorOnExist: true,
+    });
     if (releaseArguments.channel === "stable") {
-      await cp(msixPackage, path.join(outputRoot, "GrokDesktop-stable-x64.msix"), {
-        errorOnExist: true,
-      });
       await writeFile(
         path.join(outputRoot, "GrokDesktop-stable-x64.appinstaller"),
         renderStableAppInstaller({

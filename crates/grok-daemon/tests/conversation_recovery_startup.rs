@@ -376,7 +376,7 @@ async fn oversized_conversation_recovery_blocks_ipc_then_later_startup_continues
         String::from_utf8_lossy(&first.stderr)
     );
     assert!(
-        diagnostics.contains("conversation recovery backlog exceeds the bounded startup pass"),
+        diagnostics.contains("conversation_recovery_backlog"),
         "unexpected daemon diagnostics: {diagnostics}"
     );
     assert!(!diagnostics.contains("daemon development transport ready"));

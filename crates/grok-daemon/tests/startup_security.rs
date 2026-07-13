@@ -84,7 +84,7 @@ async fn stdin_nonce_requires_exactly_thirty_two_bytes_and_eof() {
         })
         .await;
         assert!(!output.status.success());
-        assert!(diagnostics(&output).contains("startup nonce stdin must contain exactly 32 bytes"));
+        assert!(diagnostics(&output).contains("reason=startup_failed"));
     }
 }
 
@@ -97,7 +97,7 @@ async fn legacy_nonce_environment_is_rejected_even_with_a_valid_stdin_handoff() 
     })
     .await;
     assert!(!output.status.success());
-    assert!(diagnostics(&output).contains("GROK_DAEMON_STARTUP_NONCE_HEX is no longer accepted"));
+    assert!(diagnostics(&output).contains("reason=startup_failed"));
 }
 
 #[tokio::test]
@@ -107,7 +107,7 @@ async fn stdin_nonce_marker_rejects_open_ended_values() {
     })
     .await;
     assert!(!output.status.success());
-    assert!(diagnostics(&output).contains("GROK_DAEMON_STARTUP_NONCE_STDIN must be exactly 1"));
+    assert!(diagnostics(&output).contains("reason=startup_failed"));
 }
 
 #[cfg(target_os = "linux")]

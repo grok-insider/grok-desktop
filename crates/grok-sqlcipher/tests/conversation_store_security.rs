@@ -2355,7 +2355,9 @@ async fn schema_fourteen_forks_migrate_acknowledged_and_restart_after_a_fault() 
                  WHERE new.state=0;
              END;
              DROP TABLE IF EXISTS host_execution_commands;
-             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22,23,24,25,26);
+             ALTER TABLE desktop_preferences DROP COLUMN update_channel;
+             ALTER TABLE desktop_preference_commands DROP COLUMN update_channel;
+             DELETE FROM schema_migrations WHERE version IN (15,16,17,18,19,20,21,22,23,24,25,26,27);
              PRAGMA user_version=14;
              CREATE TABLE conversation_fork_delivery_ack_commands(blocker INTEGER) STRICT;",
         )

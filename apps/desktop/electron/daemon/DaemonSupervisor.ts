@@ -424,12 +424,14 @@ export class DaemonSupervisor {
   async updateDesktopPreferences(
     expectedRevision: number,
     keepRunningInNotificationArea: boolean,
+    updateChannel: "stable" | "beta",
     idempotencyKey: string,
   ): Promise<DaemonDesktopPreferences> {
     await this.start();
     const preferences = await this.requireProtocol().updateDesktopPreferences(
       BigInt(expectedRevision),
       keepRunningInNotificationArea,
+      updateChannel,
       idempotencyKey,
     );
     this.setConnected();
@@ -2280,6 +2282,7 @@ function mapDesktopPreferences(
 ): DaemonDesktopPreferences {
   return {
     keepRunningInNotificationArea: preferences.keepRunningInNotificationArea,
+    updateChannel: preferences.updateChannel === "beta" ? "beta" : "stable",
     revision: safeNumber(preferences.revision, "desktop preference revision"),
     updatedAtUnixMs: safeNumber(preferences.updatedAtUnixMs, "desktop preference update time"),
   };

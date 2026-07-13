@@ -5,10 +5,11 @@ durable contracts they carry. Stable process architecture lives in
 [overview.md](overview.md). Layering rules live in [principles.md](principles.md).
 Decision detail lives in the linked ADRs.
 
-**Current surface (maintain as you bump):** desktop IPC **v28** rejects epochs
-**0–27** before dispatch. SQLCipher production schema is **26**. Schema 25 adds
+**Current surface (maintain as you bump):** desktop IPC **v29** rejects epochs
+**0–28** before dispatch. SQLCipher production schema is **27**. Schema 25 adds
 immutable Work backend/run classification and daemon-owned Host Tools policy;
-schema 26 adds the restartable enrollment command journal. Epochs 27–28 add
+schema 26 adds the restartable enrollment command journal; schema 27 and epoch
+29 add the daemon-owned stable/beta update-channel preference. Epochs 27–28 add
 durable Host Work start/cancel and bounded run/approval snapshots. Earlier
 sections below describe contracts retained under later epochs. Always confirm
 against `grok-protocol` / `grok-sqlcipher` when changing code.
@@ -44,7 +45,7 @@ renderer, preload, Electron-main, argv, and environment state. See
 | Credentials + capabilities | — | [0004](../decisions/0004-daemon-owned-credentials-and-capabilities.md) |
 | Native credential enrollment | IPC v2+ (retained in v15) | [0005](../decisions/0005-native-credential-enrollment.md) |
 | Durable direct Chat turns | schema-backed journal | [0006](../decisions/0006-durable-direct-chat-turns.md) |
-| Desktop preferences | — | [0007](../decisions/0007-daemon-owned-desktop-preferences.md) |
+| Desktop preferences and signed update channel | IPC v29, schema 27 | [0007](../decisions/0007-daemon-owned-desktop-preferences.md), [0030](../decisions/0030-signed-public-update-channels.md) |
 | Resumable run-event long poll | IPC v4 | [0008](../decisions/0008-resumable-run-event-long-poll.md) |
 | xAI Chat model selection | IPC v5, schema 9 | [0009](../decisions/0009-daemon-owned-xai-chat-model-selection.md) |
 | Workspace search routing | IPC v6, schema 10 | [0010](../decisions/0010-daemon-owned-workspace-search-routing.md) |

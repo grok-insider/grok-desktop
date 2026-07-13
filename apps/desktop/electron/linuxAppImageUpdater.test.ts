@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LinuxAppImageUpdateRunner, resolveLinuxUpdateRunner } from "./linuxAppImageUpdater.js";
 
 const roots: string[] = [];
-afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 describe("LinuxAppImageUpdateRunner", () => {
   it("runs only the pinned helper contract and detects an atomic replacement", async () => {
@@ -65,5 +69,28 @@ describe("LinuxAppImageUpdateRunner", () => {
     const runner = new LinuxAppImageUpdateRunner(helper, appImage, spawnProcess as never);
     await expect(runner.download({ size: 9, sha256: "0".repeat(64) })).rejects.toThrow("signed manifest");
     expect(await readFile(appImage, "utf8")).toBe("trusted");
+  });
+
+  it("downloads the exact signed artifact without trusting embedded channel metadata", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "grok-appimage-update-"));
+    roots.push(root);
+    const helper = path.join(root, "helper.AppImage");
+    const appImage = path.join(root, "GrokDesktop.AppImage");
+    const artifact = Buffer.from("signed-new-image");
+    await writeFile(helper, "helper", { mode: 0o755 });
+    await writeFile(appImage, "old", { mode: 0o755 });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(artifact, {
+      status: 200,
+      headers: { "content-length": String(artifact.length) },
+    })));
+    const spawnProcess = vi.fn();
+    const runner = new LinuxAppImageUpdateRunner(helper, appImage, spawnProcess as never);
+    await expect(runner.download({
+      url: "https://github.com/grok-insider/grok-desktop/releases/download/v1.2.0/GrokDesktop-beta-x64.AppImage",
+      size: artifact.length,
+      sha256: createHash("sha256").update(artifact).digest("hex"),
+    })).resolves.toBe(true);
+    expect(await readFile(appImage)).toEqual(artifact);
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 });

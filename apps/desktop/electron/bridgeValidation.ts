@@ -141,11 +141,16 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
     };
   }
   if (kind === "daemon.updateDesktopPreferences") {
-    exactKeys(input, ["kind", "expectedRevision", "keepRunningInNotificationArea", "idempotencyKey"], "desktop preference request");
+    exactKeys(input, ["kind", "expectedRevision", "keepRunningInNotificationArea", "updateChannel", "idempotencyKey"], "desktop preference request");
+    const updateChannel = string(input.updateChannel, "desktop update channel", 16);
+    if (updateChannel !== "stable" && updateChannel !== "beta") {
+      throw new TypeError("invalid desktop update channel");
+    }
     return {
       kind,
       expectedRevision: unsignedInteger(input.expectedRevision, "desktop preference revision"),
       keepRunningInNotificationArea: booleanValue(input.keepRunningInNotificationArea, "desktop close behavior"),
+      updateChannel,
       idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
     };
   }

@@ -134,9 +134,9 @@ fn harden_process_inspection() -> Result<(), DynError> {
 
 fn main() {
     if let Err(error) = run_main() {
-        error!(
-            reason = startup_error_reason(error.as_ref()),
-            "daemon startup failed"
+        eprintln!(
+            "grok-daemon startup failed: reason={}",
+            startup_error_reason(error.as_ref())
         );
         std::process::exit(startup_error_exit_code(error.as_ref()));
     }
@@ -168,6 +168,22 @@ fn startup_error_exit_code(error: &(dyn Error + 'static)) -> i32 {
 fn startup_error_reason(error: &(dyn Error + 'static)) -> &'static str {
     if startup_error_exit_code(error) == DATABASE_IN_USE_EXIT_CODE {
         "database_in_use"
+    } else if error_chain_contains::<grok_application::ApplicationError>(error, |value| {
+        matches!(
+            value,
+            grok_application::ApplicationError::Unavailable(message)
+                if message == "conversation recovery backlog exceeds the bounded startup pass"
+        )
+    }) {
+        "conversation_recovery_backlog"
+    } else if error_chain_contains::<grok_application::ApplicationError>(error, |value| {
+        matches!(
+            value,
+            grok_application::ApplicationError::Unavailable(message)
+                if message == "privileged-operation recovery backlog exceeds the bounded startup pass"
+        )
+    }) {
+        "privileged_operation_recovery_backlog"
     } else {
         "startup_failed"
     }

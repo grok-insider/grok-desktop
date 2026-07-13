@@ -375,12 +375,14 @@ message GetDesktopPreferencesRequest {}
 message UpdateDesktopPreferencesRequest {
   uint64 expected_revision = 1;
   bool keep_running_in_notification_area = 2;
+  string update_channel = 3;
 }
 
 message DesktopPreferences {
   bool keep_running_in_notification_area = 1;
   uint64 revision = 2;
   uint64 updated_at_unix_ms = 3;
+  string update_channel = 4;
 }
 
 message GetChatModelCatalogRequest {}

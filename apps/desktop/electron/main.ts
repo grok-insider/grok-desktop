@@ -661,9 +661,11 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
       const preferences = await daemon.updateDesktopPreferences(
         request.expectedRevision,
         request.keepRunningInNotificationArea,
+        request.updateChannel,
         request.idempotencyKey,
       );
       keepRunningInNotificationArea = preferences.keepRunningInNotificationArea;
+      updateCoordinator?.setChannel(preferences.updateChannel);
       return { kind: "daemon.desktopPreferences", preferences };
     }
     if (request.kind === "daemon.getChatModelCatalog") {
@@ -1006,7 +1008,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         architecture: process.arch,
         currentVersion: app.getVersion(),
         protocolVersion: PROTOCOL_VERSION,
-        schemaVersion: 24,
+        schemaVersion: 27,
         trustedKeys,
       });
     } catch {
@@ -1030,7 +1032,6 @@ if (primaryInstance) app.whenReady().then(async () => {
     },
     authorizer: updateAuthorizer,
   });
-  updateCoordinator.start();
   if (!developmentServer) {
     await protocol.handle("grok-desktop", async (request) => {
       if (request.method !== "GET") return new Response("Method not allowed", { status: 405, headers: { "X-Content-Type-Options": "nosniff" } });
@@ -1065,10 +1066,12 @@ if (primaryInstance) app.whenReady().then(async () => {
   try {
     const preferences = await initialDesktopPreferences(supervisor);
     keepRunningInNotificationArea = preferences.keepRunningInNotificationArea;
+    updateCoordinator?.setChannel(preferences.updateChannel);
   } catch {
     // The product default remains active while the daemon reports Limited Mode.
     console.warn("desktop preferences were unavailable during bounded startup; using the product default");
   }
+  updateCoordinator?.start();
   // Window creation is enabled only after IPC handlers and daemon-owned close
   // behavior are ready, so an activation cannot outrun the preload handshake.
   applicationDocumentForWindow = applicationDocument;

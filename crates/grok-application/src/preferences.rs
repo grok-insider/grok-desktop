@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use grok_domain::DesktopPreferences;
+use grok_domain::{DesktopPreferences, DesktopUpdateChannel};
 
 use crate::{ApplicationError, Clock, DesktopPreferencesStore, mutations::mutation_command_bytes};
 
@@ -11,6 +11,8 @@ pub struct UpdateDesktopPreferences {
     pub expected_revision: u64,
     /// Whether closing the primary window should hide it instead of quitting.
     pub keep_running_in_notification_area: bool,
+    /// Signed public application update channel.
+    pub update_channel: DesktopUpdateChannel,
 }
 
 /// Daemon-owned desktop preference use cases.
@@ -35,7 +37,7 @@ impl DesktopPreferencesService {
         Ok(self.store.get_desktop_preferences().await?)
     }
 
-    /// Updates close behavior with optimistic concurrency and idempotent replay.
+    /// Updates close behavior and the signed update channel with optimistic concurrency and replay.
     ///
     /// # Errors
     ///
@@ -47,10 +49,14 @@ impl DesktopPreferencesService {
     ) -> Result<DesktopPreferences, ApplicationError> {
         let expected_revision = input.expected_revision.to_be_bytes();
         let keep_running = [u8::from(input.keep_running_in_notification_area)];
+        let update_channel = [match input.update_channel {
+            DesktopUpdateChannel::Stable => 0,
+            DesktopUpdateChannel::Beta => 1,
+        }];
         let command = mutation_command_bytes(
             "update_desktop_preferences",
             idempotency_key,
-            &[&expected_revision, &keep_running],
+            &[&expected_revision, &keep_running, &update_channel],
         )?;
         if let Some(preferences) = self
             .store
@@ -63,8 +69,9 @@ impl DesktopPreferencesService {
         if preferences.revision != input.expected_revision {
             return Err(ApplicationError::Conflict);
         }
-        preferences.set_keep_running_in_notification_area(
+        preferences.update(
             input.keep_running_in_notification_area,
+            input.update_channel,
             self.clock.now(),
         )?;
         Ok(self
