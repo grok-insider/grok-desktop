@@ -32,7 +32,7 @@ pub use agent_runtime::{
     AgentAuthMethod, AgentEvent, AgentEventStream, AgentPermissionDecision, AgentPermissionOption,
     AgentPermissionOptionKind, AgentPermissionRequest, AgentPrompt, AgentRuntime,
     AgentRuntimeCapabilities, AgentRuntimeError, AgentRuntimeErrorKind, AgentRuntimeProbe,
-    AgentSession, AgentSessionRequest, AgentToolCall, AgentToolCallStatus,
+    AgentSession, AgentSessionRequest, AgentToolCall, AgentToolCallStatus, HostToolsMcpServer,
 };
 pub use approvals::{ApprovalService, RequestApproval};
 pub use artifacts::{

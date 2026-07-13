@@ -44,6 +44,9 @@ const MAX_PLAN_ENTRIES: usize = 256;
 const MAX_PLAN_BYTES: usize = 1024 * 1024;
 const MAX_AUTH_METHODS: usize = 32;
 const MAX_PERMISSION_OPTIONS: usize = 32;
+const MAX_ADDITIONAL_DIRECTORIES: usize = 7;
+const MAX_HOST_MCP_ARGUMENTS: usize = 16;
+const MAX_HOST_MCP_ARGUMENT_BYTES: usize = 4096;
 
 type EventResult = Result<AgentEvent, AgentRuntimeError>;
 type EventSender = mpsc::Sender<EventResult>;
@@ -171,11 +174,27 @@ impl GrokAcpConfig {
             ..Self::host_control(component, grok_home)
         }
     }
+
+    /// Creates a host runtime allowed to open sessions only through the
+    /// daemon-mediated Host Tools boundary.
+    #[must_use]
+    pub fn host_work_tools(
+        component: VerifiedGrokComponent,
+        workspace_roots: Vec<PathBuf>,
+        grok_home: GrokHomeSpec,
+    ) -> Self {
+        Self {
+            workspace_roots,
+            execution_boundary: GrokAcpExecutionBoundary::HostWorkTools,
+            ..Self::host_control(component, grok_home)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GrokAcpExecutionBoundary {
     HostControl,
+    HostWorkTools,
     IsolatedGuest,
 }
 
@@ -330,7 +349,14 @@ impl GrokAcpRuntime {
                     "host ACP control runtime cannot accept workspace roots",
                 ));
             }
-            GrokAcpExecutionBoundary::IsolatedGuest => canonical_roots(&config.workspace_roots)?,
+            GrokAcpExecutionBoundary::HostWorkTools if config.workspace_roots.is_empty() => {
+                return Err(invalid(
+                    "HostWorkTools runtime requires at least one workspace root",
+                ));
+            }
+            GrokAcpExecutionBoundary::HostWorkTools | GrokAcpExecutionBoundary::IsolatedGuest => {
+                canonical_roots(&config.workspace_roots)?
+            }
         };
         let grok_home = config.grok_home.provision().map_err(isolation_error)?;
         let spawned = spawn_component(&config.component, &grok_home, config.stderr_limit)?;
@@ -421,10 +447,10 @@ impl GrokAcpRuntime {
         Ok(())
     }
 
-    fn require_guest_execution(&self) -> Result<(), AgentRuntimeError> {
-        if self.inner.execution_boundary != GrokAcpExecutionBoundary::IsolatedGuest {
+    fn require_session_execution(&self) -> Result<(), AgentRuntimeError> {
+        if self.inner.execution_boundary == GrokAcpExecutionBoundary::HostControl {
             return Err(unavailable(
-                "ACP session execution requires the qualified isolated guest",
+                "ACP control runtime cannot open execution sessions",
             ));
         }
         Ok(())
@@ -474,9 +500,34 @@ impl AgentRuntime for GrokAcpRuntime {
         &self,
         mut request: AgentSessionRequest,
     ) -> Result<AgentSession, AgentRuntimeError> {
-        self.require_guest_execution()?;
+        self.require_session_execution()?;
         request.working_directory =
             validate_workspace(&request.working_directory, &self.inner.workspace_roots)?;
+        if request.additional_directories.len() > MAX_ADDITIONAL_DIRECTORIES {
+            return Err(invalid("too many additional workspace directories"));
+        }
+        request.additional_directories = request
+            .additional_directories
+            .iter()
+            .map(|directory| validate_workspace(directory, &self.inner.workspace_roots))
+            .collect::<Result<Vec<_>, _>>()?;
+        match (self.inner.execution_boundary, &request.host_tools_mcp) {
+            (GrokAcpExecutionBoundary::HostWorkTools, Some(server)) => {
+                if !server.executable.is_absolute()
+                    || server.arguments.len() > MAX_HOST_MCP_ARGUMENTS
+                    || server.arguments.iter().any(|argument| {
+                        argument.is_empty() || argument.len() > MAX_HOST_MCP_ARGUMENT_BYTES
+                    })
+                {
+                    return Err(invalid("invalid Host Tools MCP descriptor"));
+                }
+            }
+            (GrokAcpExecutionBoundary::HostWorkTools, None) => {
+                return Err(invalid("Host Tools MCP descriptor is required"));
+            }
+            (_, Some(_)) => return Err(invalid("Host Tools MCP requires HostWorkTools boundary")),
+            (_, None) => {}
+        }
         let (response_tx, response_rx) = oneshot::channel();
         self.request(
             RuntimeCommand::OpenSession {
@@ -489,7 +540,7 @@ impl AgentRuntime for GrokAcpRuntime {
     }
 
     async fn prompt(&self, prompt: AgentPrompt) -> Result<AgentEventStream, AgentRuntimeError> {
-        self.require_guest_execution()?;
+        self.require_session_execution()?;
         if prompt.session_id.trim().is_empty()
             || prompt.text.trim().is_empty()
             || prompt.text.len() > MAX_PROMPT_BYTES
@@ -513,7 +564,7 @@ impl AgentRuntime for GrokAcpRuntime {
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), AgentRuntimeError> {
-        self.require_guest_execution()?;
+        self.require_session_execution()?;
         if session_id.trim().is_empty() {
             return Err(invalid("session id is required"));
         }
@@ -877,6 +928,11 @@ async fn open_session(
     request_timeout: Duration,
 ) -> Result<AgentSession, AgentRuntimeError> {
     if let Some(session_id) = request.existing_session_id {
+        if !request.additional_directories.is_empty() || request.host_tools_mcp.is_some() {
+            return Err(invalid(
+                "loaded sessions cannot change workspace or Host Tools MCP bindings",
+            ));
+        }
         if !probe.capabilities.load_session {
             return Err(invalid("agent does not support loading sessions"));
         }
@@ -894,11 +950,17 @@ async fn open_session(
         .map_err(|_| protocol_error("failed to load ACP session"))?;
         Ok(AgentSession { id: session_id })
     } else {
+        let mut session_request = acp::NewSessionRequest::new(request.working_directory)
+            .additional_directories(request.additional_directories);
+        if let Some(server) = request.host_tools_mcp {
+            session_request = session_request.mcp_servers(vec![acp::McpServer::Stdio(
+                acp::McpServerStdio::new("grok-desktop-host-tools", server.executable)
+                    .args(server.arguments),
+            )]);
+        }
         let response = tokio::time::timeout(
             request_timeout,
-            connection
-                .send_request(acp::NewSessionRequest::new(request.working_directory))
-                .block_task(),
+            connection.send_request(session_request).block_task(),
         )
         .await
         .map_err(|_| unavailable("creating ACP session timed out"))?

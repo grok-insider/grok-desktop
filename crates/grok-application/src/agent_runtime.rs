@@ -53,8 +53,22 @@ pub struct AgentRuntimeProbe {
 pub struct AgentSessionRequest {
     /// Canonical or canonically resolvable workspace path.
     pub working_directory: PathBuf,
+    /// Additional canonical workspace roots authorized for this session.
+    pub additional_directories: Vec<PathBuf>,
+    /// Optional daemon-created Host Tools MCP process. Presentation callers
+    /// cannot supply arbitrary MCP server definitions.
+    pub host_tools_mcp: Option<HostToolsMcpServer>,
     /// Existing provider session identifier, or `None` for a new session.
     pub existing_session_id: Option<String>,
+}
+
+/// Closed stdio MCP launch descriptor created by the daemon composition root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostToolsMcpServer {
+    /// Verified absolute path to the packaged helper.
+    pub executable: PathBuf,
+    /// Bounded opaque arguments used to bind the helper to one daemon endpoint.
+    pub arguments: Vec<String>,
 }
 
 /// Session accepted by the official Grok agent.

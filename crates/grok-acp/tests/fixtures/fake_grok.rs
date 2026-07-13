@@ -32,7 +32,18 @@ fn main() {
         } else if line.contains("\"method\":\"authenticate\"") {
             respond(&mut stdout, id(&line), "{}");
         } else if line.contains("\"method\":\"session/new\"") {
-            respond(&mut stdout, id(&line), r#"{"sessionId":"session-1"}"#);
+            let host_tools_contract = line.contains("\"additionalDirectories\"")
+                && line.contains("grok-desktop-host-tools")
+                && line.contains("host-tools-contract");
+            respond(
+                &mut stdout,
+                id(&line),
+                if host_tools_contract {
+                    r#"{"sessionId":"session-host-tools"}"#
+                } else {
+                    r#"{"sessionId":"session-1"}"#
+                },
+            );
         } else if line.contains("\"method\":\"session/load\"") {
             respond(&mut stdout, id(&line), "{}");
         } else if line.contains("\"method\":\"session/prompt\"") {

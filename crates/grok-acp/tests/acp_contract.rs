@@ -9,6 +9,7 @@ use grok_acp::{
 };
 use grok_application::{
     AgentEvent, AgentPermissionDecision, AgentRuntime, AgentRuntimeErrorKind, AgentSessionRequest,
+    HostToolsMcpServer,
 };
 use sha2::{Digest, Sha256};
 
@@ -99,6 +100,8 @@ async fn host_control_runtime_authenticates_but_rejects_sessions() {
     let error = runtime
         .open_session(AgentSessionRequest {
             working_directory: fixture.root.clone(),
+            additional_directories: Vec::new(),
+            host_tools_mcp: None,
             existing_session_id: None,
         })
         .await
@@ -107,10 +110,46 @@ async fn host_control_runtime_authenticates_but_rejects_sessions() {
     runtime.shutdown().await.expect("shutdown");
 }
 
+#[tokio::test]
+async fn host_work_runtime_sends_only_daemon_created_stdio_mcp_and_directories() {
+    let fixture = Fixture::compile();
+    let additional = fixture.root.join("secondary");
+    std::fs::create_dir(&additional).expect("additional workspace");
+    let (host, broker) = permission_channel(
+        NonZeroUsize::new(2).expect("nonzero"),
+        Duration::from_secs(1),
+    );
+    drop(host);
+    let mut config = GrokAcpConfig::host_work_tools(
+        fixture.component.clone(),
+        vec![fixture.root.clone()],
+        fixture.home.clone(),
+    );
+    config.initialize_timeout = Duration::from_secs(5);
+    config.request_timeout = Duration::from_secs(5);
+    let runtime = GrokAcpRuntime::start(config, broker).await.expect("start");
+    let session = runtime
+        .open_session(AgentSessionRequest {
+            working_directory: fixture.root.clone(),
+            additional_directories: vec![additional],
+            host_tools_mcp: Some(HostToolsMcpServer {
+                executable: fixture.component.executable().to_path_buf(),
+                arguments: vec!["host-tools-contract".into()],
+            }),
+            existing_session_id: None,
+        })
+        .await
+        .expect("host tools session");
+    assert_eq!(session.id, "session-host-tools");
+    runtime.shutdown().await.expect("shutdown");
+}
+
 async fn session(runtime: &GrokAcpRuntime, root: &std::path::Path) -> String {
     runtime
         .open_session(AgentSessionRequest {
             working_directory: root.into(),
+            additional_directories: Vec::new(),
+            host_tools_mcp: None,
             existing_session_id: None,
         })
         .await
@@ -167,6 +206,8 @@ async fn initializes_v1_streams_prompt_and_loads_session() {
     let loaded = runtime
         .open_session(AgentSessionRequest {
             working_directory: fixture.root.clone(),
+            additional_directories: Vec::new(),
+            host_tools_mcp: None,
             existing_session_id: Some("session-existing".into()),
         })
         .await
@@ -262,6 +303,8 @@ async fn workspace_outside_allowlist_is_rejected_before_acp() {
     let error = runtime
         .open_session(AgentSessionRequest {
             working_directory: outside.path().into(),
+            additional_directories: Vec::new(),
+            host_tools_mcp: None,
             existing_session_id: None,
         })
         .await
