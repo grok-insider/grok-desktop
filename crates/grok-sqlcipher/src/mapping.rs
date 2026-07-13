@@ -8,7 +8,7 @@ use grok_domain::{
     ConversationThreadLineage, ConversationThreadOrigin, ConversationTurnId, EffectId, EffectKind,
     EffectState, Idempotency, Message, MessageId, MessageRole, MessageState, MissedRunPolicy,
     OverlapPolicy, Project, ProjectId, ProjectState, RequestedAction, Run, RunEvent, RunEventKind,
-    RunId, RunState, SideEffect, Thread, ThreadId, ThreadState,
+    RunId, RunKind, RunState, SideEffect, Thread, ThreadId, ThreadState, WorkExecutionBackend,
 };
 use rusqlite::{Row, types::Type};
 
@@ -17,11 +17,48 @@ pub(crate) fn run_from_row(row: &Row<'_>) -> rusqlite::Result<Run> {
         id: entity_id(row, 0, RunId::new)?,
         project_id: entity_id(row, 1, ProjectId::new)?,
         thread_id: entity_id(row, 2, ThreadId::new)?,
-        state: run_state_from_i64(row.get(3)?)?,
-        revision: unsigned(row, 4)?,
-        created_at: unsigned(row, 5)?,
-        updated_at: unsigned(row, 6)?,
+        kind: run_kind_from_i64(row.get(3)?)?,
+        work_backend: optional_work_backend(row.get(4)?)?,
+        state: run_state_from_i64(row.get(5)?)?,
+        revision: unsigned(row, 6)?,
+        created_at: unsigned(row, 7)?,
+        updated_at: unsigned(row, 8)?,
     })
+}
+
+pub(crate) const fn run_kind_to_i64(kind: RunKind) -> i64 {
+    match kind {
+        RunKind::Unspecified => 0,
+        RunKind::Chat => 1,
+        RunKind::Work => 2,
+        RunKind::Scheduled => 3,
+    }
+}
+
+fn run_kind_from_i64(value: i64) -> rusqlite::Result<RunKind> {
+    match value {
+        0 => Ok(RunKind::Unspecified),
+        1 => Ok(RunKind::Chat),
+        2 => Ok(RunKind::Work),
+        3 => Ok(RunKind::Scheduled),
+        _ => invalid(3, "run kind"),
+    }
+}
+
+pub(crate) const fn work_backend_to_i64(backend: WorkExecutionBackend) -> i64 {
+    match backend {
+        WorkExecutionBackend::HostDirect => 1,
+        WorkExecutionBackend::IsolatedGuest => 2,
+    }
+}
+
+fn optional_work_backend(value: Option<i64>) -> rusqlite::Result<Option<WorkExecutionBackend>> {
+    match value {
+        None => Ok(None),
+        Some(1) => Ok(Some(WorkExecutionBackend::HostDirect)),
+        Some(2) => Ok(Some(WorkExecutionBackend::IsolatedGuest)),
+        Some(_) => invalid(4, "work execution backend"),
+    }
 }
 
 pub(crate) fn approval_from_row(row: &Row<'_>) -> rusqlite::Result<Approval> {
@@ -583,7 +620,7 @@ where
     constructor(row.get(index)?).map_err(|error| conversion(index, error))
 }
 
-fn unsigned(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
+pub(crate) fn unsigned(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
     let value: i64 = row.get(index)?;
     u64::try_from(value).map_err(|error| conversion(index, error))
 }

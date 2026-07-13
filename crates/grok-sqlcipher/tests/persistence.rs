@@ -8,22 +8,23 @@ use grok_application::{
     ConversationTurnReservation, ConversationTurnReservationSource, ConversationTurnStore,
     CreateAutomation, CreateMessage, CreateProject, CreateRun, CreateThread,
     CredentialMutationReservation, CredentialMutationStore, DesktopPreferencesService,
-    ExecutionStore, IdGenerator, MutationCommand, NewRunEvent, PrepareEffect,
-    PreparePrivilegedOperation, PrivilegedOperationService, PrivilegedOperationStore,
-    RequestApproval, RunService, SideEffectService, StoreError, TerminalTurnCommit,
-    UpdateDesktopPreferences, UpdateMessage, UpdateProject, WorkspaceSearchHit,
+    ExecutionStore, HostExecutionPolicyStore, IdGenerator, MutationCommand, NewRunEvent,
+    PrepareEffect, PreparePrivilegedOperation, PrivilegedOperationService,
+    PrivilegedOperationStore, RequestApproval, RunService, SideEffectService, StoreError,
+    TerminalTurnCommit, UpdateDesktopPreferences, UpdateMessage, UpdateProject, WorkspaceSearchHit,
     WorkspaceSearchKind, WorkspaceService, WorkspaceStore,
 };
 use grok_domain::{
     Approval, ApprovalDecision, ApprovalRisk, ApprovalScope, ApprovalStatus, Artifact, ArtifactId,
     ArtifactVersion, AuthorityGrantId, AutomationHistoryStatus, ChatModelPreference,
     ConversationTurn, ConversationTurnEventKind, ConversationTurnId, ConversationTurnLineage,
-    ConversationTurnState, EffectKind, EffectState, Idempotency, Message, MessageId, MessageRole,
+    ConversationTurnState, EffectKind, EffectState, HOST_ACKNOWLEDGMENT_VERSION,
+    HostExecutionPolicy, HostToolClasses, Idempotency, Message, MessageId, MessageRole,
     MissedRunPolicy, OverlapPolicy, PayloadDigest, PrivilegedAuthority, PrivilegedIdempotency,
     PrivilegedIdempotencyKey, PrivilegedOperationIntent, PrivilegedOperationKind,
     PrivilegedOperationLinks, PrivilegedOperationState, PrivilegedOperationTarget,
     PrivilegedResourceId, ProjectId, RequestDigest, RequestedAction, Run, RunId, RunState, Thread,
-    ThreadId,
+    ThreadId, WorkExecutionBackend,
 };
 use grok_memory::{
     EphemeralKeyProvider, FixedClock, InMemoryExecutionStore, SequentialIdGenerator,
@@ -37,6 +38,72 @@ async fn open(path: &std::path::Path, key: Arc<EphemeralKeyProvider>) -> Arc<Sql
             .await
             .expect("open encrypted store"),
     )
+}
+
+#[tokio::test]
+async fn schema_25_persists_host_policy_and_immutable_work_backend() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("host-policy.db");
+    let key = Arc::new(EphemeralKeyProvider::new([91; 32]));
+    let store = open(&path, key.clone()).await;
+    let initial = store
+        .get_host_execution_policy()
+        .await
+        .expect("initial policy");
+    assert!(!initial.active);
+    assert_eq!(initial.revision, 0);
+
+    let enrolled = HostExecutionPolicy {
+        revision: 1,
+        active: true,
+        acknowledgment_version: HOST_ACKNOWLEDGMENT_VERSION,
+        acknowledged_at: 10,
+        tool_classes: HostToolClasses {
+            filesystem_read: true,
+            filesystem_write: true,
+            process_execute: true,
+        },
+        canonical_roots: vec![directory.path().to_string_lossy().into_owned()],
+        broad_scope_acknowledged: false,
+        updated_at: 10,
+    };
+    store
+        .replace_host_execution_policy(enrolled.clone(), 0)
+        .await
+        .expect("enroll");
+    assert_eq!(
+        store
+            .replace_host_execution_policy(enrolled.clone(), 0)
+            .await,
+        Err(StoreError::Conflict)
+    );
+
+    let (runs, _) = services(store.clone(), Arc::new(FixedClock::new(10)));
+    let work = runs
+        .create_work(
+            CreateRun {
+                project_id: "host-project".into(),
+                thread_id: "host-thread".into(),
+            },
+            WorkExecutionBackend::HostDirect,
+            "host-work-run",
+        )
+        .await
+        .expect("create Host Work run");
+    assert!(work.is_work_bound_to(WorkExecutionBackend::HostDirect));
+
+    drop(runs);
+    drop(store);
+    let reopened = open(&path, key).await;
+    assert_eq!(
+        reopened
+            .get_host_execution_policy()
+            .await
+            .expect("reopened policy"),
+        enrolled
+    );
+    let restored = reopened.get_run(&work.id).await.expect("restored run");
+    assert!(restored.is_work_bound_to(WorkExecutionBackend::HostDirect));
 }
 
 async fn commit_test_artifact(

@@ -652,7 +652,7 @@ impl AutomationSchedulerService {
                     occurrence.snapshot.prompt.clone(),
                     observed_at,
                 )?;
-                let run = grok_domain::Run::queued(
+                let run = grok_domain::Run::queued_scheduled(
                     grok_domain::RunId::new(self.ids.generate("automation-run"))?,
                     occurrence.snapshot.project_id.clone(),
                     thread.id.clone(),

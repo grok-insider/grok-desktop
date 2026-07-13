@@ -47,7 +47,8 @@ const MESSAGE_COLUMNS: &str = "id,thread_id,sequence,role,content,state,revision
     (SELECT source_message_id FROM conversation_message_derivations WHERE child_message_id=messages.id),\
     (SELECT source_turn_id FROM conversation_message_derivations WHERE child_message_id=messages.id),\
     (SELECT source_context_sequence FROM conversation_message_derivations WHERE child_message_id=messages.id)";
-const RUN_COLUMNS: &str = "id,project_id,thread_id,state,revision,created_at,updated_at";
+const RUN_COLUMNS: &str =
+    "id,project_id,thread_id,run_kind,work_backend,state,revision,created_at,updated_at";
 
 #[async_trait]
 impl AutomationSchedulerStore for SqlCipherStore {
@@ -2491,7 +2492,7 @@ mod tests {
             now,
         )
         .expect("prompt");
-        let run = grok_domain::Run::queued(
+        let run = grok_domain::Run::queued_scheduled(
             RunId::new("dispatch-run").expect("run"),
             automation.project_id,
             thread.id.clone(),

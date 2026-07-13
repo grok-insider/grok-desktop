@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 
 use crate::{SqlCipherStoreError, mapping};
 
-pub(crate) const LATEST_SCHEMA_VERSION: u32 = 24;
+pub(crate) const LATEST_SCHEMA_VERSION: u32 = 25;
 
 pub(crate) fn open_encrypted(
     path: &Path,
@@ -147,6 +147,7 @@ fn migrate(connection: &mut Connection) -> Result<(), SqlCipherStoreError> {
             22 => transaction.execute_batch(MIGRATION_22)?,
             23 => migrate_conversation_model_binding_v23(&transaction)?,
             24 => migrate_conversation_search_grant_v24(&transaction)?,
+            25 => migrate_host_execution_v25(&transaction)?,
             _ => unreachable!("bounded by latest schema"),
         }
         transaction.execute(
@@ -183,6 +184,55 @@ fn migrate_conversation_search_grant_v24(
     )?;
     if !search_enabled_exists {
         transaction.execute_batch(MIGRATION_24)?;
+    }
+    Ok(())
+}
+
+const MIGRATION_25: &str = r"
+ALTER TABLE runs ADD COLUMN run_kind INTEGER NOT NULL DEFAULT 0
+  CHECK (run_kind BETWEEN 0 AND 3);
+ALTER TABLE runs ADD COLUMN work_backend INTEGER
+  CHECK (
+    (run_kind = 2 AND work_backend IN (1, 2)) OR
+    (run_kind != 2 AND work_backend IS NULL)
+  );
+
+CREATE TABLE host_execution_policy (
+  singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  acknowledgment_version INTEGER NOT NULL CHECK (acknowledgment_version >= 0),
+  acknowledged_at_unix_ms INTEGER NOT NULL CHECK (acknowledged_at_unix_ms >= 0),
+  tool_filesystem_read INTEGER NOT NULL CHECK (tool_filesystem_read IN (0, 1)),
+  tool_filesystem_write INTEGER NOT NULL CHECK (tool_filesystem_write IN (0, 1)),
+  tool_process_execute INTEGER NOT NULL CHECK (tool_process_execute IN (0, 1)),
+  broad_scope_acknowledged INTEGER NOT NULL CHECK (broad_scope_acknowledged IN (0, 1)),
+  updated_at_unix_ms INTEGER NOT NULL CHECK (updated_at_unix_ms >= acknowledged_at_unix_ms)
+) STRICT;
+
+INSERT INTO host_execution_policy(
+  singleton_id,revision,active,acknowledgment_version,acknowledged_at_unix_ms,
+  tool_filesystem_read,tool_filesystem_write,tool_process_execute,
+  broad_scope_acknowledged,updated_at_unix_ms
+) VALUES (1,0,0,0,0,0,0,0,0,0);
+
+CREATE TABLE host_execution_roots (
+  ordinal INTEGER PRIMARY KEY CHECK (ordinal BETWEEN 0 AND 7),
+  canonical_path TEXT NOT NULL UNIQUE
+    CHECK (length(canonical_path) BETWEEN 1 AND 4096 AND instr(canonical_path, char(0)) = 0)
+) STRICT;
+";
+
+fn migrate_host_execution_v25(transaction: &Transaction<'_>) -> Result<(), SqlCipherStoreError> {
+    let run_kind_exists: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('runs') WHERE name='run_kind'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !run_kind_exists {
+        transaction.execute_batch(MIGRATION_25)?;
     }
     Ok(())
 }
@@ -4022,7 +4072,7 @@ mod tests {
                  DROP TABLE IF EXISTS automation_schedule_evaluation_commands;
                  DROP TABLE IF EXISTS automation_schedule_cursors;
                  DROP TABLE IF EXISTS automation_scheduler_lease;
-                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24);
+                 DELETE FROM schema_migrations WHERE version IN (19,20,21,22,23,24,25);
                  PRAGMA user_version=18;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4080,7 +4130,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;",
             )
@@ -4104,7 +4154,7 @@ mod tests {
                  DROP TRIGGER artifact_versions_create_retention;
                  DROP TABLE artifact_removal_commands;
                  DROP TABLE artifact_version_retention;
-                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24);
+                 DELETE FROM schema_migrations WHERE version IN (18,19,20,21,22,23,24,25);
                  PRAGMA user_version=17;
                  PRAGMA foreign_keys=ON;",
             )
@@ -5330,7 +5380,7 @@ mod tests {
                      SELECT new.id,new.project_id,'artifact',new.name,'',new.updated_at
                      WHERE new.state=0;
                  END;
-                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24);
+                 DELETE FROM schema_migrations WHERE version IN (17,18,19,20,21,22,23,24,25);
                  PRAGMA user_version=16;
                  PRAGMA foreign_keys=ON;
 
@@ -5374,7 +5424,7 @@ mod tests {
                      VALUES (new.rowid,new.title,new.body);
                  END;
 
-                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24);
+                 DELETE FROM schema_migrations WHERE version IN (16,17,18,19,20,21,22,23,24,25);
                  PRAGMA user_version=15;
                  CREATE TRIGGER block_artifact_search_rebuild
                  BEFORE INSERT ON search_documents WHEN new.kind='artifact' BEGIN

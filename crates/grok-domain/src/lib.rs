@@ -5,6 +5,7 @@ mod automation;
 mod capability;
 mod conversation;
 mod effect;
+mod host_execution;
 mod id;
 mod preferences;
 mod privileged_operation;
@@ -39,6 +40,10 @@ pub use conversation::{
     MAX_CONVERSATION_TEXT_EVENTS, MAX_CONVERSATION_USAGE_VALUE,
 };
 pub use effect::{EffectKind, EffectState, EffectTransitionError, Idempotency, SideEffect};
+pub use host_execution::{
+    HOST_ACKNOWLEDGMENT_PHRASE, HOST_ACKNOWLEDGMENT_VERSION, HostExecutionPolicy,
+    HostExecutionPolicyError, HostToolClasses, MAX_HOST_EXECUTION_ROOTS,
+};
 pub use id::{
     ApprovalId, ArtifactId, AutomationId, AutomationOccurrenceId, AutomationSchedulerOwnerId,
     ConversationTurnId, EffectId, IdError, MessageId, PrivilegedOperationId, ProjectId, RunId,
@@ -55,7 +60,9 @@ pub use privileged_operation::{
     PrivilegedOperationReview, PrivilegedOperationState, PrivilegedOperationTarget,
     PrivilegedOperationValueError, PrivilegedResourceId, PrivilegedRetryClass, RequestDigest,
 };
-pub use run::{Run, RunEvent, RunEventKind, RunState, TransitionError};
+pub use run::{
+    Run, RunEvent, RunEventKind, RunKind, RunState, TransitionError, WorkExecutionBackend,
+};
 pub use workspace::{
     Artifact, ArtifactContentSummary, ArtifactState, ArtifactVersion, Automation,
     AutomationHistoryEntry, AutomationHistoryStatus, AutomationState, ConversationForkKind,

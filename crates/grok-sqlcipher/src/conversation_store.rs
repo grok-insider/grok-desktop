@@ -38,7 +38,8 @@ const TURN_COLUMNS: &str = "id,idempotency_key,request_fingerprint,provider_requ
     project_id,thread_id,user_message_id,run_id,model_id,state,effect_id,assistant_message_id,\
     failure_kind,failure_message,failure_retryable,provider_response_id,citations_json,\
     input_tokens,output_tokens,cost_in_usd_ticks,zero_data_retention,revision,created_at,updated_at,search_enabled";
-const RUN_COLUMNS: &str = "id,project_id,thread_id,state,revision,created_at,updated_at";
+const RUN_COLUMNS: &str =
+    "id,project_id,thread_id,run_kind,work_backend,state,revision,created_at,updated_at";
 const EFFECT_COLUMNS: &str =
     "id,run_id,kind,target,idempotency,state,revision,created_at,updated_at";
 const THREAD_COLUMNS: &str = "id,project_id,title,state,revision,created_at,updated_at,\

@@ -2,6 +2,28 @@ use thiserror::Error;
 
 use crate::{ProjectId, RunId, ThreadId, UnixMillis};
 
+/// Product flow that owns a durable run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunKind {
+    /// Legacy row whose producer predates explicit classification.
+    Unspecified,
+    /// Unprivileged conversation execution.
+    Chat,
+    /// User-started execution with an explicitly bound tool backend.
+    Work,
+    /// Background automation; `HostDirect` is structurally unavailable.
+    Scheduled,
+}
+
+/// Concrete execution backend immutably bound to a Work run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkExecutionBackend {
+    /// Explicitly risk-enrolled execution with desktop-user authority.
+    HostDirect,
+    /// Execution inside a qualified isolated guest.
+    IsolatedGuest,
+}
+
 /// Durable lifecycle of an agent run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunState {
@@ -96,6 +118,10 @@ pub struct Run {
     pub project_id: ProjectId,
     /// Conversation associated with the work.
     pub thread_id: ThreadId,
+    /// Product flow that created this run.
+    pub kind: RunKind,
+    /// Concrete backend for Work only.
+    pub work_backend: Option<WorkExecutionBackend>,
     /// Current lifecycle state.
     pub state: RunState,
     /// Optimistic concurrency revision.
@@ -119,11 +145,62 @@ impl Run {
             id,
             project_id,
             thread_id,
+            kind: RunKind::Chat,
+            work_backend: None,
             state: RunState::Queued,
             revision: 0,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// Creates a queued Work run with an immutable concrete backend.
+    #[must_use]
+    pub const fn queued_work(
+        id: RunId,
+        project_id: ProjectId,
+        thread_id: ThreadId,
+        backend: WorkExecutionBackend,
+        now: UnixMillis,
+    ) -> Self {
+        Self {
+            id,
+            project_id,
+            thread_id,
+            kind: RunKind::Work,
+            work_backend: Some(backend),
+            state: RunState::Queued,
+            revision: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Creates an unprivileged queued scheduler run.
+    #[must_use]
+    pub const fn queued_scheduled(
+        id: RunId,
+        project_id: ProjectId,
+        thread_id: ThreadId,
+        now: UnixMillis,
+    ) -> Self {
+        Self {
+            id,
+            project_id,
+            thread_id,
+            kind: RunKind::Scheduled,
+            work_backend: None,
+            state: RunState::Queued,
+            revision: 0,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Returns whether this run may dispatch through the given Work backend.
+    #[must_use]
+    pub fn is_work_bound_to(&self, backend: WorkExecutionBackend) -> bool {
+        self.kind == RunKind::Work && self.work_backend == Some(backend)
     }
 
     /// Applies a legal state transition and increments the revision.

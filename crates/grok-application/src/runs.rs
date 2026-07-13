@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use grok_domain::{ProjectId, Run, RunEventKind, RunId, RunState, ThreadId};
+use grok_domain::{ProjectId, Run, RunEventKind, RunId, RunState, ThreadId, WorkExecutionBackend};
 
 use crate::{
     ApplicationError, Clock, ExecutionMutationOutcome, ExecutionStore, IdGenerator, NewRunEvent,
@@ -58,6 +58,54 @@ impl RunService {
             RunId::new(self.ids.generate("run"))?,
             ProjectId::new(input.project_id)?,
             ThreadId::new(input.thread_id)?,
+            now,
+        );
+        Ok(self
+            .store
+            .create_run(
+                run.clone(),
+                NewRunEvent {
+                    occurred_at: now,
+                    kind: RunEventKind::Created,
+                },
+                &command,
+            )
+            .await?)
+    }
+
+    /// Persists a queued Work run with one immutable concrete backend.
+    ///
+    /// This method is intentionally separate from generic Chat run creation so
+    /// existing producers cannot acquire tool authority by adding wire fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplicationError`] for invalid identifiers, conflicting
+    /// idempotency, or failure to atomically persist the bound run.
+    pub async fn create_work(
+        &self,
+        input: CreateRun,
+        backend: WorkExecutionBackend,
+        idempotency_key: &str,
+    ) -> Result<Run, ApplicationError> {
+        let command = mutation_command(
+            "create_work_run",
+            idempotency_key,
+            &[
+                input.project_id.clone(),
+                input.thread_id.clone(),
+                work_backend_key(backend).into(),
+            ],
+        )?;
+        if let Some(outcome) = self.store.resolve_execution_mutation(&command).await? {
+            return run_outcome(outcome);
+        }
+        let now = self.clock.now();
+        let run = Run::queued_work(
+            RunId::new(self.ids.generate("run"))?,
+            ProjectId::new(input.project_id)?,
+            ThreadId::new(input.thread_id)?,
+            backend,
             now,
         );
         Ok(self
@@ -136,6 +184,13 @@ impl RunService {
             ));
         }
         Ok(self.store.events_since(id, after_sequence, limit).await?)
+    }
+}
+
+const fn work_backend_key(backend: WorkExecutionBackend) -> &'static str {
+    match backend {
+        WorkExecutionBackend::HostDirect => "host_direct",
+        WorkExecutionBackend::IsolatedGuest => "isolated_guest",
     }
 }
 

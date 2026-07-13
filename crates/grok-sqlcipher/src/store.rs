@@ -8,12 +8,13 @@ use std::{
 use async_trait::async_trait;
 use fs2::FileExt;
 use grok_application::{
-    ExecutionMutationOutcome, ExecutionStore, KeyProviderError, MutationCommand, NewRunEvent,
-    SecureKeyProvider, StoreError,
+    ExecutionMutationOutcome, ExecutionStore, HostExecutionPolicyStore, KeyProviderError,
+    MutationCommand, NewRunEvent, SecureKeyProvider, StoreError,
 };
 use grok_domain::{
-    Approval, ApprovalId, ApprovalRisk, ApprovalScope, ApprovalStatus, EffectId, ProjectId,
-    RequestedAction, Run, RunEvent, RunId, RunState, SideEffect, ThreadId,
+    Approval, ApprovalId, ApprovalRisk, ApprovalScope, ApprovalStatus, EffectId,
+    HostExecutionPolicy, HostToolClasses, ProjectId, RequestedAction, Run, RunEvent, RunId,
+    RunKind, RunState, SideEffect, ThreadId, WorkExecutionBackend,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,8 @@ use thiserror::Error;
 
 use crate::{mapping, schema};
 
-const RUN_COLUMNS: &str = "id, project_id, thread_id, state, revision, created_at, updated_at";
+const RUN_COLUMNS: &str =
+    "id, project_id, thread_id, run_kind, work_backend, state, revision, created_at, updated_at";
 const APPROVAL_COLUMNS: &str = "id, run_id, action, target, data_summary, risk, scope, \
                                 resource_id, status, revision, created_at, expires_at, decided_at";
 const EFFECT_COLUMNS: &str =
@@ -42,6 +44,10 @@ enum StoredExecutionResult {
         id: String,
         project_id: String,
         thread_id: String,
+        #[serde(default)]
+        run_kind: Option<String>,
+        #[serde(default)]
+        work_backend: Option<String>,
         state: String,
         revision: u64,
         created_at: u64,
@@ -1190,12 +1196,15 @@ pub(crate) fn map_sqlite(error: rusqlite::Error) -> StoreError {
 pub(crate) fn insert_run(connection: &Connection, run: &Run) -> Result<(), StoreError> {
     connection
         .execute(
-            "INSERT INTO runs(id, project_id, thread_id, state, revision, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO runs(
+                id,project_id,thread_id,run_kind,work_backend,state,revision,created_at,updated_at
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
                 run.id.as_str(),
                 run.project_id.as_str(),
                 run.thread_id.as_str(),
+                mapping::run_kind_to_i64(run.kind),
+                run.work_backend.map(mapping::work_backend_to_i64),
                 mapping::run_state_to_i64(run.state),
                 number(run.revision)?,
                 number(run.created_at)?,
@@ -1377,12 +1386,14 @@ fn record_execution_command(
 
 fn encode_execution_outcome(outcome: &ExecutionMutationOutcome) -> Result<String, StoreError> {
     let stored = StoredExecutionOutcome {
-        version: 1,
+        version: 2,
         result: match outcome {
             ExecutionMutationOutcome::Run(run) => StoredExecutionResult::Run {
                 id: run.id.as_str().into(),
                 project_id: run.project_id.as_str().into(),
                 thread_id: run.thread_id.as_str().into(),
+                run_kind: Some(run_kind_name(run.kind).into()),
+                work_backend: run.work_backend.map(work_backend_name).map(str::to_owned),
                 state: run_state_name(run.state).into(),
                 revision: run.revision,
                 created_at: run.created_at,
@@ -1426,7 +1437,7 @@ fn decode_execution_outcome(value: &str) -> Result<ExecutionMutationOutcome, Sto
     }
     let stored: StoredExecutionOutcome = serde_json::from_str(value)
         .map_err(|_| StoreError::Internal("stored execution command outcome is invalid".into()))?;
-    if stored.version != 1 {
+    if !matches!(stored.version, 1 | 2) {
         return Err(StoreError::Internal(
             "stored execution command outcome version is unsupported".into(),
         ));
@@ -1436,6 +1447,8 @@ fn decode_execution_outcome(value: &str) -> Result<ExecutionMutationOutcome, Sto
             id,
             project_id,
             thread_id,
+            run_kind,
+            work_backend,
             state,
             revision,
             created_at,
@@ -1444,6 +1457,13 @@ fn decode_execution_outcome(value: &str) -> Result<ExecutionMutationOutcome, Sto
             id: RunId::new(id).map_err(|_| invalid_execution_outcome())?,
             project_id: ProjectId::new(project_id).map_err(|_| invalid_execution_outcome())?,
             thread_id: ThreadId::new(thread_id).map_err(|_| invalid_execution_outcome())?,
+            kind: run_kind
+                .as_deref()
+                .map_or(Ok(RunKind::Unspecified), parse_run_kind)?,
+            work_backend: work_backend
+                .as_deref()
+                .map(parse_work_backend)
+                .transpose()?,
             state: parse_run_state(&state)?,
             revision,
             created_at,
@@ -1497,6 +1517,40 @@ const fn run_state_name(state: RunState) -> &'static str {
         RunState::Failed => "failed",
         RunState::Cancelled => "cancelled",
         RunState::InterruptedNeedsReview => "interrupted_needs_review",
+    }
+}
+
+const fn run_kind_name(kind: RunKind) -> &'static str {
+    match kind {
+        RunKind::Unspecified => "unspecified",
+        RunKind::Chat => "chat",
+        RunKind::Work => "work",
+        RunKind::Scheduled => "scheduled",
+    }
+}
+
+fn parse_run_kind(value: &str) -> Result<RunKind, StoreError> {
+    match value {
+        "unspecified" => Ok(RunKind::Unspecified),
+        "chat" => Ok(RunKind::Chat),
+        "work" => Ok(RunKind::Work),
+        "scheduled" => Ok(RunKind::Scheduled),
+        _ => Err(invalid_execution_outcome()),
+    }
+}
+
+const fn work_backend_name(backend: WorkExecutionBackend) -> &'static str {
+    match backend {
+        WorkExecutionBackend::HostDirect => "host_direct",
+        WorkExecutionBackend::IsolatedGuest => "isolated_guest",
+    }
+}
+
+fn parse_work_backend(value: &str) -> Result<WorkExecutionBackend, StoreError> {
+    match value {
+        "host_direct" => Ok(WorkExecutionBackend::HostDirect),
+        "isolated_guest" => Ok(WorkExecutionBackend::IsolatedGuest),
+        _ => Err(invalid_execution_outcome()),
     }
 }
 
@@ -1638,6 +1692,105 @@ fn begin(connection: &mut Connection) -> Result<Transaction<'_>, StoreError> {
 
 fn commit(transaction: Transaction<'_>) -> Result<(), StoreError> {
     transaction.commit().map_err(map_sqlite)
+}
+
+fn load_host_execution_policy(connection: &Connection) -> Result<HostExecutionPolicy, StoreError> {
+    let mut policy = connection
+        .query_row(
+            "SELECT revision,active,acknowledgment_version,acknowledged_at_unix_ms,
+                    tool_filesystem_read,tool_filesystem_write,tool_process_execute,
+                    broad_scope_acknowledged,updated_at_unix_ms
+             FROM host_execution_policy WHERE singleton_id=1",
+            [],
+            |row| {
+                Ok(HostExecutionPolicy {
+                    revision: mapping::unsigned(row, 0)?,
+                    active: row.get(1)?,
+                    acknowledgment_version: row.get(2)?,
+                    acknowledged_at: mapping::unsigned(row, 3)?,
+                    tool_classes: HostToolClasses {
+                        filesystem_read: row.get(4)?,
+                        filesystem_write: row.get(5)?,
+                        process_execute: row.get(6)?,
+                    },
+                    canonical_roots: Vec::new(),
+                    broad_scope_acknowledged: row.get(7)?,
+                    updated_at: mapping::unsigned(row, 8)?,
+                })
+            },
+        )
+        .map_err(map_sqlite)?;
+    let mut statement = connection
+        .prepare("SELECT canonical_path FROM host_execution_roots ORDER BY ordinal")
+        .map_err(map_sqlite)?;
+    policy.canonical_roots = statement
+        .query_map([], |row| row.get(0))
+        .map_err(map_sqlite)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(map_sqlite)?;
+    Ok(policy)
+}
+
+#[async_trait]
+impl HostExecutionPolicyStore for SqlCipherStore {
+    async fn get_host_execution_policy(&self) -> Result<HostExecutionPolicy, StoreError> {
+        self.with_store(|connection| load_host_execution_policy(connection))
+            .await
+    }
+
+    async fn replace_host_execution_policy(
+        &self,
+        policy: HostExecutionPolicy,
+        expected_revision: u64,
+    ) -> Result<HostExecutionPolicy, StoreError> {
+        self.with_store(move |connection| {
+            let transaction = begin(connection)?;
+            let changed = transaction
+                .execute(
+                    "UPDATE host_execution_policy SET
+                        revision=?1,active=?2,acknowledgment_version=?3,
+                        acknowledged_at_unix_ms=?4,tool_filesystem_read=?5,
+                        tool_filesystem_write=?6,tool_process_execute=?7,
+                        broad_scope_acknowledged=?8,updated_at_unix_ms=?9
+                     WHERE singleton_id=1 AND revision=?10",
+                    params![
+                        number(policy.revision)?,
+                        policy.active,
+                        policy.acknowledgment_version,
+                        number(policy.acknowledged_at)?,
+                        policy.tool_classes.filesystem_read,
+                        policy.tool_classes.filesystem_write,
+                        policy.tool_classes.process_execute,
+                        policy.broad_scope_acknowledged,
+                        number(policy.updated_at)?,
+                        number(expected_revision)?,
+                    ],
+                )
+                .map_err(map_sqlite)?;
+            if changed != 1 || policy.revision != expected_revision.saturating_add(1) {
+                return Err(StoreError::Conflict);
+            }
+            transaction
+                .execute("DELETE FROM host_execution_roots", [])
+                .map_err(map_sqlite)?;
+            for (ordinal, root) in policy.canonical_roots.iter().enumerate() {
+                transaction
+                    .execute(
+                        "INSERT INTO host_execution_roots(ordinal,canonical_path) VALUES (?1,?2)",
+                        params![
+                            i64::try_from(ordinal).map_err(|_| StoreError::Internal(
+                                "Host Tools root ordinal overflow".into()
+                            ))?,
+                            root
+                        ],
+                    )
+                    .map_err(map_sqlite)?;
+            }
+            commit(transaction)?;
+            Ok(policy)
+        })
+        .await
+    }
 }
 
 #[async_trait]

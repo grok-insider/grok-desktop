@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use grok_domain::{
     Approval, ApprovalId, Automation, AutomationHistoryEntry, AutomationId, ChatModelPreference,
-    DesktopPreferences, Message, MessageId, Project, ProjectId, Run, RunEvent, RunEventKind, RunId,
-    SideEffect, Thread, ThreadId, UnixMillis,
+    DesktopPreferences, HostExecutionPolicy, Message, MessageId, Project, ProjectId, Run, RunEvent,
+    RunEventKind, RunId, SideEffect, Thread, ThreadId, UnixMillis,
 };
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -82,6 +82,20 @@ pub enum StoreError {
     /// Storage reported a non-recoverable error.
     #[error("internal: {0}")]
     Internal(String),
+}
+
+/// Durable singleton store for the versioned Host Tools enrollment.
+#[async_trait]
+pub trait HostExecutionPolicyStore: Send + Sync {
+    /// Loads the current inactive, active, or revoked policy snapshot.
+    async fn get_host_execution_policy(&self) -> Result<HostExecutionPolicy, StoreError>;
+
+    /// Atomically replaces the policy and complete root set.
+    async fn replace_host_execution_policy(
+        &self,
+        policy: HostExecutionPolicy,
+        expected_revision: u64,
+    ) -> Result<HostExecutionPolicy, StoreError>;
 }
 
 /// Event payload before the store assigns a run-local sequence.

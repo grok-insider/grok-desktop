@@ -117,9 +117,9 @@ pub use models::{
 };
 pub use ports::{
     ChatModelPreferenceStore, Clock, DatabaseKey, DesktopPreferencesStore,
-    ExecutionMutationOutcome, ExecutionStore, IdGenerator, KeyProviderError, MutationCommand,
-    NewRunEvent, SecureKeyProvider, StoreError, WorkspaceSearchHit, WorkspaceSearchKind,
-    WorkspaceStore,
+    ExecutionMutationOutcome, ExecutionStore, HostExecutionPolicyStore, IdGenerator,
+    KeyProviderError, MutationCommand, NewRunEvent, SecureKeyProvider, StoreError,
+    WorkspaceSearchHit, WorkspaceSearchKind, WorkspaceStore,
 };
 pub use preferences::{DesktopPreferencesService, UpdateDesktopPreferences};
 pub use privileged_gateway::{
