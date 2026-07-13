@@ -112,7 +112,8 @@ unavailable until it has its own bounded, durable orchestration contract.
 4. [Agent handoff](04-agent-handoff.md)
 5. [Commit plan](05-commit-plan.md)
 6. [Open risks and external gates](06-open-risks-and-external-gates.md)
-7. [SuperGrok API Chat research](../research/supergrok-api-chat-contract.md)
+7. [Host Tools opt-in dual-mode design](07-host-tools-opt-in-dual-mode.md) — product plan for risk-aware Host Tools alongside Isolated Work
+8. [SuperGrok API Chat research](../research/supergrok-api-chat-contract.md)
 
 `ai-continue-plan.md` and `ui-plan.md` are historical working notes, not
 canonical status sources.
