@@ -21,6 +21,13 @@ import type { WorkspaceSearchHit } from "../services/desktopClient";
 import { IconButton } from "./ui";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import {
@@ -466,35 +473,39 @@ function SearchDialog({
         aria-describedby={undefined}
       >
         <DialogTitle className="sr-only">Search Grok Desktop</DialogTitle>
-        <div className="flex h-[55px] items-center gap-2.5 border-b border-border pr-3 pl-4 text-subtle-foreground">
-          <Search size={18} aria-hidden="true" />
-          <input
+        <Command
+          // Results come from the daemon; never let cmdk re-filter them.
+          shouldFilter={false}
+          // cmdk names the input through its own hidden label element.
+          label="Search everything"
+          className="bg-transparent [&_[data-slot=command-input-wrapper]]:h-[55px] [&_[data-slot=command-input-wrapper]]:gap-2.5 [&_[data-slot=command-input-wrapper]]:border-border [&_[data-slot=command-input-wrapper]]:pr-3 [&_[data-slot=command-input-wrapper]]:pl-4"
+        >
+          <CommandInput
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onValueChange={setQuery}
             placeholder="Search everything"
             aria-label="Search everything"
             aria-describedby="workspace-search-status"
             aria-invalid={queryValidationError ? "true" : undefined}
             maxLength={256}
-            className="min-w-0 flex-1 rounded-md border-0 bg-transparent px-1 py-1 text-body-lg text-foreground outline-none placeholder:text-subtle-foreground focus-visible:ring-[3px] focus-visible:ring-ring"
+            className="text-body-lg text-foreground placeholder:text-subtle-foreground"
+            trailing={
+              <>
+                <span
+                  className={cn(
+                    "shrink-0 font-mono text-label tabular-nums",
+                    queryValidationError ? "text-destructive" : "text-subtle-foreground",
+                  )}
+                  aria-hidden="true"
+                >
+                  {queryByteLength}/256 B
+                </span>
+                <IconButton label="Close search" onClick={onClose}>
+                  <X size={17} />
+                </IconButton>
+              </>
+            }
           />
-          <span
-            className={cn(
-              "shrink-0 font-mono text-label tabular-nums",
-              queryValidationError ? "text-destructive" : "text-subtle-foreground",
-            )}
-            aria-hidden="true"
-          >
-            {queryByteLength}/256 B
-          </span>
-          <IconButton label="Close search" onClick={onClose}>
-            <X size={17} />
-          </IconButton>
-        </div>
-        <div className="max-h-[370px] overflow-y-auto p-2">
-          <div className="px-2 py-1.5 font-mono text-label font-semibold tracking-[0.06em] text-subtle-foreground uppercase">
-            {query ? "Results" : "Recent"}
-          </div>
           <span id="workspace-search-status" className="sr-only" role="status" aria-live="polite">
             {searching
               ? "Searching the local workspace"
@@ -506,59 +517,68 @@ function SearchDialog({
                   ? `${results.length} workspace results`
                   : `${results.length} recent items`}
           </span>
-          {searching && <SearchResultsSkeleton />}
-          {!searching && queryValidationError && (
-            <Alert variant="destructive" className="m-2 w-auto p-3">
-              <AlertDescription className="text-body-sm leading-5 text-destructive">{queryValidationError}</AlertDescription>
-            </Alert>
-          )}
-          {!searching && !queryValidationError && matchingSearchError && (
-            <Alert variant="destructive" className="m-2 w-auto p-3">
-              <AlertDescription className="text-body-sm leading-5 text-destructive">{matchingSearchError}</AlertDescription>
-              <Button
-                className="col-start-2 mt-3 justify-self-start"
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setRetry((value) => value + 1)}
+          <CommandList className="max-h-[370px] p-2">
+            {searching && <SearchResultsSkeleton />}
+            {!searching && queryValidationError && (
+              <Alert variant="destructive" className="m-2 w-auto p-3">
+                <AlertDescription className="text-body-sm leading-5 text-destructive">{queryValidationError}</AlertDescription>
+              </Alert>
+            )}
+            {!searching && !queryValidationError && matchingSearchError && (
+              <Alert variant="destructive" className="m-2 w-auto p-3">
+                <AlertDescription className="text-body-sm leading-5 text-destructive">{matchingSearchError}</AlertDescription>
+                <Button
+                  className="col-start-2 mt-3 justify-self-start"
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setRetry((value) => value + 1)}
+                >
+                  Retry search
+                </Button>
+              </Alert>
+            )}
+            {!searching && !queryValidationError && !matchingSearchError && results.length > 0 && (
+              <CommandGroup
+                heading={query ? "Results" : "Recent"}
+                className="p-0 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-label [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.06em] [&_[cmdk-group-heading]]:text-subtle-foreground [&_[cmdk-group-heading]]:uppercase"
               >
-                Retry search
-              </Button>
-            </Alert>
-          )}
-          {!searching && !queryValidationError && !matchingSearchError && results.map((result) => (
-            <button
-              key={`${result.kind}-${result.id}`}
-              type="button"
-              onClick={() => {
-                navigate(result.to);
-                onClose();
-              }}
-              className="flex min-h-12 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring"
-            >
-              <Sparkles size={16} aria-hidden="true" />
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="truncate text-body font-semibold">{result.title}</strong>
-                <small className="text-label text-subtle-foreground">{result.meta}</small>
-                {result.snippet && (
-                  <span className="line-clamp-2 text-body-sm leading-4 text-muted-foreground [overflow-wrap:anywhere]">
-                    {result.snippet}
-                  </span>
-                )}
-              </span>
-            </button>
-          ))}
-          {!searching && !queryValidationError && !matchingSearchError && normalizedQuery && results.length === 0 && (
-            <p className="m-0 my-5 px-4 text-center text-body-sm text-subtle-foreground">
-              No matching workspace items. Try fewer or different terms.
-            </p>
-          )}
-          {!searching && !queryValidationError && !matchingSearchError && matchingSearchResults?.hasMore && (
-            <p className="m-0 px-3 py-2 text-center text-label text-subtle-foreground" role="status">
-              More matches are available. Refine the search to narrow the results.
-            </p>
-          )}
-        </div>
+                {results.map((result) => (
+                  <CommandItem
+                    key={`${result.kind}-${result.id}`}
+                    value={`${result.kind}-${result.id}`}
+                    onSelect={() => {
+                      navigate(result.to);
+                      onClose();
+                    }}
+                    className="min-h-12 cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5"
+                  >
+                    <Sparkles size={16} aria-hidden="true" />
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <strong className="truncate text-body font-semibold">{result.title}</strong>
+                      <small className="text-label text-subtle-foreground">{result.meta}</small>
+                      {result.snippet && (
+                        <span className="line-clamp-2 text-body-sm leading-4 text-muted-foreground [overflow-wrap:anywhere]">
+                          {result.snippet}
+                        </span>
+                      )}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {!searching && !queryValidationError && !matchingSearchError && normalizedQuery && results.length === 0 && (
+              <p className="m-0 my-5 px-4 text-center text-body-sm text-subtle-foreground">
+                No matching workspace items. Try fewer or different terms.
+              </p>
+            )}
+            {!searching && !queryValidationError && !matchingSearchError && matchingSearchResults?.hasMore && (
+              <p className="m-0 px-3 py-2 text-center text-label text-subtle-foreground" role="status">
+                More matches are available. Refine the search to narrow the results.
+              </p>
+            )}
+          </CommandList>
+        </Command>
       </DialogContent>
     </Dialog>
   );

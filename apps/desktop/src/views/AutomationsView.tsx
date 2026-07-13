@@ -31,6 +31,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -365,20 +373,21 @@ function AutomationDetail({
   onEdit(): void;
 }) {
   return (
-    <Dialog open={automation !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Sheet open={automation !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       {automation && (
-        <DialogContent
-          className="inset-y-0 top-0 right-0 left-auto flex h-dvh w-[min(430px,100vw)] max-w-none translate-x-0 flex-col gap-0 overflow-y-auto rounded-none border-y-0 border-r-0 p-5 shadow-dialog data-[state=open]:slide-in-from-right-4"
+        <SheetContent
+          side="right"
+          className="w-[min(430px,100vw)] gap-0 overflow-y-auto p-5 shadow-dialog sm:max-w-none"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             restoreFocusRef.current?.focus();
           }}
         >
-          <DialogHeader className="border-b border-border pb-4 pr-9">
+          <SheetHeader className="border-b border-border p-0 pb-4 pr-9">
             <Badge variant="neutral" className="mb-1">Inactive definition</Badge>
-            <DialogTitle className="text-title">{automation.name}</DialogTitle>
-            <DialogDescription>{automation.projectName}</DialogDescription>
-          </DialogHeader>
+            <SheetTitle className="text-title">{automation.name}</SheetTitle>
+            <SheetDescription>{automation.projectName}</SheetDescription>
+          </SheetHeader>
 
           <DetailSection title="Task">
             <p className="m-0 whitespace-pre-wrap text-body text-muted-foreground">{automation.prompt ?? "No task prompt recorded."}</p>
@@ -406,7 +415,7 @@ function AutomationDetail({
             </div>
           </DetailSection>
 
-          <DialogFooter className="mt-auto border-t border-border pt-4 max-[480px]:flex-col-reverse">
+          <SheetFooter className="mt-auto flex-row justify-end border-t border-border p-0 pt-4 max-[480px]:flex-col-reverse">
             <Button className="max-[480px]:w-full" variant="outline" disabled title={AUTOMATION_DEFINITION_ONLY_REASON}>
               <Play size={15} aria-hidden="true" /> Run unavailable
             </Button>
@@ -420,10 +429,10 @@ function AutomationDetail({
             >
               Edit definition
             </Button>
-          </DialogFooter>
-        </DialogContent>
+          </SheetFooter>
+        </SheetContent>
       )}
-    </Dialog>
+    </Sheet>
   );
 }
 

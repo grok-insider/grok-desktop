@@ -204,7 +204,7 @@ describe("Grok Desktop shell", () => {
         fireEvent.click(trigger);
       }
 
-      const input = screen.getByRole("textbox", { name: "Search everything" });
+      const input = screen.getByRole("combobox", { name: "Search everything" });
       await waitFor(() => expect(input).toHaveFocus());
       fireEvent.keyDown(document, { key: "Escape" });
 
@@ -218,12 +218,12 @@ describe("Grok Desktop shell", () => {
     render(<DesktopClientProvider client={client}><MemoryRouter><App /></MemoryRouter></DesktopClientProvider>);
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const input = screen.getByRole("textbox", { name: "Search everything" });
+    const input = screen.getByRole("combobox", { name: "Search everything" });
     fireEvent.change(input, { target: { value: "customer evidence" } });
 
     expect(await screen.findByText("Customer evidence and launch actions")).toBeInTheDocument();
     expect(client.search).toHaveBeenCalledWith({ query: "customer evidence", limit: 8 });
-    fireEvent.click(screen.getByRole("button", { name: /Q3 launch narrative/ }));
+    fireEvent.click(screen.getByRole("option", { name: /Q3 launch narrative/ }));
     expect(await screen.findByRole("heading", { name: "Q3 launch narrative" })).toBeInTheDocument();
   });
 
@@ -232,7 +232,7 @@ describe("Grok Desktop shell", () => {
     render(<DesktopClientProvider client={client}><MemoryRouter><App /></MemoryRouter></DesktopClientProvider>);
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    fireEvent.change(screen.getByRole("textbox", { name: "Search everything" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Search everything" }), {
       target: { value: "customer evidence" },
     });
 
@@ -247,7 +247,7 @@ describe("Grok Desktop shell", () => {
     render(<DesktopClientProvider client={client}><MemoryRouter><App /></MemoryRouter></DesktopClientProvider>);
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const input = screen.getByRole("textbox", { name: "Search everything" });
+    const input = screen.getByRole("combobox", { name: "Search everything" });
     fireEvent.change(input, { target: { value: "first query" } });
     await waitFor(() => expect(client.requests).toHaveLength(1));
     fireEvent.change(input, { target: { value: "second query" } });
@@ -294,7 +294,7 @@ describe("Grok Desktop shell", () => {
     render(<DesktopClientProvider client={client}><MemoryRouter><App /></MemoryRouter></DesktopClientProvider>);
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const input = screen.getByRole("textbox", { name: "Search everything" });
+    const input = screen.getByRole("combobox", { name: "Search everything" });
     fireEvent.change(input, { target: { value: "é".repeat(129) } });
     expect(await screen.findByRole("alert")).toHaveTextContent("limited to 256 UTF-8 bytes");
     expect(input).toHaveAttribute("aria-invalid", "true");
@@ -326,8 +326,8 @@ describe("Grok Desktop shell", () => {
     const client = new SearchHitClient(hit);
     render(<DesktopClientProvider client={client}><MemoryRouter><App /></MemoryRouter></DesktopClientProvider>);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    fireEvent.change(screen.getByRole("textbox", { name: "Search everything" }), { target: { value: "result" } });
-    fireEvent.click(await screen.findByRole("button", { name: new RegExp(hit.title, "i") }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Search everything" }), { target: { value: "result" } });
+    fireEvent.click(await screen.findByRole("option", { name: new RegExp(hit.title, "i") }));
     expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
   });
 
