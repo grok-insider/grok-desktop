@@ -14,6 +14,8 @@ import type {
   DesktopClient,
   DesktopPreferences,
   DesktopSnapshot,
+  HostExecutionEnrollment,
+  HostExecutionPolicy,
   ManagedIntegrationDetail,
   LibraryItem,
   MediaCreation,
@@ -77,6 +79,21 @@ export class MockDesktopClient implements DesktopClient {
     defaultModelReady: true,
   };
   private conversationMutationSequence = 0;
+  private hostPolicy: HostExecutionPolicy = {
+    revision: 0,
+    active: false,
+    acknowledgmentVersion: 0,
+    requiredAcknowledgmentVersion: 1,
+    acknowledgedAtUnixMs: 0,
+    filesystemRead: false,
+    filesystemWrite: false,
+    processExecute: false,
+    pathRoots: [],
+    broadScopeAcknowledged: false,
+    updatedAtUnixMs: 0,
+    runtimePrepared: false,
+    unavailableReasonCode: "host_tools_not_enrolled",
+  };
 
   constructor(options: { firstRun?: boolean } = {}) {
     if (options.firstRun) this.account = accountState(false, false);
@@ -85,6 +102,61 @@ export class MockDesktopClient implements DesktopClient {
   async getSnapshot(): Promise<DesktopSnapshot> {
     return structuredClone(this.snapshot);
   }
+
+  async selectHostWorkFolder(): Promise<string | undefined> {
+    return "/home/friend/Work";
+  }
+
+  async getHostExecutionPolicy(): Promise<HostExecutionPolicy> {
+    return structuredClone(this.hostPolicy);
+  }
+
+  async enrollHostExecution(input: HostExecutionEnrollment): Promise<HostExecutionPolicy> {
+    this.hostPolicy = {
+      ...this.hostPolicy,
+      ...input,
+      revision: input.expectedRevision + 1,
+      active: true,
+      acknowledgedAtUnixMs: Date.now(),
+      updatedAtUnixMs: Date.now(),
+      runtimePrepared: false,
+      unavailableReasonCode: "host_tools_runtime_not_prepared",
+    };
+    return structuredClone(this.hostPolicy);
+  }
+
+  async revokeHostExecution(expectedRevision: number): Promise<HostExecutionPolicy> {
+    this.hostPolicy = {
+      ...this.hostPolicy,
+      revision: expectedRevision + 1,
+      active: false,
+      runtimePrepared: false,
+      unavailableReasonCode: "host_tools_not_enrolled",
+    };
+    return structuredClone(this.hostPolicy);
+  }
+
+  async prepareHostWorkRuntime(): Promise<HostExecutionPolicy> {
+    this.hostPolicy = { ...this.hostPolicy, runtimePrepared: true, unavailableReasonCode: "" };
+    return structuredClone(this.hostPolicy);
+  }
+
+  async deactivateHostWorkRuntime(): Promise<HostExecutionPolicy> {
+    this.hostPolicy = {
+      ...this.hostPolicy,
+      runtimePrepared: false,
+      unavailableReasonCode: "host_tools_runtime_not_prepared",
+    };
+    return structuredClone(this.hostPolicy);
+  }
+
+  async cancelHostWork(_runId: string): Promise<void> {}
+
+  async decideHostWorkApproval(_input: {
+    approvalId: string;
+    expectedRevision: number;
+    approved: boolean;
+  }): Promise<void> {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);

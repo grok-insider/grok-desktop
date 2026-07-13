@@ -193,6 +193,15 @@ pub trait ExecutionStore: Send + Sync {
     /// Lists bounded non-terminal `HostDirect` Work runs for restart recovery.
     async fn list_recoverable_host_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError>;
 
+    /// Lists recent `HostDirect` Work runs for bounded product reload.
+    async fn list_host_work_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError>;
+
+    /// Loads the latest still-pending approval for one run, when present.
+    async fn pending_approval_for_run(
+        &self,
+        run_id: &RunId,
+    ) -> Result<Option<Approval>, StoreError>;
+
     /// Saves a revisioned side effect.
     async fn save_effect(
         &self,

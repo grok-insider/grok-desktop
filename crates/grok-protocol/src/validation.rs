@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn validates_nonce_version_and_deadline() {
-        assert_eq!(PROTOCOL_VERSION, 27);
+        assert_eq!(PROTOCOL_VERSION, 28);
         assert!(validate_envelope(&request(), &[7; 32], 99).is_ok());
         for version in 0..PROTOCOL_VERSION {
             let mut previous_epoch = request();
@@ -1146,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_twenty_seven_host_work_request_cancel_and_result_round_trip() {
+    fn epoch_twenty_eight_host_work_requests_and_snapshots_round_trip() {
         let start = v1::StartHostWorkRequest {
             project_id: "project-1".into(),
             thread_id: "thread-1".into(),
@@ -1197,5 +1197,33 @@ mod tests {
             decoded.result,
             Some(v1::response::Result::HostWorkResult(value)) if value == result
         ));
+
+        let list = v1::Request {
+            operation: Some(v1::request::Operation::ListHostWorkRuns(
+                v1::ListHostWorkRunsRequest { limit: 25 },
+            )),
+        };
+        let decoded = v1::Request::decode(list.encode_to_vec().as_slice())
+            .expect("decode bounded Host Work list request");
+        assert!(matches!(
+            decoded.operation,
+            Some(v1::request::Operation::ListHostWorkRuns(value)) if value.limit == 25
+        ));
+
+        let snapshots = v1::HostWorkList {
+            items: vec![v1::HostWorkSnapshot {
+                run: result.run,
+                pending_approval: Some(v1::Approval {
+                    id: "approval-1".into(),
+                    run_id: "run-1".into(),
+                    ..v1::Approval::default()
+                }),
+            }],
+        };
+        assert_eq!(
+            v1::HostWorkList::decode(snapshots.encode_to_vec().as_slice())
+                .expect("decode durable Host Work snapshots"),
+            snapshots
+        );
     }
 }

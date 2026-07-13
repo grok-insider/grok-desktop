@@ -9,6 +9,7 @@ import {
   Mic,
   Plus,
   RefreshCw,
+  ShieldAlert,
   Video,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -172,13 +173,22 @@ export function Composer() {
           <TabsTrigger
             value="work"
             className={modeTabClassName}
-            disabled={!workAvailable}
             title={!workAvailable ? workCapability?.reason : undefined}
           >
             Work
           </TabsTrigger>
         </TabsList>
       </Tabs>
+      {mode === "work" && !workAvailable && (
+        <div className="mb-3 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-soft p-3 text-warning" role="status">
+          <ShieldAlert className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <strong className="text-body font-semibold">Work needs an execution mode</strong>
+            <p className="m-0 mt-1 text-body-sm">{workCapability?.reason ?? "Review Host Tools risks or prepare Isolated Work."}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>Work settings</Button>
+        </div>
+      )}
       <div className="min-h-[148px] rounded-xl border border-input bg-card px-3.5 pt-3.5 pb-2.5 shadow-overlay transition-[border-color,box-shadow] duration-150 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring">
         <label htmlFor="main-prompt" className="sr-only">Message Grok</label>
         <textarea
@@ -380,7 +390,11 @@ export function Composer() {
           </Select>
         </span>
         <span className="flex items-center gap-1 max-[680px]:hidden">
-          <CircleAlert size={13} /> {interfacePreview ? "Interface preview only" : modeAvailable ? "Grok execution available" : "Grok execution unavailable"}
+          <CircleAlert size={13} /> {interfacePreview
+            ? "Interface preview only"
+            : mode === "work" && modeAvailable
+              ? snapshot?.workExecution.mode === "host_direct" ? "HOST · runs on this computer" : "ISOLATED · protected guest"
+              : modeAvailable ? "Grok execution available" : "Grok execution unavailable"}
         </span>
       </div>
       <span className="sr-only" aria-live="polite">{announcement}</span>
@@ -527,4 +541,3 @@ function ComposerModelMenu({
     </DropdownMenu>
   );
 }
-

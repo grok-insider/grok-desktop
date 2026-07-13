@@ -21,6 +21,9 @@ import {
   ConversationTurnState,
   type DesktopPreferences,
   type HealthResponse,
+  type HostExecutionPolicy,
+  type HostWorkList,
+  type HostWorkResult,
   type MessageList,
   type Project,
   type ProjectList,
@@ -35,8 +38,8 @@ import {
   type SuperGrokEnrollmentStatus,
 } from "../generated/daemon/v1/daemon.js";
 
-// Epoch twenty-seven adds cancellable asynchronous Host Work dispatch.
-export const PROTOCOL_VERSION = 27;
+// Epoch twenty-eight adds bounded durable Host Work activity reload.
+export const PROTOCOL_VERSION = 28;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;
@@ -106,6 +109,9 @@ type ResultValueMap = {
   managedIntegration: Extract<ResponseResult, { $case: "managedIntegration" }>["value"];
   supergrokEnrollmentStatus: Extract<ResponseResult, { $case: "supergrokEnrollmentStatus" }>["value"];
   usageSummary: Extract<ResponseResult, { $case: "usageSummary" }>["value"];
+  hostExecutionPolicy: Extract<ResponseResult, { $case: "hostExecutionPolicy" }>["value"];
+  hostWorkResult: Extract<ResponseResult, { $case: "hostWorkResult" }>["value"];
+  hostWorkList: Extract<ResponseResult, { $case: "hostWorkList" }>["value"];
 };
 
 type RequestOperation = NonNullable<Request["operation"]>;
@@ -467,6 +473,91 @@ export class DaemonProtocolClient {
       "capabilities",
     );
     return response.statuses;
+  }
+
+  async getCapabilitySnapshot(): Promise<ResultValueMap["capabilities"]> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "resolveCapabilities", value: { facts: undefined } },
+        "",
+        CHAT_MODEL_RPC_TIMEOUT_MS,
+      ),
+      "capabilities",
+    );
+  }
+
+  async getHostExecutionPolicy(): Promise<HostExecutionPolicy> {
+    return expectResult(
+      await this.rpc.request({ $case: "getHostExecutionPolicy", value: {} }),
+      "hostExecutionPolicy",
+    );
+  }
+
+  async enrollHostExecution(
+    input: OperationValue<"enrollHostExecution">,
+    idempotencyKey: string,
+  ): Promise<HostExecutionPolicy> {
+    return expectResult(
+      await this.rpc.request({ $case: "enrollHostExecution", value: input }, idempotencyKey),
+      "hostExecutionPolicy",
+    );
+  }
+
+  async revokeHostExecution(expectedRevision: bigint, idempotencyKey: string): Promise<HostExecutionPolicy> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "revokeHostExecution", value: { expectedRevision } },
+        idempotencyKey,
+      ),
+      "hostExecutionPolicy",
+    );
+  }
+
+  async prepareHostWorkRuntime(idempotencyKey: string): Promise<HostExecutionPolicy> {
+    return expectResult(
+      await this.rpc.request({ $case: "prepareHostWorkRuntime", value: {} }, idempotencyKey),
+      "hostExecutionPolicy",
+    );
+  }
+
+  async deactivateHostWorkRuntime(idempotencyKey: string): Promise<HostExecutionPolicy> {
+    return expectResult(
+      await this.rpc.request({ $case: "deactivateHostWorkRuntime", value: {} }, idempotencyKey),
+      "hostExecutionPolicy",
+    );
+  }
+
+  async startHostWork(
+    projectId: string,
+    threadId: string,
+    prompt: string,
+    idempotencyKey: string,
+  ): Promise<HostWorkResult> {
+    return expectResult(
+      await this.rpc.request(
+        { $case: "startHostWork", value: { projectId, threadId, prompt } },
+        idempotencyKey,
+        20_000,
+      ),
+      "hostWorkResult",
+    );
+  }
+
+  async cancelHostWork(runId: string, idempotencyKey: string): Promise<HostWorkResult> {
+    return expectResult(
+      await this.rpc.request({ $case: "cancelHostWork", value: { runId } }, idempotencyKey),
+      "hostWorkResult",
+    );
+  }
+
+  async listHostWorkRuns(limit = 50): Promise<HostWorkList> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new DaemonProtocolError("Host Work list limit must be between 1 and 100");
+    }
+    return expectResult(
+      await this.rpc.request({ $case: "listHostWorkRuns", value: { limit } }),
+      "hostWorkList",
+    );
   }
 
   async pollRunEvents(

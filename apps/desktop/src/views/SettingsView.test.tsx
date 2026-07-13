@@ -58,7 +58,7 @@ describe("SettingsView", () => {
 
     const navigation = screen.getByRole("navigation", { name: "Settings sections" });
     const sectionButtons = within(navigation).getAllByRole("button");
-    expect(sectionButtons).toHaveLength(4);
+    expect(sectionButtons).toHaveLength(5);
     sectionButtons.forEach((button) => expect(button).toHaveAttribute("aria-controls", "settings-panel"));
 
     const accountButton = within(navigation).getByRole("button", { name: "Account" });
@@ -81,6 +81,42 @@ describe("SettingsView", () => {
     fireEvent.keyDown(usageButton, { key: "Home" });
     expect(accountButton).toHaveFocus();
     expect(screen.getByRole("region", { name: "Account" })).toBeInTheDocument();
+  });
+
+  it("requires the three-step Host Tools risk enrollment", async () => {
+    const user = userEvent.setup();
+    const client = new MockDesktopClient();
+    const enroll = vi.spyOn(client, "enrollHostExecution");
+    renderSettings(client);
+
+    await user.click(screen.getByRole("button", { name: "Work execution" }));
+    const enable = await screen.findByRole("button", { name: "Review risks and enable" });
+    await waitFor(() => expect(enable).toBeEnabled());
+    await user.click(enable);
+    expect(screen.getByRole("heading", { name: /Enable Host Tools · Step 1 of 3/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByRole("heading", { name: /Step 2 of 3/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    expect(await screen.findByText("/home/friend/Work")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(screen.getByRole("heading", { name: /Step 3 of 3/ })).toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: "Enable Host Tools" });
+    expect(confirm).toBeDisabled();
+    await user.type(
+      screen.getByLabelText("Acknowledgment"),
+      "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER",
+    );
+    await user.click(confirm);
+
+    await waitFor(() => expect(enroll).toHaveBeenCalledWith(expect.objectContaining({
+      expectedRevision: 0,
+      acknowledgmentVersion: 1,
+      filesystemRead: true,
+      pathRoots: ["/home/friend/Work"],
+      typedAcknowledgment: "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER",
+    })));
   });
 
   it("saves daemon-owned close behavior with the loaded revision", async () => {

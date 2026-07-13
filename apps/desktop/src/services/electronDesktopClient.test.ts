@@ -110,6 +110,60 @@ describe("ElectronDesktopClient", () => {
     });
   });
 
+  it("starts Work only through the daemon-selected Host Tools backend", async () => {
+    const bootstrap = bootstrapResponse();
+    if (bootstrap.kind !== "daemon.bootstrap") throw new Error("expected bootstrap response");
+    bootstrap.workExecutionMode = "host_direct";
+    bootstrap.hostWorkRuntimeReady = true;
+    const thread = conversationThread();
+    const run = {
+      id: "run-host-1",
+      projectId: "inbox",
+      threadId: thread.id,
+      state: "completed" as const,
+      revision: 2,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+      kind: "work" as const,
+      workBackend: "host_direct" as const,
+    };
+    const bridge = fakeBridge(async (request) => {
+      if (request.kind === "daemon.bootstrap") return bootstrap;
+      if (request.kind === "daemon.createThread") return { kind: "daemon.thread", thread };
+      if (request.kind === "daemon.startHostWork") {
+        expect(request).toMatchObject({
+          projectId: "inbox",
+          threadId: thread.id,
+          prompt: "Inspect this workspace",
+        });
+        expect(request.idempotencyKey).toBeTruthy();
+        return { kind: "daemon.hostWork", work: { run } };
+      }
+      throw new Error(`unexpected request ${request.kind}`);
+    });
+    const client = new ElectronDesktopClient(bridge);
+
+    await expect(client.startRun({
+      prompt: "Inspect this workspace",
+      mode: "work",
+      projectId: "inbox",
+      searchEnabled: false,
+      researchEnabled: false,
+    })).resolves.toEqual({ runId: run.id, threadId: thread.id });
+
+    const snapshot = await client.getSnapshot();
+    expect(snapshot.workExecution).toEqual({
+      mode: "host_direct",
+      hostWorkRuntimeReady: true,
+      hostBoundRunActive: false,
+    });
+    expect(snapshot.runs).toContainEqual(expect.objectContaining({
+      id: run.id,
+      executionMode: "host_direct",
+      state: "completed",
+    }));
+  });
+
   it("keeps Automations limited even if an inconsistent daemon reports it available", async () => {
     const response = bootstrapResponse();
     if (response.kind !== "daemon.bootstrap") throw new Error("expected bootstrap response");
@@ -3606,6 +3660,10 @@ function bootstrapResponse(chatAvailability: "available" | "unavailable" = "avai
       xaiApiKeyConfigured: chatAvailability === "available",
       xaiCapabilitiesResolved: chatAvailability === "available",
     },
+    workExecutionMode: "limited",
+    hostWorkRuntimeReady: false,
+    hostBoundRunActive: false,
+    hostWork: [],
     capabilities: [
       {
         id: "chat",

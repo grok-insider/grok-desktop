@@ -49,7 +49,14 @@ export interface RunSummary {
   updatedAt: string;
   detail: string;
   steps: { label: string; state: "done" | "active" | "waiting" }[];
-  approval?: { title: string; detail: string; risk: "low" | "medium" | "high" };
+  executionMode?: "host_direct" | "isolated_guest";
+  approval?: {
+    id: string;
+    revision: number;
+    title: string;
+    detail: string;
+    risk: "low" | "elevated" | "high" | "critical";
+  };
 }
 
 export interface ThreadSummary {
@@ -359,6 +366,11 @@ export interface DesktopSnapshot {
     interfacePreview?: boolean;
   };
   capabilities: CapabilityStatus[];
+  workExecution: {
+    mode: "limited" | "host_direct" | "isolated_guest";
+    hostWorkRuntimeReady: boolean;
+    hostBoundRunActive: boolean;
+  };
   projects: ProjectSummary[];
   runs: RunSummary[];
   threads: ThreadSummary[];
@@ -371,6 +383,33 @@ export interface DesktopPreferences {
   keepRunningInNotificationArea: boolean;
   revision: number;
   updatedAtUnixMs: number;
+}
+
+export interface HostExecutionPolicy {
+  revision: number;
+  active: boolean;
+  acknowledgmentVersion: number;
+  requiredAcknowledgmentVersion: number;
+  acknowledgedAtUnixMs: number;
+  filesystemRead: boolean;
+  filesystemWrite: boolean;
+  processExecute: boolean;
+  pathRoots: string[];
+  broadScopeAcknowledged: boolean;
+  updatedAtUnixMs: number;
+  runtimePrepared: boolean;
+  unavailableReasonCode: string;
+}
+
+export interface HostExecutionEnrollment {
+  expectedRevision: number;
+  acknowledgmentVersion: number;
+  typedAcknowledgment: string;
+  filesystemRead: boolean;
+  filesystemWrite: boolean;
+  processExecute: boolean;
+  pathRoots: string[];
+  broadScopeAcknowledged: boolean;
 }
 
 export interface ChatModelPreference {
@@ -447,6 +486,14 @@ export interface DesktopClient {
   ): Promise<ArtifactRemovalResult>;
   getAccountSetup(): Promise<AccountSetupState>;
   getDesktopPreferences(): Promise<DesktopPreferences>;
+  selectHostWorkFolder(): Promise<string | undefined>;
+  getHostExecutionPolicy(): Promise<HostExecutionPolicy>;
+  enrollHostExecution(input: HostExecutionEnrollment): Promise<HostExecutionPolicy>;
+  revokeHostExecution(expectedRevision: number): Promise<HostExecutionPolicy>;
+  prepareHostWorkRuntime(): Promise<HostExecutionPolicy>;
+  deactivateHostWorkRuntime(): Promise<HostExecutionPolicy>;
+  cancelHostWork(runId: string): Promise<void>;
+  decideHostWorkApproval(input: { approvalId: string; expectedRevision: number; approved: boolean }): Promise<void>;
   updateDesktopPreferences(input: { expectedRevision: number; keepRunningInNotificationArea: boolean }): Promise<DesktopPreferences>;
   getChatModelCatalog(): Promise<ChatModelCatalog>;
   getUsageSummary(input: GetUsageSummaryInput): Promise<UsageSummary>;

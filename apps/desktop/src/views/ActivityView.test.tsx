@@ -24,6 +24,19 @@ class PendingSnapshotClient extends MockDesktopClient {
   }
 }
 
+class HostActionClient extends MockDesktopClient {
+  readonly decisions: { approvalId: string; expectedRevision: number; approved: boolean }[] = [];
+  readonly cancellations: string[] = [];
+
+  override async decideHostWorkApproval(input: { approvalId: string; expectedRevision: number; approved: boolean }) {
+    this.decisions.push(input);
+  }
+
+  override async cancelHostWork(runId: string) {
+    this.cancellations.push(runId);
+  }
+}
+
 function renderActivity(client: MockDesktopClient = new MockDesktopClient(), initialEntry = "/activity") {
   render(
     <DesktopClientProvider client={client}>
@@ -111,8 +124,8 @@ describe("ActivityView", () => {
     await waitFor(() => expect(allTab).toHaveAttribute("aria-selected", "true"));
   });
 
-  it("keeps execution and approval mutations unavailable", async () => {
-    const client = new MockDesktopClient();
+  it("dispatches exact approval decisions while preserving unsupported legacy controls", async () => {
+    const client = new HostActionClient();
     renderActivity(client);
 
     const pause = await screen.findByRole("button", { name: "Pause unavailable" });
@@ -121,20 +134,37 @@ describe("ActivityView", () => {
     fireEvent.click(pause);
 
     fireEvent.click(screen.getByRole("button", { name: /Publish the Friday operations brief/ }));
-    const decline = screen.getByRole("button", { name: "Decline unavailable" });
-    const approve = screen.getByRole("button", { name: "Approve once unavailable" });
-    expect(decline).toBeDisabled();
-    expect(approve).toBeDisabled();
-    expect(decline).toHaveAttribute("title", GROK_EXECUTION_UNAVAILABLE_REASON);
-    expect(approve).toHaveAttribute("title", GROK_EXECUTION_UNAVAILABLE_REASON);
-    expect(screen.getAllByText(GROK_EXECUTION_UNAVAILABLE_REASON)).not.toHaveLength(0);
+    const decline = screen.getByRole("button", { name: "Decline" });
+    const approve = screen.getByRole("button", { name: "Approve once" });
+    expect(screen.getByText(/runs on this computer with host tools/i)).toBeInTheDocument();
     fireEvent.click(decline);
+    await waitFor(() => expect(client.decisions).toEqual([{
+      approvalId: "approval-run-2",
+      expectedRevision: 0,
+      approved: false,
+    }]));
     fireEvent.click(approve);
+    await waitFor(() => expect(client.decisions.at(-1)).toEqual({
+      approvalId: "approval-run-2",
+      expectedRevision: 0,
+      approved: true,
+    }));
 
     fireEvent.click(screen.getByRole("button", { name: /Reconcile vendor invoices/ }));
     const resume = screen.getByRole("button", { name: "Resume unavailable" });
     expect(resume).toBeDisabled();
     expect(resume).toHaveAttribute("title", GROK_EXECUTION_UNAVAILABLE_REASON);
     fireEvent.click(resume);
+  });
+
+  it("cancels an active Host Tools run", async () => {
+    const snapshot = structuredClone(initialSnapshot);
+    snapshot.runs[0].executionMode = "host_direct";
+    const client = new HostActionClient();
+    client.getSnapshot = async () => structuredClone(snapshot);
+    renderActivity(client);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel run" }));
+    await waitFor(() => expect(client.cancellations).toEqual([snapshot.runs[0].id]));
   });
 });

@@ -580,6 +580,45 @@ describe("parseBridgeRequest", () => {
     })).toThrow("daemon.bootstrap request contains unsupported fields");
   });
 
+  it("accepts bounded secret-free Host Tools commands and rejects widened scope", () => {
+    expect(parseBridgeRequest({ kind: "daemon.getHostExecutionPolicy" })).toEqual({
+      kind: "daemon.getHostExecutionPolicy",
+    });
+    expect(parseBridgeRequest({
+      kind: "daemon.enrollHostExecution",
+      expectedRevision: 0,
+      acknowledgmentVersion: 1,
+      typedAcknowledgment: "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER",
+      filesystemRead: true,
+      filesystemWrite: false,
+      processExecute: false,
+      pathRoots: ["/workspace"],
+      broadScopeAcknowledged: false,
+      idempotencyKey: "host-policy-command-1",
+    })).toMatchObject({
+      kind: "daemon.enrollHostExecution",
+      pathRoots: ["/workspace"],
+    });
+    expect(parseBridgeRequest({ kind: "daemon.listHostWorkRuns", limit: 100 })).toEqual({
+      kind: "daemon.listHostWorkRuns",
+      limit: 100,
+    });
+    expect(() => parseBridgeRequest({ kind: "daemon.listHostWorkRuns", limit: 101 }))
+      .toThrow("outside the supported bounds");
+    expect(() => parseBridgeRequest({
+      kind: "daemon.enrollHostExecution",
+      expectedRevision: 0,
+      acknowledgmentVersion: 1,
+      typedAcknowledgment: "acknowledged",
+      filesystemRead: true,
+      filesystemWrite: false,
+      processExecute: false,
+      pathRoots: ["/workspace", "/workspace"],
+      broadScopeAcknowledged: false,
+      idempotencyKey: "host-policy-command-2",
+    })).toThrow("Host Tools roots must be unique");
+  });
+
   it("accepts only an exact canonical external HTTPS navigation request", () => {
     expect(parseBridgeRequest({
       kind: "desktop.openExternalUrl",

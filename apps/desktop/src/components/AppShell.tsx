@@ -11,6 +11,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  ShieldAlert,
   Sparkles,
   X,
 } from "lucide-react";
@@ -115,6 +116,17 @@ export function AppShell() {
   const interfacePreview = snapshot?.connection.interfacePreview === true;
   const daemonConnected = snapshot?.connection.state === "online" && !interfacePreview;
   const daemonConnecting = snapshot?.connection.state === "connecting";
+  const displayHostWarning = daemonConnected && (
+    snapshot?.workExecution.mode === "host_direct"
+    || snapshot?.workExecution.hostBoundRunActive === true
+  );
+  const workModeLabel = displayHostWarning
+    ? snapshot?.workExecution.mode === "isolated_guest"
+      ? "Isolated Work · Host session active"
+      : "Host Tools"
+    : snapshot?.workExecution.mode === "isolated_guest"
+      ? "Isolated Work"
+      : "Limited mode";
   const connectionState = snapshot?.connection.state ?? "connecting";
   const isActiveRoute = (to: string) =>
     to === "/" ? location.pathname === "/" : location.pathname === to || location.pathname.startsWith(`${to}/`);
@@ -262,7 +274,7 @@ export function AppShell() {
                 {interfacePreview
                   ? "No provider execution"
                   : snapshot?.connection.state === "online"
-                    ? "Local daemon connected"
+                    ? workModeLabel
                     : "Limited mode"}
               </small>
             </span>
@@ -321,7 +333,7 @@ export function AppShell() {
                 : daemonConnecting
                   ? "Starting daemon"
                   : daemonConnected
-                    ? "Daemon connected"
+                    ? workModeLabel
                     : "Limited mode"}
             </span>
           </div>
@@ -338,6 +350,25 @@ export function AppShell() {
               <AlertDescription className="text-label">
                 Sample data only. No Grok provider request or local tool execution is available.
               </AlertDescription>
+            </Alert>
+          )}
+          {snapshot && displayHostWarning && (
+            <Alert
+              variant="warning"
+              role="status"
+              aria-live="polite"
+              className="mx-[clamp(24px,3.2vw,48px)] mt-3 -mb-4 w-auto grid-cols-[0_1fr_auto] items-center px-3 py-2 has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr_auto] max-[680px]:mx-3.5"
+            >
+              <ShieldAlert size={16} />
+              <div>
+                <AlertTitle className="text-label">HOST TOOLS — tools run on this computer</AlertTitle>
+                <AlertDescription className="text-label">
+                  {snapshot.workExecution.mode === "isolated_guest"
+                    ? "This session remains Host-bound; new sessions use Isolated Work."
+                    : "Daemon-enforced folders and exact approvals apply, without a utility-guest boundary."}
+                </AlertDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>Settings</Button>
             </Alert>
           )}
           {snapshot && !daemonConnected && !interfacePreview && (

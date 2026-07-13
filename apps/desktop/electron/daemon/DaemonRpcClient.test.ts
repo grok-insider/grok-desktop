@@ -873,6 +873,41 @@ describe("DaemonRpcClient", () => {
     protocol.close();
   });
 
+  it("loads a bounded durable Host Work snapshot", async () => {
+    const stream = new FakeDuplex();
+    const protocol = client(stream);
+    const listing = protocol.listHostWorkRuns(25);
+    const request = decodeFrame(await stream.nextWrite());
+    expect(request.payload?.$case === "request" && request.payload.value.operation).toEqual({
+      $case: "listHostWorkRuns",
+      value: { limit: 25 },
+    });
+    stream.receive(responseResultFrame(request, {
+      $case: "hostWorkList",
+      value: {
+        items: [{
+          run: {
+            id: "run-host-1",
+            projectId: "project-1",
+            threadId: "thread-1",
+            state: RunState.RUN_STATE_RUNNING,
+            revision: 1n,
+            createdAtUnixMs: 1n,
+            updatedAtUnixMs: 2n,
+            kind: RunKind.RUN_KIND_WORK,
+            workBackend: WorkExecutionBackend.WORK_EXECUTION_BACKEND_HOST_DIRECT,
+          },
+          pendingApproval: undefined,
+        }],
+      },
+    }));
+
+    await expect(listing).resolves.toMatchObject({
+      items: [{ run: { id: "run-host-1", kind: RunKind.RUN_KIND_WORK } }],
+    });
+    protocol.close();
+  });
+
   it("does not send caller-authored capability facts", async () => {
     const stream = new FakeDuplex();
     const protocol = client(stream);

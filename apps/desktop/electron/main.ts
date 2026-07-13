@@ -486,6 +486,7 @@ function createTray(applicationDocument: string): void {
 
 function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): void {
   let artifactImportPickerActive = false;
+  let hostWorkFolderPickerActive = false;
   ipcMain.on("desktop:conversation-events-ready", (event) => {
     if (!isTrustedNavigationSender(event, applicationDocument)) return;
     clearConversationWatches(event.sender.id);
@@ -603,6 +604,57 @@ function registerBridge(daemon: DaemonSupervisor, applicationDocument: string): 
       const preferences = await daemon.getDesktopPreferences();
       keepRunningInNotificationArea = preferences.keepRunningInNotificationArea;
       return { kind: "daemon.desktopPreferences", preferences };
+    }
+    if (request.kind === "daemon.selectHostWorkFolder") {
+      if (!owner || owner.isDestroyed()) throw new Error("Host Tools folder selection requires an owning window");
+      if (hostWorkFolderPickerActive) throw new Error("a Host Tools folder picker is already active");
+      hostWorkFolderPickerActive = true;
+      try {
+        const selection = await dialog.showOpenDialog(owner, {
+          title: "Choose a folder for Host Tools",
+          buttonLabel: "Allow this folder",
+          properties: ["openDirectory"],
+        });
+        const selected = selection.canceled ? undefined : selection.filePaths[0];
+        return { kind: "daemon.hostWorkFolderSelection", ...(selected ? { path: selected } : {}) };
+      } finally {
+        hostWorkFolderPickerActive = false;
+      }
+    }
+    if (request.kind === "daemon.getHostExecutionPolicy") {
+      return { kind: "daemon.hostExecutionPolicy", policy: await daemon.getHostExecutionPolicy() };
+    }
+    if (request.kind === "daemon.enrollHostExecution") {
+      const policy = await daemon.enrollHostExecution(request, request.idempotencyKey);
+      return { kind: "daemon.hostExecutionPolicy", policy };
+    }
+    if (request.kind === "daemon.revokeHostExecution") {
+      const policy = await daemon.revokeHostExecution(request.expectedRevision, request.idempotencyKey);
+      return { kind: "daemon.hostExecutionPolicy", policy };
+    }
+    if (request.kind === "daemon.prepareHostWorkRuntime") {
+      const policy = await daemon.prepareHostWorkRuntime(request.idempotencyKey);
+      return { kind: "daemon.hostExecutionPolicy", policy };
+    }
+    if (request.kind === "daemon.deactivateHostWorkRuntime") {
+      const policy = await daemon.deactivateHostWorkRuntime(request.idempotencyKey);
+      return { kind: "daemon.hostExecutionPolicy", policy };
+    }
+    if (request.kind === "daemon.startHostWork") {
+      const work = await daemon.startHostWork(
+        request.projectId,
+        request.threadId,
+        request.prompt,
+        request.idempotencyKey,
+      );
+      return { kind: "daemon.hostWork", work };
+    }
+    if (request.kind === "daemon.cancelHostWork") {
+      const work = await daemon.cancelHostWork(request.runId, request.idempotencyKey);
+      return { kind: "daemon.hostWork", work };
+    }
+    if (request.kind === "daemon.listHostWorkRuns") {
+      return { kind: "daemon.hostWorkList", items: await daemon.listHostWorkRuns(request.limit) };
     }
     if (request.kind === "daemon.updateDesktopPreferences") {
       const preferences = await daemon.updateDesktopPreferences(

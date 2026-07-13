@@ -7,6 +7,9 @@ import {
   Laptop,
   RefreshCw,
   ShieldCheck,
+  ShieldAlert,
+  FolderOpen,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +24,27 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { modelDisplayLabel } from "../lib/modelLabels";
 import { formatTokenCount, formatUsageLine } from "../lib/usageFormat";
@@ -33,6 +57,7 @@ import type {
   SuperGrokEnrollmentStatus,
   UsageSummary,
   UpdateState,
+  HostExecutionPolicy,
 } from "../services/desktopClient";
 
 // Only sections with at least one daemon-backed control are advertised.
@@ -41,6 +66,7 @@ import type {
 const settingSections = [
   { id: "account", label: "Account", icon: UserRound },
   { id: "general", label: "General", icon: Laptop },
+  { id: "work", label: "Work execution", icon: ShieldAlert },
   { id: "models", label: "Models", icon: Bot },
   { id: "usage", label: "Usage", icon: ChartColumn },
 ] as const;
@@ -115,11 +141,265 @@ export function SettingsView() {
             {section === "account" && <AccountSettings />}
             {section === "usage" && <UsageSettings />}
             {section === "general" && <GeneralSettings />}
+            {section === "work" && <WorkExecutionSettings />}
             {section === "models" && <ModelSettings />}
           </section>
         </div>
       </div>
     </div>
+  );
+}
+
+const HOST_ACKNOWLEDGMENT_PHRASE = "I UNDERSTAND HOST TOOLS CAN CONTROL THIS COMPUTER";
+
+function WorkExecutionSettings() {
+  const client = useDesktopClient();
+  const { snapshot } = useDesktopSnapshot();
+  const [policy, setPolicy] = useState<HostExecutionPolicy | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [roots, setRoots] = useState<string[]>([]);
+  const [filesystemRead, setFilesystemRead] = useState(true);
+  const [filesystemWrite, setFilesystemWrite] = useState(false);
+  const [processExecute, setProcessExecute] = useState(false);
+  const [broadScopeAcknowledged, setBroadScopeAcknowledged] = useState(false);
+  const [typedAcknowledgment, setTypedAcknowledgment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      setPolicy(await client.getHostExecutionPolicy());
+      setError("");
+    } catch {
+      setError("Host Tools policy is unavailable.");
+    }
+  }, [client]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!policy?.active) return;
+    setRoots(policy.pathRoots);
+    setFilesystemRead(policy.filesystemRead);
+    setFilesystemWrite(policy.filesystemWrite);
+    setProcessExecute(policy.processExecute);
+    setBroadScopeAcknowledged(policy.broadScopeAcknowledged);
+  }, [policy]);
+
+  const selectFolder = async () => {
+    try {
+      const selected = await client.selectHostWorkFolder();
+      if (selected && !roots.includes(selected) && roots.length < 8) setRoots([...roots, selected]);
+    } catch {
+      setError("The folder chooser is unavailable.");
+    }
+  };
+
+  const enroll = async () => {
+    if (!policy || typedAcknowledgment.trim() !== HOST_ACKNOWLEDGMENT_PHRASE) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await client.enrollHostExecution({
+        expectedRevision: policy.revision,
+        acknowledgmentVersion: policy.requiredAcknowledgmentVersion,
+        typedAcknowledgment,
+        filesystemRead,
+        filesystemWrite,
+        processExecute,
+        pathRoots: roots,
+        broadScopeAcknowledged,
+      });
+      setPolicy(next);
+      setDialogOpen(false);
+      setStep(1);
+      setTypedAcknowledgment("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Host Tools enrollment failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const mutateRuntime = async (action: "prepare" | "deactivate" | "revoke") => {
+    if (!policy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = action === "prepare"
+        ? await client.prepareHostWorkRuntime()
+        : action === "deactivate"
+          ? await client.deactivateHostWorkRuntime()
+          : await client.revokeHostExecution(policy.revision);
+      setPolicy(next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Host Tools settings could not be changed.");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hostEffective = snapshot?.workExecution.mode === "host_direct";
+
+  return (
+    <>
+      <SettingsHeading
+        section="work"
+        title="Work execution"
+        description="Choose whether Grok may use explicitly scoped tools on this computer. Isolated Work remains preferred when available."
+      />
+      {error && <p className="mb-4 text-body text-destructive" role="alert">{error}</p>}
+      <SettingsGroup>
+        <SettingRow
+          title="Host Tools"
+          description={policy?.active
+            ? "Enrolled paths and tool classes are enforced by the local daemon."
+            : "Off by default. Enabling requires a risk review, selected folders, and typed acknowledgment."}
+        >
+          {policy?.active ? (
+            <Badge variant={hostEffective ? "warning" : "neutral"}>
+              {hostEffective ? "HOST TOOLS active" : policy.runtimePrepared ? "Prepared" : "Not prepared"}
+            </Badge>
+          ) : (
+            <Button disabled={!policy || busy} onClick={() => setDialogOpen(true)}>Review risks and enable</Button>
+          )}
+        </SettingRow>
+        {policy?.active && (
+          <>
+            <SettingRow
+              title="Runtime"
+              description={policy.runtimePrepared
+                ? "The authenticated Host Work role is ready for new Work sessions."
+                : "Enrollment is saved, but Work stays unavailable until the runtime is prepared."}
+            >
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => void mutateRuntime(policy.runtimePrepared ? "deactivate" : "prepare")}
+              >
+                {policy.runtimePrepared ? "Deactivate runtime" : "Prepare Host Tools"}
+              </Button>
+            </SettingRow>
+            <SettingRow
+              title="Granted scope"
+              description={`${policy.pathRoots.length} folder${policy.pathRoots.length === 1 ? "" : "s"} · ${[
+                policy.filesystemRead && "read",
+                policy.filesystemWrite && "write",
+                policy.processExecute && "run programs",
+              ].filter(Boolean).join(", ")}`}
+            >
+              <Button variant="outline" disabled={busy} onClick={() => setDialogOpen(true)}>Review or replace</Button>
+            </SettingRow>
+            <SettingRow
+              title="Revoke Host Tools"
+              description="Stops new host tool dispatch immediately. Interrupted side effects remain marked for review."
+            >
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" disabled={busy}>
+                    <Trash2 size={15} aria-hidden="true" /> Revoke
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Revoke Host Tools?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      New host tool dispatch stops immediately. Any side effect interrupted in progress will require manual review and will not replay automatically.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep enabled</AlertDialogCancel>
+                    <AlertDialogAction variant="destructive" onClick={() => void mutateRuntime("revoke")}>
+                      Revoke Host Tools
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </SettingRow>
+          </>
+        )}
+      </SettingsGroup>
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!busy) setDialogOpen(open); }}>
+        <DialogContent className="max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>Enable Host Tools · Step {step} of 3</DialogTitle>
+            <DialogDescription>
+              Host Tools runs with your user account on this computer and does not have the utility-guest boundary.
+            </DialogDescription>
+          </DialogHeader>
+
+          {step === 1 && (
+            <div className="space-y-3 text-body text-muted-foreground">
+              <p className="m-0">Files, pages, tool metadata, and model output can contain prompt injection. Approved programs can access the network as your user.</p>
+              <p className="m-0">A malicious or mistaken instruction could modify files, run programs, or disclose data inside the scope you grant.</p>
+              <p className="m-0 rounded-lg border border-warning/30 bg-warning-soft p-3 text-warning">Isolated Work is recommended when available. You can revoke Host Tools at any time.</p>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <strong className="text-body font-semibold">Allowed folders</strong>
+                  <Button variant="outline" onClick={() => void selectFolder()} disabled={roots.length >= 8}>
+                    <FolderOpen size={15} aria-hidden="true" /> Add folder
+                  </Button>
+                </div>
+                {roots.length === 0 ? (
+                  <p className="m-0 rounded-md bg-muted p-3 text-body-sm text-muted-foreground">Choose at least one folder. The daemon will canonicalize and validate it.</p>
+                ) : roots.map((root) => (
+                  <div key={root} className="mb-2 flex items-center gap-2 rounded-md border border-border px-3 py-2 font-mono text-label">
+                    <span className="min-w-0 flex-1 truncate" title={root}>{root}</span>
+                    <Button variant="ghost" size="sm" onClick={() => setRoots(roots.filter((item) => item !== root))}>Remove</Button>
+                  </div>
+                ))}
+              </div>
+              <div className="grid gap-3 rounded-lg border border-border p-3">
+                {[
+                  { id: "host-tools-read", label: "Read files and list folders", checked: filesystemRead, setter: setFilesystemRead },
+                  { id: "host-tools-write", label: "Write or replace files (approval each time)", checked: filesystemWrite, setter: setFilesystemWrite },
+                  { id: "host-tools-process", label: "Run any program as you (approval each time)", checked: processExecute, setter: setProcessExecute },
+                ].map(({ id, label, checked, setter }) => (
+                  <label key={id} htmlFor={id} className="flex items-start gap-3 text-body">
+                    <Checkbox id={id} checked={checked} onCheckedChange={(value) => setter(value === true)} />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              <label htmlFor="host-tools-broad-scope" className="flex items-start gap-3 text-body text-muted-foreground">
+                <Checkbox id="host-tools-broad-scope" checked={broadScopeAcknowledged} onCheckedChange={(value) => setBroadScopeAcknowledged(value === true)} />
+                <span>I understand that selecting my home folder or an entire drive grants access across that broad scope.</span>
+              </label>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-3">
+              <p className="m-0 text-body text-muted-foreground">Type this exact phrase to confirm:</p>
+              <code className="block rounded-md bg-muted p-3 font-mono text-body-sm text-foreground">{HOST_ACKNOWLEDGMENT_PHRASE}</code>
+              <label htmlFor="host-tools-ack" className="text-body font-semibold">Acknowledgment</label>
+              <Input id="host-tools-ack" value={typedAcknowledgment} onChange={(event) => setTypedAcknowledgment(event.target.value)} autoComplete="off" />
+            </div>
+          )}
+
+          <DialogFooter>
+            {step > 1 && <Button variant="outline" disabled={busy} onClick={() => setStep((step - 1) as 1 | 2)}>Back</Button>}
+            {step < 3 ? (
+              <Button
+                disabled={step === 2 && (roots.length === 0 || (!filesystemRead && !filesystemWrite && !processExecute))}
+                onClick={() => setStep((step + 1) as 2 | 3)}
+              >Continue</Button>
+            ) : (
+              <Button disabled={busy || typedAcknowledgment.trim() !== HOST_ACKNOWLEDGMENT_PHRASE} onClick={() => void enroll()}>
+                Enable Host Tools
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

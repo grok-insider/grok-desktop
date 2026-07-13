@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { IconButton } from "../components/IconButton";
 import { PageHeader } from "../components/PageHeader";
 import { RunStatus } from "../components/RunStatus";
-import { useDesktopSnapshot } from "../services/DesktopClientContext";
+import { useDesktopClient, useDesktopSnapshot } from "../services/DesktopClientContext";
 import type { RunState, RunSummary } from "../services/desktopClient";
 import { GROK_EXECUTION_UNAVAILABLE_REASON } from "../services/productAvailability";
 
@@ -215,8 +215,25 @@ function ActivityRowsSkeleton() {
 }
 
 function RunInspector({ run }: { run: RunSummary }) {
+  const client = useDesktopClient();
   const runProgress = progressValue(run.progress);
   const control = runControl(run.state);
+  const [cancelling, setCancelling] = useState(false);
+  const [controlError, setControlError] = useState("");
+  const hostRunActive = run.executionMode === "host_direct"
+    && ["queued", "planning", "awaiting_approval", "running", "paused"].includes(run.state);
+
+  const cancelHostRun = async () => {
+    setCancelling(true);
+    setControlError("");
+    try {
+      await client.cancelHostWork(run.id);
+    } catch (cause) {
+      setControlError(cause instanceof Error ? cause.message : "The Host Tools run could not be cancelled.");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   return (
     <aside
@@ -298,7 +315,14 @@ function RunInspector({ run }: { run: RunSummary }) {
       </section>
 
       <footer className="flex flex-wrap items-end justify-between gap-3 pt-4">
-        {control ? (
+        {hostRunActive ? (
+          <div className="min-w-0 flex-1">
+            <Button type="button" variant="outline" disabled={cancelling} onClick={() => void cancelHostRun()}>
+              <X size={15} aria-hidden="true" /> {cancelling ? "Cancelling" : "Cancel run"}
+            </Button>
+            {controlError && <p className="m-0 mt-2 text-label text-destructive" role="alert">{controlError}</p>}
+          </div>
+        ) : control ? (
           <div className="min-w-0 flex-1">
             <Button type="button" variant="outline" disabled title={GROK_EXECUTION_UNAVAILABLE_REASON}>
               {control === "Resume" ? <Play size={15} aria-hidden="true" /> : <CirclePause size={15} aria-hidden="true" />}
@@ -339,7 +363,26 @@ function InterruptedReviewNotice() {
 }
 
 function ApprovalNotice({ approval }: { approval: NonNullable<RunSummary["approval"]> }) {
+  const client = useDesktopClient();
   const riskLabel = `${approval.risk.charAt(0).toUpperCase()}${approval.risk.slice(1)} risk`;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const decide = async (approved: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      await client.decideHostWorkApproval({
+        approvalId: approval.id,
+        expectedRevision: approval.revision,
+        approved,
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The approval decision could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <section className="my-4 rounded-lg border border-warning/30 bg-warning-soft p-3" aria-labelledby="run-approval-heading">
@@ -348,7 +391,7 @@ function ApprovalNotice({ approval }: { approval: NonNullable<RunSummary["approv
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 id="run-approval-heading" className="m-0 text-body font-semibold">{approval.title}</h3>
-            <Badge variant={approval.risk === "high" ? "destructive" : "warning"}>{riskLabel}</Badge>
+            <Badge variant={approval.risk === "high" || approval.risk === "critical" ? "destructive" : "warning"}>{riskLabel}</Badge>
           </div>
           <p className="m-0 mt-1 text-label text-warning">Grok needs your approval</p>
         </div>
@@ -356,13 +399,14 @@ function ApprovalNotice({ approval }: { approval: NonNullable<RunSummary["approv
       <p className="my-3 rounded-md bg-card/70 p-2 font-mono text-label leading-4 text-muted-foreground [overflow-wrap:anywhere]">
         {approval.detail}
       </p>
-      <p className="m-0 mb-3 text-label leading-4 text-muted-foreground">{GROK_EXECUTION_UNAVAILABLE_REASON}</p>
+      <p className="m-0 mb-3 text-label leading-4 text-warning">Runs on this computer with Host Tools. Approve only this exact action.</p>
+      {error && <p className="m-0 mb-3 text-label leading-4 text-destructive" role="alert">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" disabled title={GROK_EXECUTION_UNAVAILABLE_REASON}>
-          <X size={15} aria-hidden="true" /> Decline unavailable
+        <Button type="button" variant="outline" disabled={busy} onClick={() => void decide(false)}>
+          <X size={15} aria-hidden="true" /> Decline
         </Button>
-        <Button type="button" disabled title={GROK_EXECUTION_UNAVAILABLE_REASON}>
-          <Check size={15} aria-hidden="true" /> Approve once unavailable
+        <Button type="button" disabled={busy} onClick={() => void decide(true)}>
+          <Check size={15} aria-hidden="true" /> Approve once
         </Button>
       </div>
     </section>

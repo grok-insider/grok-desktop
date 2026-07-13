@@ -86,6 +86,7 @@ message Request {
     DeactivateHostWorkRuntimeRequest deactivate_host_work_runtime = 71;
     StartHostWorkRequest start_host_work = 72;
     CancelHostWorkRequest cancel_host_work = 73;
+    ListHostWorkRunsRequest list_host_work_runs = 74;
   }
 }
 
@@ -130,6 +131,7 @@ message Response {
     UsageSummary usage_summary = 34;
     HostExecutionPolicy host_execution_policy = 35;
     HostWorkResult host_work_result = 36;
+    HostWorkList host_work_list = 37;
   }
 }
 
@@ -313,6 +315,21 @@ message StartHostWorkRequest {
 
 message CancelHostWorkRequest {
   string run_id = 1;
+}
+
+// Bounded reload projection for Host-bound Work activity. This is read-only
+// and never resumes or replays execution.
+message ListHostWorkRunsRequest {
+  uint32 limit = 1;
+}
+
+message HostWorkSnapshot {
+  Run run = 1;
+  optional Approval pending_approval = 2;
+}
+
+message HostWorkList {
+  repeated HostWorkSnapshot items = 1;
 }
 
 message HostWorkResult {

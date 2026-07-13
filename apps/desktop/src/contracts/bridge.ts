@@ -86,6 +86,31 @@ export interface DaemonRun {
   revision: number;
   createdAtUnixMs: number;
   updatedAtUnixMs: number;
+  kind?: "unspecified" | "chat" | "work" | "scheduled";
+  workBackend?: "host_direct" | "isolated_guest";
+}
+
+export type DaemonWorkExecutionMode = "limited" | "host_direct" | "isolated_guest";
+
+export interface DaemonHostExecutionPolicy {
+  revision: number;
+  active: boolean;
+  acknowledgmentVersion: number;
+  requiredAcknowledgmentVersion: number;
+  acknowledgedAtUnixMs: number;
+  filesystemRead: boolean;
+  filesystemWrite: boolean;
+  processExecute: boolean;
+  pathRoots: string[];
+  broadScopeAcknowledged: boolean;
+  updatedAtUnixMs: number;
+  runtimePrepared: boolean;
+  unavailableReasonCode: string;
+}
+
+export interface DaemonHostWorkSnapshot {
+  run: DaemonRun;
+  pendingApproval?: DaemonApproval;
 }
 
 export interface DaemonApproval {
@@ -458,6 +483,32 @@ export type BridgeRequest =
       idempotencyKey: string;
     }
   | { kind: "daemon.getDesktopPreferences" }
+  | { kind: "daemon.selectHostWorkFolder" }
+  | { kind: "daemon.getHostExecutionPolicy" }
+  | {
+      kind: "daemon.enrollHostExecution";
+      expectedRevision: number;
+      acknowledgmentVersion: number;
+      typedAcknowledgment: string;
+      filesystemRead: boolean;
+      filesystemWrite: boolean;
+      processExecute: boolean;
+      pathRoots: string[];
+      broadScopeAcknowledged: boolean;
+      idempotencyKey: string;
+    }
+  | { kind: "daemon.revokeHostExecution"; expectedRevision: number; idempotencyKey: string }
+  | { kind: "daemon.prepareHostWorkRuntime"; idempotencyKey: string }
+  | { kind: "daemon.deactivateHostWorkRuntime"; idempotencyKey: string }
+  | {
+      kind: "daemon.startHostWork";
+      projectId: string;
+      threadId: string;
+      prompt: string;
+      idempotencyKey: string;
+    }
+  | { kind: "daemon.cancelHostWork"; runId: string; idempotencyKey: string }
+  | { kind: "daemon.listHostWorkRuns"; limit: number }
   | { kind: "daemon.updateDesktopPreferences"; expectedRevision: number; keepRunningInNotificationArea: boolean; idempotencyKey: string }
   | { kind: "daemon.getChatModelCatalog" }
   | {
@@ -501,7 +552,17 @@ export type BridgeResponse =
   | { kind: "desktop.updateState"; state: DesktopUpdateState }
   | { kind: "desktop.updateInstallAccepted"; accepted: boolean }
   | { kind: "window.action"; accepted: true }
-  | { kind: "daemon.bootstrap"; status: DaemonStatus; capabilities: DaemonCapabilityStatus[]; accountState: DaemonAccountState; workspace: DaemonWorkspaceSnapshot }
+  | {
+      kind: "daemon.bootstrap";
+      status: DaemonStatus;
+      capabilities: DaemonCapabilityStatus[];
+      workExecutionMode: DaemonWorkExecutionMode;
+      hostWorkRuntimeReady: boolean;
+      hostBoundRunActive: boolean;
+      hostWork: DaemonHostWorkSnapshot[];
+      accountState: DaemonAccountState;
+      workspace: DaemonWorkspaceSnapshot;
+    }
   | { kind: "daemon.accountState"; accountState: DaemonAccountState }
   | { kind: "daemon.grokBuildAuthStatus"; state: string; authenticated: boolean }
   | { kind: "daemon.superGrokEnrollmentStatus"; status: DaemonSuperGrokEnrollmentStatus }
@@ -518,6 +579,10 @@ export type BridgeResponse =
       };
     }
   | { kind: "daemon.desktopPreferences"; preferences: DaemonDesktopPreferences }
+  | { kind: "daemon.hostWorkFolderSelection"; path?: string }
+  | { kind: "daemon.hostExecutionPolicy"; policy: DaemonHostExecutionPolicy }
+  | { kind: "daemon.hostWork"; work: DaemonHostWorkSnapshot }
+  | { kind: "daemon.hostWorkList"; items: DaemonHostWorkSnapshot[] }
   | { kind: "daemon.chatModelCatalog"; catalog: DaemonChatModelCatalog }
   | { kind: "daemon.usageSummary"; summary: DaemonUsageSummary }
   | { kind: "daemon.chatModelPreference"; preference: DaemonChatModelPreference }

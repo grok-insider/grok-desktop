@@ -10,10 +10,13 @@ import type {
   DaemonConversationForkMetadata,
   DaemonConversationTurn,
   DaemonDesktopPreferences,
+  DaemonHostExecutionPolicy,
+  DaemonHostWorkSnapshot,
   DaemonMessage,
   DaemonProject,
   DaemonStatus,
   DaemonThread,
+  DaemonWorkExecutionMode,
   DaemonWorkspaceSnapshot,
   DesktopBridge,
   DesktopConversationTurnEventNotification,
@@ -39,9 +42,12 @@ import type {
   DesktopPreferences,
   DesktopSnapshot,
   GetUsageSummaryInput,
+  HostExecutionEnrollment,
+  HostExecutionPolicy,
   LibraryItem,
   ManagedIntegrationDetail,
   MediaCreation,
+  RunSummary,
   StartRunInput,
   SuperGrokEnrollmentStatus,
   UsageSummary,
@@ -65,6 +71,7 @@ import {
 const initialSnapshot = (): DesktopSnapshot => ({
   connection: { state: "connecting", profile: "Local workspace", plan: "Connecting" },
   capabilities: [],
+  workExecution: { mode: "limited", hostWorkRuntimeReady: false, hostBoundRunActive: false },
   projects: [],
   runs: [],
   threads: [],
@@ -122,6 +129,8 @@ export class ElectronDesktopClient implements DesktopClient {
   private readonly threads = new Map<string, DaemonThread>();
   private readonly artifacts = new Map<string, DaemonArtifact>();
   private readonly automations = new Map<string, DaemonAutomation>();
+  private readonly hostWork = new Map<string, DaemonHostWorkSnapshot>();
+  private hostWorkRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly conversations = new Map<string, ConversationDetail>();
   private readonly canonicalConversationMessages = new Map<string, DaemonMessage[]>();
   private readonly conversationListeners = new Map<string, Set<(conversation: ConversationDetail) => void>>();
@@ -194,11 +203,9 @@ export class ElectronDesktopClient implements DesktopClient {
 
   async startRun(input: StartRunInput): Promise<{ runId: string; threadId: string }> {
     await this.ensureBootstrap();
-    if (input.mode !== "chat") throw new Error(GROK_EXECUTION_UNAVAILABLE_REASON);
     if (input.researchEnabled) {
-      throw new Error("Research is not connected to a durable Chat orchestration path.");
+      throw new Error("Research is not connected to a durable orchestration path.");
     }
-    this.assertChatAvailable();
     const project = input.projectId
       ? this.projects.get(input.projectId)
       : [...this.projects.values()].find((item) => item.state === "active");
@@ -209,6 +216,29 @@ export class ElectronDesktopClient implements DesktopClient {
     }
     const content = validatedPrompt(input.prompt);
     const title = conversationTitle(content);
+    if (input.mode === "work") {
+      this.assertHostWorkAvailable();
+      const threadResponse = await this.bridge.request({
+        kind: "daemon.createThread",
+        projectId: project.id,
+        title,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (threadResponse.kind !== "daemon.thread") throw new Error("invalid Work thread response");
+      this.threads.set(threadResponse.thread.id, threadResponse.thread);
+      const response = await this.bridge.request({
+        kind: "daemon.startHostWork",
+        projectId: project.id,
+        threadId: threadResponse.thread.id,
+        prompt: content,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (response.kind !== "daemon.hostWork") throw new Error("invalid Host Work response");
+      this.installHostWork([response.work], true, false);
+      this.scheduleHostWorkRefresh();
+      return { runId: response.work.run.id, threadId: threadResponse.thread.id };
+    }
+    this.assertChatAvailable();
     const existingMutation = this.newChatMutation;
     const mutation = existingMutation
       && existingMutation.projectId === project.id
@@ -519,6 +549,103 @@ export class ElectronDesktopClient implements DesktopClient {
     }
     this.desktopPreferences = mapDesktopPreferences(response.preferences);
     return structuredClone(this.desktopPreferences);
+  }
+
+  async selectHostWorkFolder(): Promise<string | undefined> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({ kind: "daemon.selectHostWorkFolder" });
+    if (response.kind !== "daemon.hostWorkFolderSelection") {
+      throw new Error("invalid Host Tools folder response");
+    }
+    return response.path;
+  }
+
+  async getHostExecutionPolicy(): Promise<HostExecutionPolicy> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({ kind: "daemon.getHostExecutionPolicy" });
+    if (response.kind !== "daemon.hostExecutionPolicy") {
+      throw new Error("invalid Host Tools policy response");
+    }
+    return mapHostExecutionPolicy(response.policy);
+  }
+
+  async enrollHostExecution(input: HostExecutionEnrollment): Promise<HostExecutionPolicy> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.enrollHostExecution",
+      ...input,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.hostExecutionPolicy") {
+      throw new Error("invalid Host Tools enrollment response");
+    }
+    await this.refreshDaemonSnapshot();
+    return mapHostExecutionPolicy(response.policy);
+  }
+
+  async revokeHostExecution(expectedRevision: number): Promise<HostExecutionPolicy> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.revokeHostExecution",
+      expectedRevision,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.hostExecutionPolicy") throw new Error("invalid Host Tools revocation response");
+    await this.refreshDaemonSnapshot();
+    return mapHostExecutionPolicy(response.policy);
+  }
+
+  async prepareHostWorkRuntime(): Promise<HostExecutionPolicy> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.prepareHostWorkRuntime",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.hostExecutionPolicy") throw new Error("invalid Host Tools runtime response");
+    await this.refreshDaemonSnapshot();
+    return mapHostExecutionPolicy(response.policy);
+  }
+
+  async deactivateHostWorkRuntime(): Promise<HostExecutionPolicy> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.deactivateHostWorkRuntime",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.hostExecutionPolicy") throw new Error("invalid Host Tools runtime response");
+    await this.refreshDaemonSnapshot();
+    return mapHostExecutionPolicy(response.policy);
+  }
+
+  async cancelHostWork(runId: string): Promise<void> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.cancelHostWork",
+      runId,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.hostWork" || response.work.run.id !== runId) {
+      throw new Error("invalid Host Work cancellation response");
+    }
+    this.installHostWork([response.work], true, false);
+    this.scheduleHostWorkRefresh();
+  }
+
+  async decideHostWorkApproval(input: {
+    approvalId: string;
+    expectedRevision: number;
+    approved: boolean;
+  }): Promise<void> {
+    await this.ensureBootstrap();
+    const response = await this.bridge.request({
+      kind: "daemon.decideApproval",
+      ...input,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (response.kind !== "daemon.approval" || response.approval.id !== input.approvalId) {
+      throw new Error("invalid Host Work approval response");
+    }
+    await this.refreshHostWork();
   }
 
   async updateDesktopPreferences(input: {
@@ -1657,12 +1784,20 @@ export class ElectronDesktopClient implements DesktopClient {
         this.snapshot.capabilities = response.capabilities.map((value) => mapCapability(
           value,
           response.status.automationScheduler?.state,
+          response.workExecutionMode,
         ));
+        this.snapshot.workExecution = {
+          mode: response.workExecutionMode,
+          hostWorkRuntimeReady: response.hostWorkRuntimeReady,
+          hostBoundRunActive: response.hostBoundRunActive,
+        };
+        this.installHostWork(response.hostWork, false, true, true);
         this.applyStatus(response.status);
         this.snapshot.extensions = extensionCatalog(response.capabilities);
         this.accountState = response.accountState;
         this.applyWorkspace(response.workspace);
         this.bootstrapped = true;
+        this.scheduleHostWorkRefresh();
       })
       .catch((error: unknown) => {
         const reason = error instanceof Error ? error.message : "The local daemon is unavailable.";
@@ -1687,11 +1822,19 @@ export class ElectronDesktopClient implements DesktopClient {
     this.snapshot.capabilities = response.capabilities.map((value) => mapCapability(
       value,
       response.status.automationScheduler?.state,
+      response.workExecutionMode,
     ));
+    this.snapshot.workExecution = {
+      mode: response.workExecutionMode,
+      hostWorkRuntimeReady: response.hostWorkRuntimeReady,
+      hostBoundRunActive: response.hostBoundRunActive,
+    };
+    this.installHostWork(response.hostWork, false, true, true);
     this.snapshot.extensions = extensionCatalog(response.capabilities);
     this.accountState = response.accountState;
     this.applyStatus(response.status);
     this.applyWorkspace(response.workspace);
+    this.scheduleHostWorkRefresh();
     this.emit();
   }
 
@@ -1856,6 +1999,39 @@ export class ElectronDesktopClient implements DesktopClient {
     this.rebuildWorkspaceSnapshot();
   }
 
+  private installHostWork(
+    items: readonly DaemonHostWorkSnapshot[],
+    emit = true,
+    replace = true,
+    preserveAuthoritativeActive = false,
+  ): void {
+    if (replace) this.hostWork.clear();
+    for (const item of items) this.hostWork.set(item.run.id, item);
+    const listedRunActive = [...this.hostWork.values()].some(({ run }) => !isTerminalRunState(run.state));
+    this.snapshot.workExecution.hostBoundRunActive = preserveAuthoritativeActive
+      ? this.snapshot.workExecution.hostBoundRunActive || listedRunActive
+      : listedRunActive;
+    this.rebuildWorkspaceSnapshot();
+    if (emit) this.emit();
+  }
+
+  private async refreshHostWork(): Promise<void> {
+    const response = await this.bridge.request({ kind: "daemon.listHostWorkRuns", limit: 50 });
+    if (response.kind !== "daemon.hostWorkList") throw new Error("invalid Host Work list response");
+    this.installHostWork(response.items);
+    this.scheduleHostWorkRefresh();
+  }
+
+  private scheduleHostWorkRefresh(): void {
+    if (this.hostWorkRefreshTimer || ![...this.hostWork.values()].some(({ run }) => !isTerminalRunState(run.state))) {
+      return;
+    }
+    this.hostWorkRefreshTimer = setTimeout(() => {
+      this.hostWorkRefreshTimer = undefined;
+      void this.refreshHostWork().catch(() => undefined);
+    }, 500);
+  }
+
   private reconcileArtifactRemovalMutations(): void {
     for (const [artifactId, mutation] of this.artifactRemovalMutations) {
       const canonical = this.artifacts.get(artifactId);
@@ -1886,7 +2062,16 @@ export class ElectronDesktopClient implements DesktopClient {
       .map((project) => projectSummary(project, threads));
     this.snapshot.threads = threads
       .filter((thread) => thread.state === "open")
-      .map((thread) => threadSummary(thread, this.projects.get(thread.projectId)?.name ?? "Unknown project"));
+      .map((thread) => threadSummary(
+        thread,
+        this.projects.get(thread.projectId)?.name ?? "Unknown project",
+        [...this.hostWork.values()].some(({ run }) => run.threadId === thread.id),
+      ));
+    this.snapshot.runs = [...this.hostWork.values()].map((item) => hostWorkSummary(
+      item,
+      this.threads.get(item.run.threadId),
+      this.projects.get(item.run.projectId)?.name ?? "Unknown project",
+    ));
     this.snapshot.library = [...this.artifacts.values()]
       .filter((artifact) => artifact.state === "available")
       .map((artifact) => libraryItem(artifact, this.projects.get(artifact.projectId)?.name ?? "Unknown project"));
@@ -1907,6 +2092,13 @@ export class ElectronDesktopClient implements DesktopClient {
   private assertChatAvailable(): void {
     const capability = this.snapshot.capabilities.find((item) => item.id === "chat");
     if (!capability?.available) {
+      throw new Error(capability?.reason ?? GROK_EXECUTION_UNAVAILABLE_REASON);
+    }
+  }
+
+  private assertHostWorkAvailable(): void {
+    const capability = this.snapshot.capabilities.find((item) => item.id === "work");
+    if (!capability?.available || this.snapshot.workExecution.mode !== "host_direct") {
       throw new Error(capability?.reason ?? GROK_EXECUTION_UNAVAILABLE_REASON);
     }
   }
@@ -1959,6 +2151,7 @@ export class ElectronDesktopClient implements DesktopClient {
 function mapCapability(
   value: DaemonCapabilityStatus,
   schedulerState?: NonNullable<DaemonStatus["automationScheduler"]>["state"],
+  workExecutionMode: DaemonWorkExecutionMode = "limited",
 ): CapabilityStatus {
   if (value.id === "automations") {
     if (
@@ -2000,7 +2193,7 @@ function mapCapability(
       ...scheduler,
     };
   }
-  if (value.id === "work" && value.availability === "available") {
+  if (value.id === "work" && value.availability === "available" && workExecutionMode === "limited") {
     return {
       id: value.id,
       label: value.label,
@@ -2089,15 +2282,72 @@ function projectSummary(
   };
 }
 
-function threadSummary(thread: DaemonThread, projectName: string): DesktopSnapshot["threads"][number] {
+function threadSummary(
+  thread: DaemonThread,
+  projectName: string,
+  hostWork: boolean,
+): DesktopSnapshot["threads"][number] {
   return {
     id: thread.id,
     title: thread.title,
     projectName,
     preview: "Open to load the persisted conversation.",
     updatedAt: relativeTime(thread.updatedAtUnixMs),
-    mode: "chat",
+    mode: hostWork ? "work" : "chat",
   };
+}
+
+function hostWorkSummary(
+  item: DaemonHostWorkSnapshot,
+  thread: DaemonThread | undefined,
+  projectName: string,
+): RunSummary {
+  const state = item.run.state;
+  const terminal = isTerminalRunState(state);
+  const progress = state === "completed" ? 100 : terminal ? 0 : state === "queued" ? 10 : state === "planning" ? 25 : 60;
+  return {
+    id: item.run.id,
+    title: thread?.title ?? "Host Work",
+    projectName,
+    state,
+    progress,
+    updatedAt: relativeTime(item.run.updatedAtUnixMs),
+    detail: state === "completed"
+      ? "Host Work completed. Open the conversation to review Grok's result."
+      : state === "awaiting_approval"
+        ? "Host Tools is waiting for your exact approval before it touches this computer."
+        : state === "interrupted_needs_review"
+          ? "A host side effect was interrupted and will not be replayed automatically."
+          : state === "failed"
+            ? "Host Work stopped without completing. Review the daemon-owned activity record."
+            : "Grok is working through the daemon-owned Host Tools boundary.",
+    executionMode: "host_direct",
+    steps: [
+      { label: "Bind Host Tools policy", state: state === "queued" ? "active" : "done" },
+      {
+        label: "Execute approved work",
+        state: terminal ? (state === "completed" ? "done" : "waiting") : state === "queued" ? "waiting" : "active",
+      },
+      { label: "Persist result", state: state === "completed" ? "done" : "waiting" },
+    ],
+    ...(item.pendingApproval ? {
+      approval: {
+        id: item.pendingApproval.id,
+        revision: item.pendingApproval.revision,
+        title: item.pendingApproval.action.action,
+        detail: `${item.pendingApproval.action.target}\n${item.pendingApproval.action.dataSummary}`,
+        risk: item.pendingApproval.action.risk,
+      },
+    } : {}),
+  };
+}
+
+function isTerminalRunState(state: DaemonHostWorkSnapshot["run"]["state"]): boolean {
+  return state === "completed" || state === "failed" || state === "cancelled" || state === "interrupted_needs_review";
+}
+
+function mapHostExecutionPolicy(policy: DaemonHostExecutionPolicy): HostExecutionPolicy {
+  return structuredClone(policy);
 }
 
 function libraryItem(artifact: DaemonArtifact, projectName: string): DesktopSnapshot["library"][number] {

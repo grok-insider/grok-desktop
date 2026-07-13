@@ -1129,6 +1129,9 @@ impl Daemon {
             Some(v1::request::Operation::CancelHostWork(request)) => {
                 self.cancel_host_work(request, idempotency_key).await
             }
+            Some(v1::request::Operation::ListHostWorkRuns(request)) => {
+                self.list_host_work_runs(request).await
+            }
             Some(v1::request::Operation::SelectChatModel(request)) => {
                 self.select_chat_model(request, idempotency_key).await
             }
@@ -1765,6 +1768,30 @@ impl Daemon {
         Ok(v1::response::Result::HostWorkResult(v1::HostWorkResult {
             run: Some(run_to_wire(run)),
             assistant_text: String::new(),
+        }))
+    }
+
+    async fn list_host_work_runs(
+        &self,
+        request: v1::ListHostWorkRunsRequest,
+    ) -> Result<v1::response::Result, ApplicationError> {
+        if !(1..=100).contains(&request.limit) {
+            return Err(ApplicationError::InvalidInput(
+                "Host Work list limit must be between 1 and 100".into(),
+            ));
+        }
+        let items = self
+            .runs
+            .list_host_work(usize::try_from(request.limit).unwrap_or(0))
+            .await?
+            .into_iter()
+            .map(|(run, approval)| v1::HostWorkSnapshot {
+                run: Some(run_to_wire(run)),
+                pending_approval: approval.map(approval_to_wire),
+            })
+            .collect();
+        Ok(v1::response::Result::HostWorkList(v1::HostWorkList {
+            items,
         }))
     }
 

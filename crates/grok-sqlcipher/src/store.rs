@@ -2144,6 +2144,64 @@ impl ExecutionStore for SqlCipherStore {
         .await
     }
 
+    async fn list_host_work_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError> {
+        if !(1..=100).contains(&limit) {
+            return Err(StoreError::Internal("invalid Host Work list limit".into()));
+        }
+        self.with_store(move |connection| {
+            let mut statement = connection
+                .prepare(&format!(
+                    "SELECT {RUN_COLUMNS} FROM runs
+                     WHERE run_kind=2 AND work_backend=1
+                     ORDER BY updated_at DESC,id ASC LIMIT ?1"
+                ))
+                .map_err(map_sqlite)?;
+            statement
+                .query_map(
+                    [number(u64::try_from(limit).map_err(|_| {
+                        StoreError::Internal("invalid Host Work list limit".into())
+                    })?)?],
+                    mapping::run_from_row,
+                )
+                .map_err(map_sqlite)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_sqlite)
+        })
+        .await
+    }
+
+    async fn pending_approval_for_run(
+        &self,
+        run_id: &RunId,
+    ) -> Result<Option<Approval>, StoreError> {
+        let run_id = run_id.clone();
+        self.with_store(move |connection| {
+            if connection
+                .query_row("SELECT 1 FROM runs WHERE id=?1", [run_id.as_str()], |_| {
+                    Ok(())
+                })
+                .optional()
+                .map_err(map_sqlite)?
+                .is_none()
+            {
+                return Err(StoreError::NotFound);
+            }
+            connection
+                .query_row(
+                    &format!(
+                        "SELECT {APPROVAL_COLUMNS} FROM approvals
+                         WHERE run_id=?1 AND status=0
+                         ORDER BY created_at DESC,id ASC LIMIT 1"
+                    ),
+                    [run_id.as_str()],
+                    mapping::approval_from_row,
+                )
+                .optional()
+                .map_err(map_sqlite)
+        })
+        .await
+    }
+
     async fn save_effect(
         &self,
         effect: SideEffect,

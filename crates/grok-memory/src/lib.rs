@@ -48,9 +48,9 @@ use grok_application::{
     window_lower_bound,
 };
 use grok_domain::{
-    Approval, ApprovalId, Artifact, ArtifactId, ArtifactState, ArtifactVersion, Automation,
-    AutomationExecutionSnapshot, AutomationHistoryEntry, AutomationHistoryStatus, AutomationId,
-    AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState,
+    Approval, ApprovalId, ApprovalStatus, Artifact, ArtifactId, ArtifactState, ArtifactVersion,
+    Automation, AutomationExecutionSnapshot, AutomationHistoryEntry, AutomationHistoryStatus,
+    AutomationId, AutomationOccurrence, AutomationOccurrenceId, AutomationOccurrenceState,
     AutomationScheduleCursor, AutomationSchedulerLease, AutomationSchedulerLeaseToken,
     AutomationSchedulerOwnerId, AutomationState, ChatModelPreference, ConversationForkKind,
     ConversationMessageDerivation, ConversationMessageDerivationKind, ConversationThreadOrigin,
@@ -662,6 +662,40 @@ impl ExecutionStore for InMemoryExecutionStore {
         runs.sort_by_key(|run| (run.created_at, run.id.clone()));
         runs.truncate(limit);
         Ok(runs)
+    }
+
+    async fn list_host_work_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError> {
+        if !(1..=100).contains(&limit) {
+            return Err(StoreError::Internal("invalid Host Work list limit".into()));
+        }
+        let state = self.state.lock().await;
+        let mut runs = state
+            .runs
+            .values()
+            .filter(|run| run.is_work_bound_to(WorkExecutionBackend::HostDirect))
+            .cloned()
+            .collect::<Vec<_>>();
+        runs.sort_by_key(|run| (std::cmp::Reverse(run.updated_at), run.id.clone()));
+        runs.truncate(limit);
+        Ok(runs)
+    }
+
+    async fn pending_approval_for_run(
+        &self,
+        run_id: &RunId,
+    ) -> Result<Option<Approval>, StoreError> {
+        let state = self.state.lock().await;
+        if !state.runs.contains_key(run_id) {
+            return Err(StoreError::NotFound);
+        }
+        Ok(state
+            .approvals
+            .values()
+            .filter(|approval| {
+                approval.run_id == *run_id && approval.status == ApprovalStatus::Pending
+            })
+            .max_by_key(|approval| (approval.created_at, approval.id.clone()))
+            .cloned())
     }
 
     async fn save_effect(

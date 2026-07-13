@@ -409,6 +409,7 @@ export interface Request {
     | { $case: "deactivateHostWorkRuntime"; value: DeactivateHostWorkRuntimeRequest }
     | { $case: "startHostWork"; value: StartHostWorkRequest }
     | { $case: "cancelHostWork"; value: CancelHostWorkRequest }
+    | { $case: "listHostWorkRuns"; value: ListHostWorkRunsRequest }
     | undefined;
 }
 
@@ -451,6 +452,7 @@ export interface Response {
     { $case: "usageSummary"; value: UsageSummary }
     | { $case: "hostExecutionPolicy"; value: HostExecutionPolicy }
     | { $case: "hostWorkResult"; value: HostWorkResult }
+    | { $case: "hostWorkList"; value: HostWorkList }
     | undefined;
 }
 
@@ -637,6 +639,23 @@ export interface StartHostWorkRequest {
 
 export interface CancelHostWorkRequest {
   runId: string;
+}
+
+/**
+ * Bounded reload projection for Host-bound Work activity. This is read-only
+ * and never resumes or replays execution.
+ */
+export interface ListHostWorkRunsRequest {
+  limit: number;
+}
+
+export interface HostWorkSnapshot {
+  run: Run | undefined;
+  pendingApproval?: Approval | undefined;
+}
+
+export interface HostWorkList {
+  items: HostWorkSnapshot[];
 }
 
 export interface HostWorkResult {
@@ -1718,6 +1737,9 @@ export const Request: MessageFns<Request> = {
       case "cancelHostWork":
         CancelHostWorkRequest.encode(message.operation.value, writer.uint32(586).fork()).join();
         break;
+      case "listHostWorkRuns":
+        ListHostWorkRunsRequest.encode(message.operation.value, writer.uint32(594).fork()).join();
+        break;
     }
     return writer;
   },
@@ -2339,6 +2361,17 @@ export const Request: MessageFns<Request> = {
           message.operation = { $case: "cancelHostWork", value: CancelHostWorkRequest.decode(reader, reader.uint32()) };
           continue;
         }
+        case 74: {
+          if (tag !== 594) {
+            break;
+          }
+
+          message.operation = {
+            $case: "listHostWorkRuns",
+            value: ListHostWorkRunsRequest.decode(reader, reader.uint32()),
+          };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2876,6 +2909,15 @@ export const Request: MessageFns<Request> = {
         }
         break;
       }
+      case "listHostWorkRuns": {
+        if (object.operation?.value !== undefined && object.operation?.value !== null) {
+          message.operation = {
+            $case: "listHostWorkRuns",
+            value: ListHostWorkRunsRequest.fromPartial(object.operation.value),
+          };
+        }
+        break;
+      }
     }
     return message;
   },
@@ -2992,6 +3034,9 @@ export const Response: MessageFns<Response> = {
         break;
       case "hostWorkResult":
         HostWorkResult.encode(message.result.value, writer.uint32(290).fork()).join();
+        break;
+      case "hostWorkList":
+        HostWorkList.encode(message.result.value, writer.uint32(298).fork()).join();
         break;
     }
     return writer;
@@ -3302,6 +3347,14 @@ export const Response: MessageFns<Response> = {
           message.result = { $case: "hostWorkResult", value: HostWorkResult.decode(reader, reader.uint32()) };
           continue;
         }
+        case 37: {
+          if (tag !== 298) {
+            break;
+          }
+
+          message.result = { $case: "hostWorkList", value: HostWorkList.decode(reader, reader.uint32()) };
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3560,6 +3613,12 @@ export const Response: MessageFns<Response> = {
       case "hostWorkResult": {
         if (object.result?.value !== undefined && object.result?.value !== null) {
           message.result = { $case: "hostWorkResult", value: HostWorkResult.fromPartial(object.result.value) };
+        }
+        break;
+      }
+      case "hostWorkList": {
+        if (object.result?.value !== undefined && object.result?.value !== null) {
+          message.result = { $case: "hostWorkList", value: HostWorkList.fromPartial(object.result.value) };
         }
         break;
       }
@@ -5601,6 +5660,158 @@ export const CancelHostWorkRequest: MessageFns<CancelHostWorkRequest> = {
   fromPartial(object: DeepPartial<CancelHostWorkRequest>): CancelHostWorkRequest {
     const message = createBaseCancelHostWorkRequest();
     message.runId = object.runId ?? "";
+    return message;
+  },
+};
+
+function createBaseListHostWorkRunsRequest(): ListHostWorkRunsRequest {
+  return { limit: 0 };
+}
+
+export const ListHostWorkRunsRequest: MessageFns<ListHostWorkRunsRequest> = {
+  encode(message: ListHostWorkRunsRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.limit !== 0) {
+      writer.uint32(8).uint32(message.limit);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ListHostWorkRunsRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseListHostWorkRunsRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.limit = reader.uint32();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ListHostWorkRunsRequest>): ListHostWorkRunsRequest {
+    return ListHostWorkRunsRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ListHostWorkRunsRequest>): ListHostWorkRunsRequest {
+    const message = createBaseListHostWorkRunsRequest();
+    message.limit = object.limit ?? 0;
+    return message;
+  },
+};
+
+function createBaseHostWorkSnapshot(): HostWorkSnapshot {
+  return { run: undefined, pendingApproval: undefined };
+}
+
+export const HostWorkSnapshot: MessageFns<HostWorkSnapshot> = {
+  encode(message: HostWorkSnapshot, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.run !== undefined) {
+      Run.encode(message.run, writer.uint32(10).fork()).join();
+    }
+    if (message.pendingApproval !== undefined) {
+      Approval.encode(message.pendingApproval, writer.uint32(18).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): HostWorkSnapshot {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseHostWorkSnapshot();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.run = Run.decode(reader, reader.uint32());
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.pendingApproval = Approval.decode(reader, reader.uint32());
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<HostWorkSnapshot>): HostWorkSnapshot {
+    return HostWorkSnapshot.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<HostWorkSnapshot>): HostWorkSnapshot {
+    const message = createBaseHostWorkSnapshot();
+    message.run = (object.run !== undefined && object.run !== null) ? Run.fromPartial(object.run) : undefined;
+    message.pendingApproval = (object.pendingApproval !== undefined && object.pendingApproval !== null)
+      ? Approval.fromPartial(object.pendingApproval)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseHostWorkList(): HostWorkList {
+  return { items: [] };
+}
+
+export const HostWorkList: MessageFns<HostWorkList> = {
+  encode(message: HostWorkList, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    for (const v of message.items) {
+      HostWorkSnapshot.encode(v!, writer.uint32(10).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): HostWorkList {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseHostWorkList();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.items.push(HostWorkSnapshot.decode(reader, reader.uint32()));
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<HostWorkList>): HostWorkList {
+    return HostWorkList.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<HostWorkList>): HostWorkList {
+    const message = createBaseHostWorkList();
+    message.items = object.items?.map((e) => HostWorkSnapshot.fromPartial(e)) || [];
     return message;
   },
 };

@@ -21,6 +21,7 @@ export const initialSnapshot: DesktopSnapshot = {
     { id: "realtime_voice", label: "Realtime voice", source: "xai_api", available: true },
     { id: "browser_automation", label: "Browser automation", source: "managed_addon", available: true },
   ],
+  workExecution: { mode: "isolated_guest", hostWorkRuntimeReady: false, hostBoundRunActive: false },
   projects: [
     {
       id: "atlas",
@@ -85,6 +86,8 @@ export const initialSnapshot: DesktopSnapshot = {
         { label: "Write final document", state: "active" },
       ],
       approval: {
+        id: "approval-run-2",
+        revision: 0,
         title: "Write 1 file",
         detail: "Operations/Briefs/2026-07-10.md",
         risk: "low",

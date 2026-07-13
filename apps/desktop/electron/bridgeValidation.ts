@@ -16,6 +16,75 @@ export function parseBridgeRequest(value: unknown): BridgeRequest {
     exactKeys(input, ["kind"], "desktop preference request");
     return { kind };
   }
+  if (
+    kind === "daemon.selectHostWorkFolder"
+    || kind === "daemon.getHostExecutionPolicy"
+  ) {
+    exactKeys(input, ["kind"], `${kind} request`);
+    return { kind };
+  }
+  if (kind === "daemon.enrollHostExecution") {
+    exactKeys(input, [
+      "kind", "expectedRevision", "acknowledgmentVersion", "typedAcknowledgment",
+      "filesystemRead", "filesystemWrite", "processExecute", "pathRoots",
+      "broadScopeAcknowledged", "idempotencyKey",
+    ], "Host Tools enrollment request");
+    if (!Array.isArray(input.pathRoots) || input.pathRoots.length < 1 || input.pathRoots.length > 8) {
+      throw new TypeError("Host Tools roots must contain between 1 and 8 paths");
+    }
+    const pathRoots = input.pathRoots.map((root) => string(root, "Host Tools root", 4096));
+    if (new Set(pathRoots).size !== pathRoots.length) {
+      throw new TypeError("Host Tools roots must be unique");
+    }
+    return {
+      kind,
+      expectedRevision: unsignedInteger(input.expectedRevision, "Host Tools policy revision"),
+      acknowledgmentVersion: unsignedInteger(input.acknowledgmentVersion, "Host Tools acknowledgment version"),
+      typedAcknowledgment: string(input.typedAcknowledgment, "Host Tools acknowledgment", 128),
+      filesystemRead: booleanValue(input.filesystemRead, "Host Tools filesystem read"),
+      filesystemWrite: booleanValue(input.filesystemWrite, "Host Tools filesystem write"),
+      processExecute: booleanValue(input.processExecute, "Host Tools process execution"),
+      pathRoots,
+      broadScopeAcknowledged: booleanValue(input.broadScopeAcknowledged, "Host Tools broad scope acknowledgment"),
+      idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
+    };
+  }
+  if (kind === "daemon.revokeHostExecution") {
+    exactKeys(input, ["kind", "expectedRevision", "idempotencyKey"], "Host Tools revocation request");
+    return {
+      kind,
+      expectedRevision: unsignedInteger(input.expectedRevision, "Host Tools policy revision"),
+      idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
+    };
+  }
+  if (kind === "daemon.prepareHostWorkRuntime" || kind === "daemon.deactivateHostWorkRuntime") {
+    exactKeys(input, ["kind", "idempotencyKey"], "Host Tools runtime request");
+    return { kind, idempotencyKey: identifier(input.idempotencyKey, "idempotency key") };
+  }
+  if (kind === "daemon.startHostWork") {
+    exactKeys(input, ["kind", "projectId", "threadId", "prompt", "idempotencyKey"], "Host Work start request");
+    return {
+      kind,
+      projectId: identifier(input.projectId, "project id"),
+      threadId: identifier(input.threadId, "thread id"),
+      prompt: string(input.prompt, "Host Work prompt", 1024 * 1024),
+      idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
+    };
+  }
+  if (kind === "daemon.cancelHostWork") {
+    exactKeys(input, ["kind", "runId", "idempotencyKey"], "Host Work cancel request");
+    return {
+      kind,
+      runId: identifier(input.runId, "run id"),
+      idempotencyKey: identifier(input.idempotencyKey, "idempotency key"),
+    };
+  }
+  if (kind === "daemon.listHostWorkRuns") {
+    exactKeys(input, ["kind", "limit"], "Host Work list request");
+    const limit = unsignedInteger(input.limit, "Host Work list limit");
+    if (limit < 1 || limit > 100) throw new TypeError("Host Work list limit is outside the supported bounds");
+    return { kind, limit };
+  }
   if (kind === "daemon.getChatModelCatalog") {
     exactKeys(input, ["kind"], "chat model catalog request");
     return { kind };

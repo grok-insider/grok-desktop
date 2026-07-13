@@ -21,6 +21,8 @@ import type {
   DaemonConversationTurnEventBatch,
   DaemonConversationTurn,
   DaemonDesktopPreferences,
+  DaemonHostExecutionPolicy,
+  DaemonHostWorkSnapshot,
   DaemonMessage,
   DaemonProject,
   DaemonRun,
@@ -65,12 +67,16 @@ import {
   OverlapPolicy,
   ProjectState,
   type CapabilityStatus,
+  type HostExecutionPolicy,
+  type HostWorkSnapshot,
   type Run,
   type RunEvent,
   type SuperGrokEnrollmentStatus,
   RunEventKind,
   RunState,
+  RunKind,
   ThreadState,
+  WorkExecutionBackend,
   WorkspaceSearchKind,
 } from "../generated/daemon/v1/daemon.js";
 import {
@@ -227,19 +233,33 @@ export class DaemonSupervisor {
     return this.startPromise;
   }
 
-  async bootstrap(): Promise<{ status: DaemonStatus; capabilities: DaemonCapabilityStatus[]; accountState: DaemonAccountState; workspace: DaemonWorkspaceSnapshot }> {
+  async bootstrap(): Promise<{
+    status: DaemonStatus;
+    capabilities: DaemonCapabilityStatus[];
+    workExecutionMode: import("../../src/contracts/bridge.js").DaemonWorkExecutionMode;
+    hostWorkRuntimeReady: boolean;
+    hostBoundRunActive: boolean;
+    hostWork: DaemonHostWorkSnapshot[];
+    accountState: DaemonAccountState;
+    workspace: DaemonWorkspaceSnapshot;
+  }> {
     await this.start();
     const protocol = this.requireProtocol();
     try {
-      const [statuses, accountState, workspace] = await Promise.all([
-        protocol.resolveCapabilities(),
+      const [capabilities, hostWork, accountState, workspace] = await Promise.all([
+        protocol.getCapabilitySnapshot(),
+        protocol.listHostWorkRuns(),
         protocol.getAccountState(),
         loadWorkspace(protocol),
       ]);
       this.setConnected();
       return {
         status: this.getStatus(),
-        capabilities: statuses.map(mapCapability),
+        capabilities: capabilities.statuses.map(mapCapability),
+        workExecutionMode: workExecutionModeFromWire(capabilities.workExecutionBackend),
+        hostWorkRuntimeReady: capabilities.hostWorkRuntimeReady,
+        hostBoundRunActive: capabilities.hostBoundRunActive,
+        hostWork: hostWork.items.map(mapHostWorkSnapshot),
         accountState: mapAccountState(accountState),
         workspace,
       };
@@ -247,6 +267,72 @@ export class DaemonSupervisor {
       this.setDegraded("The daemon could not resolve current capabilities.");
       throw error;
     }
+  }
+
+  async getHostExecutionPolicy(): Promise<DaemonHostExecutionPolicy> {
+    await this.start();
+    return mapHostExecutionPolicy(await this.requireProtocol().getHostExecutionPolicy());
+  }
+
+  async enrollHostExecution(
+    input: {
+      expectedRevision: number;
+      acknowledgmentVersion: number;
+      typedAcknowledgment: string;
+      filesystemRead: boolean;
+      filesystemWrite: boolean;
+      processExecute: boolean;
+      pathRoots: string[];
+      broadScopeAcknowledged: boolean;
+    },
+    idempotencyKey: string,
+  ): Promise<DaemonHostExecutionPolicy> {
+    await this.start();
+    return mapHostExecutionPolicy(await this.requireProtocol().enrollHostExecution({
+      ...input,
+      expectedRevision: BigInt(input.expectedRevision),
+    }, idempotencyKey));
+  }
+
+  async revokeHostExecution(expectedRevision: number, idempotencyKey: string): Promise<DaemonHostExecutionPolicy> {
+    await this.start();
+    return mapHostExecutionPolicy(await this.requireProtocol().revokeHostExecution(
+      BigInt(expectedRevision), idempotencyKey,
+    ));
+  }
+
+  async prepareHostWorkRuntime(idempotencyKey: string): Promise<DaemonHostExecutionPolicy> {
+    await this.start();
+    return mapHostExecutionPolicy(await this.requireProtocol().prepareHostWorkRuntime(idempotencyKey));
+  }
+
+  async deactivateHostWorkRuntime(idempotencyKey: string): Promise<DaemonHostExecutionPolicy> {
+    await this.start();
+    return mapHostExecutionPolicy(await this.requireProtocol().deactivateHostWorkRuntime(idempotencyKey));
+  }
+
+  async startHostWork(
+    projectId: string,
+    threadId: string,
+    prompt: string,
+    idempotencyKey: string,
+  ): Promise<DaemonHostWorkSnapshot> {
+    await this.start();
+    const result = await this.requireProtocol().startHostWork(projectId, threadId, prompt, idempotencyKey);
+    if (!result.run) throw new DaemonProtocolError("Host Work response is missing its run");
+    return { run: mapRun(result.run) };
+  }
+
+  async cancelHostWork(runId: string, idempotencyKey: string): Promise<DaemonHostWorkSnapshot> {
+    await this.start();
+    const result = await this.requireProtocol().cancelHostWork(runId, idempotencyKey);
+    if (!result.run) throw new DaemonProtocolError("Host Work cancel response is missing its run");
+    return { run: mapRun(result.run) };
+  }
+
+  async listHostWorkRuns(limit: number): Promise<DaemonHostWorkSnapshot[]> {
+    await this.start();
+    return (await this.requireProtocol().listHostWorkRuns(limit)).items.map(mapHostWorkSnapshot);
   }
 
   async getAccountState(): Promise<DaemonAccountState> {
@@ -2594,7 +2680,64 @@ function mapRun(run: Run): DaemonRun {
     revision: safeNumber(run.revision, "run revision"),
     createdAtUnixMs: safeNumber(run.createdAtUnixMs, "run creation time"),
     updatedAtUnixMs: safeNumber(run.updatedAtUnixMs, "run update time"),
+    kind: runKindFromWire(run.kind),
+    ...(run.workBackend === WorkExecutionBackend.WORK_EXECUTION_BACKEND_UNSPECIFIED
+      ? {}
+      : { workBackend: workBackendFromWire(run.workBackend) }),
   };
+}
+
+function mapHostExecutionPolicy(policy: HostExecutionPolicy): DaemonHostExecutionPolicy {
+  return {
+    revision: safeNumber(policy.revision, "Host Tools policy revision"),
+    active: policy.active,
+    acknowledgmentVersion: policy.acknowledgmentVersion,
+    requiredAcknowledgmentVersion: policy.requiredAcknowledgmentVersion,
+    acknowledgedAtUnixMs: safeNumber(policy.acknowledgedAtUnixMs, "Host Tools acknowledgment time"),
+    filesystemRead: policy.filesystemRead,
+    filesystemWrite: policy.filesystemWrite,
+    processExecute: policy.processExecute,
+    pathRoots: policy.pathRoots.map((root) => boundedString(root, "Host Tools path root", 4096)),
+    broadScopeAcknowledged: policy.broadScopeAcknowledged,
+    updatedAtUnixMs: safeNumber(policy.updatedAtUnixMs, "Host Tools policy update time"),
+    runtimePrepared: policy.runtimePrepared,
+    unavailableReasonCode: policy.unavailableReasonCode
+      ? boundedString(policy.unavailableReasonCode, "Host Tools unavailable reason", 128)
+      : "",
+  };
+}
+
+function mapHostWorkSnapshot(snapshot: HostWorkSnapshot): DaemonHostWorkSnapshot {
+  if (!snapshot.run) throw new DaemonProtocolError("Host Work snapshot is missing its run");
+  const run = mapRun(snapshot.run);
+  if (run.kind !== "work" || run.workBackend !== "host_direct") {
+    throw new DaemonProtocolError("Host Work snapshot has an invalid backend binding");
+  }
+  return {
+    run,
+    ...(snapshot.pendingApproval ? { pendingApproval: mapApproval(snapshot.pendingApproval) } : {}),
+  };
+}
+
+function workExecutionModeFromWire(
+  backend: WorkExecutionBackend,
+): import("../../src/contracts/bridge.js").DaemonWorkExecutionMode {
+  if (backend === WorkExecutionBackend.WORK_EXECUTION_BACKEND_UNSPECIFIED) return "limited";
+  return workBackendFromWire(backend);
+}
+
+function workBackendFromWire(backend: WorkExecutionBackend): "host_direct" | "isolated_guest" {
+  if (backend === WorkExecutionBackend.WORK_EXECUTION_BACKEND_HOST_DIRECT) return "host_direct";
+  if (backend === WorkExecutionBackend.WORK_EXECUTION_BACKEND_ISOLATED_GUEST) return "isolated_guest";
+  throw new DaemonProtocolError("invalid Work execution backend");
+}
+
+function runKindFromWire(kind: RunKind): DaemonRun["kind"] {
+  if (kind === RunKind.RUN_KIND_UNSPECIFIED) return "unspecified";
+  if (kind === RunKind.RUN_KIND_CHAT) return "chat";
+  if (kind === RunKind.RUN_KIND_WORK) return "work";
+  if (kind === RunKind.RUN_KIND_SCHEDULED) return "scheduled";
+  throw new DaemonProtocolError("invalid run kind");
 }
 
 function mapRunEvent(event: RunEvent): DaemonRunEvent {
