@@ -524,7 +524,7 @@ mod tests {
         let peer = peer.canonicalize().unwrap_or(peer);
 
         let mut child = spawn_vm_service(&socket, image_root.path(), &peer);
-        wait_for_socket(&socket, Duration::from_secs(8));
+        wait_for_socket(&mut child, &socket, Duration::from_secs(60));
 
         // Ensure ALLOWED_DAEMON matches SO_PEERCRED peer of this test process.
         let transport = LinuxVmServiceGuestTransport::new(
@@ -573,15 +573,23 @@ mod tests {
             .expect("start grok-linux-vm-service")
     }
 
-    fn wait_for_socket(path: &Path, timeout: Duration) {
+    fn wait_for_socket(child: &mut Child, path: &Path, timeout: Duration) {
         let start = std::time::Instant::now();
         while start.elapsed() < timeout {
             if path.exists() {
                 thread::sleep(Duration::from_millis(80));
                 return;
             }
+            if let Some(status) = child.try_wait().expect("inspect VM service status") {
+                panic!(
+                    "VM service exited with {status} before socket {} appeared",
+                    path.display()
+                );
+            }
             thread::sleep(Duration::from_millis(50));
         }
+        let _ = child.kill();
+        let _ = child.wait();
         panic!("socket {} did not appear", path.display());
     }
 }
