@@ -610,6 +610,7 @@ export type BridgeResponse =
       messages: DaemonMessage[];
       turns: DaemonConversationTurn[];
       forkMetadata: DaemonConversationForkMetadata;
+      workRun?: DaemonRun;
     }
   | { kind: "daemon.workspaceSearchResults"; results: DaemonWorkspaceSearchResults }
   | { kind: "daemon.conversationTurn"; turn: DaemonConversationTurn }

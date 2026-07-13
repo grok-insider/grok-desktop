@@ -45,8 +45,7 @@ const MAX_PLAN_BYTES: usize = 1024 * 1024;
 const MAX_AUTH_METHODS: usize = 32;
 const MAX_PERMISSION_OPTIONS: usize = 32;
 const MAX_ADDITIONAL_DIRECTORIES: usize = 7;
-const MAX_HOST_MCP_ARGUMENTS: usize = 16;
-const MAX_HOST_MCP_ARGUMENT_BYTES: usize = 4096;
+const MAX_HOST_MCP_AUTHORIZATION_BYTES: usize = 512;
 
 type EventResult = Result<AgentEvent, AgentRuntimeError>;
 type EventSender = mpsc::Sender<EventResult>;
@@ -141,6 +140,7 @@ pub struct GrokAcpConfig {
     pub request_timeout: Duration,
     /// Maximum sanitized stderr bytes retained in memory.
     pub stderr_limit: usize,
+    chat_proxy_base_url: Option<String>,
     execution_boundary: GrokAcpExecutionBoundary,
 }
 
@@ -157,8 +157,24 @@ impl GrokAcpConfig {
             initialize_timeout: Duration::from_secs(15),
             request_timeout: Duration::from_secs(30),
             stderr_limit: DEFAULT_STDERR_LIMIT,
+            chat_proxy_base_url: None,
             execution_boundary: GrokAcpExecutionBoundary::HostControl,
         }
+    }
+
+    /// Adds the official development subscription proxy only when it is a
+    /// credential-free IPv4 loopback `/v1` endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-request error for every non-loopback URL shape.
+    #[doc(hidden)]
+    pub fn with_loopback_chat_proxy_base_url(
+        mut self,
+        value: Option<&str>,
+    ) -> Result<Self, AgentRuntimeError> {
+        self.chat_proxy_base_url = value.map(validate_loopback_chat_proxy).transpose()?;
+        Ok(self)
     }
 
     /// Creates a session-capable runtime for a qualified isolated guest only.
@@ -359,7 +375,12 @@ impl GrokAcpRuntime {
             }
         };
         let grok_home = config.grok_home.provision().map_err(isolation_error)?;
-        let spawned = spawn_component(&config.component, &grok_home, config.stderr_limit)?;
+        let spawned = spawn_component(
+            &config.component,
+            &grok_home,
+            config.stderr_limit,
+            config.chat_proxy_base_url.as_deref(),
+        )?;
         let SpawnedProcess {
             stdin,
             stdout,
@@ -513,12 +534,7 @@ impl AgentRuntime for GrokAcpRuntime {
             .collect::<Result<Vec<_>, _>>()?;
         match (self.inner.execution_boundary, &request.host_tools_mcp) {
             (GrokAcpExecutionBoundary::HostWorkTools, Some(server)) => {
-                if !server.executable.is_absolute()
-                    || server.arguments.len() > MAX_HOST_MCP_ARGUMENTS
-                    || server.arguments.iter().any(|argument| {
-                        argument.is_empty() || argument.len() > MAX_HOST_MCP_ARGUMENT_BYTES
-                    })
-                {
+                if !self.inner.probe.capabilities.mcp_http || !valid_host_tools_mcp(server) {
                     return Err(invalid("invalid Host Tools MCP descriptor"));
                 }
             }
@@ -594,6 +610,26 @@ impl AgentRuntime for GrokAcpRuntime {
     }
 }
 
+fn valid_host_tools_mcp(server: &grok_application::HostToolsMcpServer) -> bool {
+    let Ok(url) = url::Url::parse(&server.url) else {
+        return false;
+    };
+    url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port().is_some()
+        && url.path() == "/mcp"
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && server.authorization.starts_with("Bearer ")
+        && (39..=MAX_HOST_MCP_AUTHORIZATION_BYTES).contains(&server.authorization.len())
+        && server
+            .authorization
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
+}
+
 struct SpawnedProcess {
     stdin: tokio::process::ChildStdin,
     stdout: tokio::process::ChildStdout,
@@ -605,16 +641,28 @@ fn spawn_component(
     component: &VerifiedGrokComponent,
     grok_home: &ProvisionedGrokHome,
     stderr_limit: usize,
+    chat_proxy_base_url: Option<&str>,
 ) -> Result<SpawnedProcess, AgentRuntimeError> {
     if stderr_limit == 0 || stderr_limit > 1024 * 1024 {
         return Err(invalid("stderr limit must be between 1 byte and 1 MiB"));
     }
+    #[cfg(unix)]
+    let runtime_ca_bundle = platform_ca_bundle()
+        .map(|source| grok_home.install_runtime_ca_bundle(&source))
+        .transpose()
+        .map_err(|_| process_error("failed to provision the official Grok CA bundle"))?;
+    #[cfg(not(unix))]
+    let runtime_ca_bundle: Option<PathBuf> = None;
     let mut command = CommandWrap::with_new(component.executable(), |command| {
         command
-            .args(["agent", "stdio"])
+            .args(["--no-auto-update", "agent", "stdio"])
             .current_dir(grok_home.launch_directory())
             .env_clear()
-            .envs(isolated_environment(grok_home))
+            .envs(isolated_environment(
+                grok_home,
+                chat_proxy_base_url,
+                runtime_ca_bundle.as_deref(),
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -953,9 +1001,10 @@ async fn open_session(
         let mut session_request = acp::NewSessionRequest::new(request.working_directory)
             .additional_directories(request.additional_directories);
         if let Some(server) = request.host_tools_mcp {
-            session_request = session_request.mcp_servers(vec![acp::McpServer::Stdio(
-                acp::McpServerStdio::new("grok-desktop-host-tools", server.executable)
-                    .args(server.arguments),
+            session_request = session_request.mcp_servers(vec![acp::McpServer::Http(
+                acp::McpServerHttp::new("grok-desktop-host-tools", server.url).headers(vec![
+                    acp::HttpHeader::new("Authorization", server.authorization),
+                ]),
             )]);
         }
         let response = tokio::time::timeout(
@@ -1128,9 +1177,14 @@ fn map_permission_request(
             .tool_call
             .fields
             .title
+            .clone()
             .unwrap_or_else(|| "Tool permission".into()),
         MAX_AGENT_TITLE_BYTES,
     )?;
+    let managed_host_tool = managed_host_tool_name(
+        request.tool_call.fields.title.as_deref(),
+        request.tool_call.fields.raw_input.as_ref(),
+    );
     let options = request
         .options
         .into_iter()
@@ -1155,8 +1209,37 @@ fn map_permission_request(
         request_id: format!("permission-{}", uuid::Uuid::new_v4()),
         session_id,
         title,
+        managed_host_tool,
         options,
     })
+}
+
+fn managed_host_tool_name(
+    title: Option<&str>,
+    raw_input: Option<&serde_json::Value>,
+) -> Option<String> {
+    const NAMESPACE: &str = "grok-desktop-host-tools__";
+    const TOOLS: &[&str] = &[
+        "host_filesystem_list",
+        "host_filesystem_read",
+        "host_filesystem_write",
+        "host_process_exec",
+    ];
+
+    let title = title?;
+    let tool = title.strip_prefix(NAMESPACE)?;
+    if !TOOLS.contains(&tool) {
+        return None;
+    }
+    let input = raw_input?.as_object()?;
+    if input.len() != 3
+        || input.get("variant")?.as_str()? != "UseTool"
+        || input.get("tool_name")?.as_str()? != title
+        || !input.get("tool_input")?.is_object()
+    {
+        return None;
+    }
+    Some(tool.to_owned())
 }
 
 fn bounded_agent_text(value: String, maximum: usize) -> Option<String> {
@@ -1281,12 +1364,20 @@ fn sanitize_diagnostic(value: &str) -> String {
 
 fn isolated_environment(
     grok_home: &ProvisionedGrokHome,
+    chat_proxy_base_url: Option<&str>,
+    runtime_ca_bundle: Option<&Path>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let environment = grok_home
+    let mut environment = grok_home
         .environment()
         .into_iter()
         .map(|(name, value)| (name.into(), value.into_os_string()))
         .collect::<Vec<_>>();
+    if let Some(value) = chat_proxy_base_url {
+        environment.push(("GROK_CLI_CHAT_PROXY_BASE_URL".into(), value.into()));
+    }
+    if let Some(bundle) = runtime_ca_bundle {
+        environment.push(("SSL_CERT_FILE".into(), bundle.as_os_str().to_owned()));
+    }
     #[cfg(windows)]
     {
         let mut environment = environment;
@@ -1299,6 +1390,35 @@ fn isolated_environment(
     }
     #[cfg(not(windows))]
     environment
+}
+
+#[cfg(unix)]
+fn platform_ca_bundle() -> Option<PathBuf> {
+    [
+        "/etc/ssl/certs/ca-bundle.crt",
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/ssl/cert.pem",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file())
+}
+
+fn validate_loopback_chat_proxy(value: &str) -> Result<String, AgentRuntimeError> {
+    let url = url::Url::parse(value).map_err(|_| invalid("invalid chat proxy URL"))?;
+    if value.len() > 512
+        || url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port().is_none()
+        || url.path() != "/v1"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(invalid("invalid chat proxy URL"));
+    }
+    Ok(value.to_owned())
 }
 
 fn component_error(error: impl std::fmt::Display) -> AgentRuntimeError {
@@ -1373,6 +1493,46 @@ mod tests {
         assert_ne!(
             GrokAcpExecutionBoundary::HostControl,
             GrokAcpExecutionBoundary::IsolatedGuest
+        );
+    }
+
+    #[test]
+    fn recognizes_only_exact_daemon_host_tool_permission_envelopes() {
+        let input = serde_json::json!({
+            "variant": "UseTool",
+            "tool_name": "grok-desktop-host-tools__host_filesystem_list",
+            "tool_input": {"path": "/workspace"}
+        });
+        assert_eq!(
+            managed_host_tool_name(
+                Some("grok-desktop-host-tools__host_filesystem_list"),
+                Some(&input),
+            ),
+            Some("host_filesystem_list".into())
+        );
+
+        let wrong_namespace = serde_json::json!({
+            "variant": "UseTool",
+            "tool_name": "other__host_filesystem_list",
+            "tool_input": {"path": "/workspace"}
+        });
+        assert_eq!(
+            managed_host_tool_name(Some("other__host_filesystem_list"), Some(&wrong_namespace)),
+            None
+        );
+
+        let extra_field = serde_json::json!({
+            "variant": "UseTool",
+            "tool_name": "grok-desktop-host-tools__host_filesystem_list",
+            "tool_input": {"path": "/workspace"},
+            "unexpected": true
+        });
+        assert_eq!(
+            managed_host_tool_name(
+                Some("grok-desktop-host-tools__host_filesystem_list"),
+                Some(&extra_field),
+            ),
+            None
         );
     }
 

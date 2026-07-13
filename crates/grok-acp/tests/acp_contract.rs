@@ -137,7 +137,7 @@ async fn host_control_runtime_authenticates_but_rejects_sessions() {
 }
 
 #[tokio::test]
-async fn host_work_runtime_sends_only_daemon_created_stdio_mcp_and_directories() {
+async fn host_work_runtime_sends_only_daemon_created_http_mcp_and_directories() {
     let fixture = Fixture::compile();
     let additional = fixture.root.join("secondary");
     std::fs::create_dir(&additional).expect("additional workspace");
@@ -154,18 +154,21 @@ async fn host_work_runtime_sends_only_daemon_created_stdio_mcp_and_directories()
     config.initialize_timeout = Duration::from_secs(5);
     config.request_timeout = Duration::from_secs(5);
     let runtime = GrokAcpRuntime::start(config, broker).await.expect("start");
-    let session = runtime
-        .open_session(AgentSessionRequest {
-            working_directory: fixture.root.clone(),
-            additional_directories: vec![additional],
-            host_tools_mcp: Some(HostToolsMcpServer {
-                executable: fixture.component.executable().to_path_buf(),
-                arguments: vec!["host-tools-contract".into()],
-            }),
-            existing_session_id: None,
-        })
-        .await
-        .expect("host tools session");
+    let session =
+        runtime
+            .open_session(AgentSessionRequest {
+                working_directory: fixture.root.clone(),
+                additional_directories: vec![additional],
+                host_tools_mcp: Some(HostToolsMcpServer {
+                    url: "http://127.0.0.1:39281/mcp".into(),
+                    authorization:
+                        "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                            .into(),
+                }),
+                existing_session_id: None,
+            })
+            .await
+            .expect("host tools session");
     assert_eq!(session.id, "session-host-tools");
     runtime.shutdown().await.expect("shutdown");
 }

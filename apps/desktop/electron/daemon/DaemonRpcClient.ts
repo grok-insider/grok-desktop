@@ -42,6 +42,7 @@ import {
 export const PROTOCOL_VERSION = 28;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+const AGENT_ROLE_SWITCH_TIMEOUT_MS = 45_000;
 const DEFAULT_RESPONSE_GRACE_MS = 1_000;
 const DEFAULT_MAX_PENDING_REQUESTS = 32;
 const EXPIRED_REQUEST_TTL_MS = 60_000;
@@ -515,14 +516,22 @@ export class DaemonProtocolClient {
 
   async prepareHostWorkRuntime(idempotencyKey: string): Promise<HostExecutionPolicy> {
     return expectResult(
-      await this.rpc.request({ $case: "prepareHostWorkRuntime", value: {} }, idempotencyKey),
+      await this.rpc.request(
+        { $case: "prepareHostWorkRuntime", value: {} },
+        idempotencyKey,
+        AGENT_ROLE_SWITCH_TIMEOUT_MS,
+      ),
       "hostExecutionPolicy",
     );
   }
 
   async deactivateHostWorkRuntime(idempotencyKey: string): Promise<HostExecutionPolicy> {
     return expectResult(
-      await this.rpc.request({ $case: "deactivateHostWorkRuntime", value: {} }, idempotencyKey),
+      await this.rpc.request(
+        { $case: "deactivateHostWorkRuntime", value: {} },
+        idempotencyKey,
+        AGENT_ROLE_SWITCH_TIMEOUT_MS,
+      ),
       "hostExecutionPolicy",
     );
   }
@@ -550,12 +559,13 @@ export class DaemonProtocolClient {
     );
   }
 
-  async listHostWorkRuns(limit = 50): Promise<HostWorkList> {
+  async listHostWorkRuns(limit = 50, threadId = ""): Promise<HostWorkList> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new DaemonProtocolError("Host Work list limit must be between 1 and 100");
     }
+    if (threadId) validateIdentifier(threadId, "thread id");
     return expectResult(
-      await this.rpc.request({ $case: "listHostWorkRuns", value: { limit } }),
+      await this.rpc.request({ $case: "listHostWorkRuns", value: { limit, threadId } }),
       "hostWorkList",
     );
   }

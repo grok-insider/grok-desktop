@@ -45,12 +45,23 @@ impl VerifiedHostToolsHelper {
         })
     }
 
-    pub(crate) fn reverify(&self) -> Result<(), AgentRuntimeError> {
+    /// Revalidates the retained helper path and byte identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an integrity-safe runtime error when the helper changed.
+    pub fn reverify(&self) -> Result<(), AgentRuntimeError> {
         let current = Self::verify(self.path.clone())?;
         if current.sha256 != self.sha256 {
             return Err(unavailable("Host Tools helper identity changed"));
         }
         Ok(())
+    }
+
+    /// Confirms that candidate bytes retain this verified helper identity.
+    #[must_use]
+    pub fn matches_bytes(&self, bytes: &[u8]) -> bool {
+        self.sha256 == <[u8; 32]>::from(Sha256::digest(bytes))
     }
 
     /// Verifies that a Linux peer PID is the retained packaged helper.
@@ -99,13 +110,26 @@ pub trait HostWorkRoleFactory: Send + Sync {
 pub struct GrokAcpRoleFactory {
     component: VerifiedGrokComponent,
     home: GrokHomeSpec,
+    chat_proxy_base_url: Option<String>,
 }
 
 impl GrokAcpRoleFactory {
     /// Creates a factory from an already verified official component.
     #[must_use]
     pub const fn new(component: VerifiedGrokComponent, home: GrokHomeSpec) -> Self {
-        Self { component, home }
+        Self {
+            component,
+            home,
+            chat_proxy_base_url: None,
+        }
+    }
+
+    /// Retains an already bounded development subscription proxy URL.
+    #[must_use]
+    #[doc(hidden)]
+    pub fn with_chat_proxy_base_url(mut self, value: Option<String>) -> Self {
+        self.chat_proxy_base_url = value;
+        self
     }
 
     async fn start(
@@ -118,9 +142,22 @@ impl GrokAcpRoleFactory {
         );
         tokio::spawn(async move {
             while let Some(pending) = host.recv().await {
-                // Residual agent-native tools never gain authority from ACP
-                // permission options. Product tools use the daemon MCP gate.
-                let _ = pending.respond(AgentPermissionDecision::Cancelled);
+                let decision = pending
+                    .request()
+                    .managed_host_tool
+                    .as_ref()
+                    .and_then(|_| {
+                        pending.request().options.iter().find(|option| {
+                            option.kind == grok_application::AgentPermissionOptionKind::AllowOnce
+                        })
+                    })
+                    .map_or(AgentPermissionDecision::Cancelled, |option| {
+                        AgentPermissionDecision::Selected(option.id.clone())
+                    });
+                // This selects only the official client's outer allow-once
+                // gate. The daemon MCP bridge still revalidates the exact
+                // operation, path, policy revision, and durable approval.
+                let _ = pending.respond(decision);
             }
         });
         Ok(Arc::new(GrokAcpRuntime::start(config, broker).await?))
@@ -130,23 +167,19 @@ impl GrokAcpRoleFactory {
 #[async_trait]
 impl HostWorkRoleFactory for GrokAcpRoleFactory {
     async fn start_control(&self) -> Result<Arc<dyn AgentRuntime>, AgentRuntimeError> {
-        self.start(GrokAcpConfig::host_control(
-            self.component.clone(),
-            self.home.clone(),
-        ))
-        .await
+        let config = GrokAcpConfig::host_control(self.component.clone(), self.home.clone())
+            .with_loopback_chat_proxy_base_url(self.chat_proxy_base_url.as_deref())?;
+        self.start(config).await
     }
 
     async fn start_work(
         &self,
         roots: Vec<PathBuf>,
     ) -> Result<Arc<dyn AgentRuntime>, AgentRuntimeError> {
-        self.start(GrokAcpConfig::host_work_tools(
-            self.component.clone(),
-            roots,
-            self.home.clone(),
-        ))
-        .await
+        let config =
+            GrokAcpConfig::host_work_tools(self.component.clone(), roots, self.home.clone())
+                .with_loopback_chat_proxy_base_url(self.chat_proxy_base_url.as_deref())?;
+        self.start(config).await
     }
 }
 
@@ -166,7 +199,6 @@ struct RuntimeState {
 /// Delegating official runtime with an exclusive serialized home-role switch.
 pub struct HostWorkRuntime {
     factory: Arc<dyn HostWorkRoleFactory>,
-    helper: Option<VerifiedHostToolsHelper>,
     state: Mutex<RuntimeState>,
 }
 
@@ -185,14 +217,10 @@ impl HostWorkRuntime {
     ///
     /// Returns the sanitized ACP startup failure when `HostControl` cannot be
     /// created.
-    pub async fn start(
-        factory: Arc<dyn HostWorkRoleFactory>,
-        helper: Option<VerifiedHostToolsHelper>,
-    ) -> Result<Self, AgentRuntimeError> {
+    pub async fn start(factory: Arc<dyn HostWorkRoleFactory>) -> Result<Self, AgentRuntimeError> {
         let runtime = factory.start_control().await?;
         Ok(Self {
             factory,
-            helper,
             state: Mutex::new(RuntimeState {
                 runtime: Some(runtime),
                 role: Role::Control,
@@ -205,17 +233,12 @@ impl HostWorkRuntime {
     ///
     /// # Errors
     ///
-    /// Returns a sanitized policy, helper, process, or authentication error and
+    /// Returns a sanitized policy, process, or authentication error and
     /// attempts to restore `HostControl` before returning.
     pub async fn prepare(&self, policy: &HostExecutionPolicy) -> Result<(), AgentRuntimeError> {
         if !policy.is_effectively_active() {
             return Err(invalid("Host Tools enrollment is not active"));
         }
-        let helper = self
-            .helper
-            .as_ref()
-            .ok_or_else(|| unavailable("Host Tools helper is unavailable"))?;
-        helper.reverify()?;
         let roots = policy
             .canonical_roots
             .iter()
@@ -272,12 +295,6 @@ impl HostWorkRuntime {
     /// Reports whether the resident role is authenticated `HostWorkTools`.
     pub async fn is_ready(&self) -> bool {
         self.state.lock().await.role == Role::Work
-    }
-
-    /// Returns the retained helper identity only after composition verified it.
-    #[must_use]
-    pub fn helper(&self) -> Option<VerifiedHostToolsHelper> {
-        self.helper.clone()
     }
 
     async fn current(&self) -> Result<Arc<dyn AgentRuntime>, AgentRuntimeError> {
@@ -480,11 +497,8 @@ mod tests {
     #[tokio::test]
     async fn prepare_requires_auth_and_role_switch_is_serial_and_reversible() {
         let directory = tempfile::tempdir().expect("directory");
-        let helper_path = directory.path().join("helper");
-        std::fs::write(&helper_path, b"verified helper").expect("helper");
-        let helper = VerifiedHostToolsHelper::verify(helper_path).expect("verify helper");
         let factory = Arc::new(FakeFactory::default());
-        let runtime = HostWorkRuntime::start(factory.clone(), Some(helper))
+        let runtime = HostWorkRuntime::start(factory.clone())
             .await
             .expect("control");
         assert!(runtime.prepare(&policy(directory.path())).await.is_err());
@@ -510,12 +524,9 @@ mod tests {
     #[tokio::test]
     async fn failed_resume_restores_control_and_never_reports_ready() {
         let directory = tempfile::tempdir().expect("directory");
-        let helper_path = directory.path().join("helper");
-        std::fs::write(&helper_path, b"verified helper").expect("helper");
-        let helper = VerifiedHostToolsHelper::verify(helper_path).expect("verify helper");
         let factory = Arc::new(FakeFactory::default());
         factory.fail_next_work_auth.store(true, Ordering::SeqCst);
-        let runtime = HostWorkRuntime::start(factory.clone(), Some(helper))
+        let runtime = HostWorkRuntime::start(factory.clone())
             .await
             .expect("control");
         runtime

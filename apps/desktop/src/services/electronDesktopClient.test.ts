@@ -9,6 +9,7 @@ import type {
   DaemonConversationTurn,
   DesktopConversationTurnEventNotification,
   DaemonMessage,
+  DaemonRun,
   DaemonThread,
   DesktopBridge,
 } from "../contracts/bridge";
@@ -159,9 +160,74 @@ describe("ElectronDesktopClient", () => {
     });
     expect(snapshot.runs).toContainEqual(expect.objectContaining({
       id: run.id,
+      threadId: thread.id,
       executionMode: "host_direct",
       state: "completed",
     }));
+  });
+
+  it("maps daemon-owned Host Work messages as a Work conversation", async () => {
+    const thread = conversationThread();
+    const user: DaemonMessage = {
+      id: "message-work-user",
+      threadId: thread.id,
+      sequence: 1,
+      role: "user",
+      content: "List this workspace",
+      state: "active",
+      revision: 0,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 1,
+      derivation: { origin: "original" },
+    };
+    const assistant: DaemonMessage = {
+      ...user,
+      id: "message-work-assistant",
+      sequence: 2,
+      role: "assistant",
+      content: "The workspace contains docs and src.",
+      createdAtUnixMs: 2,
+      updatedAtUnixMs: 2,
+    };
+    const workRun: DaemonRun = {
+      id: "run-work",
+      projectId: thread.projectId,
+      threadId: thread.id,
+      state: "completed",
+      revision: 3,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+      kind: "work",
+      workBackend: "host_direct",
+    };
+    const bridge = fakeBridge(async (request) => {
+      if (request.kind === "daemon.bootstrap") return bootstrapResponse();
+      if (request.kind === "daemon.getConversation") {
+        return {
+          kind: "daemon.conversation",
+          thread,
+          messages: [user, assistant],
+          turns: [],
+          forkMetadata: conversationForkMetadata(thread),
+          workRun,
+        };
+      }
+      throw new Error(`unexpected request ${request.kind}`);
+    });
+    const client = new ElectronDesktopClient(bridge);
+
+    await expect(client.getConversation(thread.id)).resolves.toMatchObject({
+      status: "success",
+      value: {
+        id: thread.id,
+        mode: "work",
+        messages: [
+          { role: "user", content: "List this workspace" },
+          { role: "assistant", content: "The workspace contains docs and src." },
+        ],
+        turns: [],
+      },
+    });
   });
 
   it("keeps Automations limited even if an inconsistent daemon reports it available", async () => {

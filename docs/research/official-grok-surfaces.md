@@ -111,7 +111,7 @@ The managed ACP runtime therefore must:
    manifest verification and explicit grants.
 5. Keep the ordinary `HostControl` ACP role authentication/control-only. An
    independently risk-enrolled Host Tools run may use the separate constrained
-   `HostWorkTools` role with only the daemon-owned packaged stdio MCP bridge;
+   `HostWorkTools` role with only the daemon-owned authenticated loopback HTTP MCP bridge;
    it does not inherit arbitrary native tools, MCP discovery, plugins, hooks,
    or Chat/scheduler authority. Isolated Work still executes inside the
    qualified guest. Backend failure never switches roles or creates a grant.

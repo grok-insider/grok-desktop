@@ -44,7 +44,7 @@ use grok_artifact_storage::UnavailableArtifactContent;
 use grok_credential_enrollment::NativeCredentialEnrollment;
 use grok_daemon::{
     AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, GrokAcpRoleFactory,
-    HostWorkRuntime, HostWorkService, VerifiedHostToolsHelper, serve_connection,
+    HostWorkRuntime, HostWorkService, serve_connection,
 };
 use grok_domain::{AutomationSchedulerOwnerId, ChatRail, EffectState, RunState};
 use grok_memory::{
@@ -86,11 +86,12 @@ const AUTOMATION_SCHEDULER_LOOP_INTERVAL: Duration = Duration::from_secs(5);
 const AUTOMATION_SCHEDULER_SHUTDOWN_GRACE: Duration = Duration::from_secs(65);
 const LEGACY_STARTUP_NONCE_VARIABLE: &str = "GROK_DAEMON_STARTUP_NONCE_HEX";
 const STARTUP_NONCE_STDIN_MARKER: &str = "GROK_DAEMON_STARTUP_NONCE_STDIN";
-const LEGACY_ACP_VARIABLES: [&str; 4] = [
+const LEGACY_ACP_VARIABLES: [&str; 5] = [
     "GROK_ACP_EXECUTABLE",
     "GROK_ACP_VERSION",
     "GROK_ACP_SHA256",
     "GROK_ACP_WORKSPACE_ROOTS",
+    "GROK_ACP_CHAT_PROXY_BASE_URL",
 ];
 
 /// Ties this daemon's lifetime to the supervising desktop process.
@@ -1106,16 +1107,18 @@ async fn configured_agent_runtime(vault: Arc<dyn SecretVault>) -> AgentRuntimeCo
     else {
         return unavailable_component_runtime();
     };
-    start_agent_runtime(component, grok_home).await
+    start_agent_runtime(component, grok_home, None).await
 }
 
 async fn start_agent_runtime(
     component: VerifiedGrokComponent,
     grok_home: GrokHomeSpec,
+    chat_proxy_base_url: Option<String>,
 ) -> AgentRuntimeConfiguration {
-    let factory = Arc::new(GrokAcpRoleFactory::new(component, grok_home));
-    let helper = configured_host_tools_helper();
-    match HostWorkRuntime::start(factory, helper).await {
+    let factory = Arc::new(
+        GrokAcpRoleFactory::new(component, grok_home).with_chat_proxy_base_url(chat_proxy_base_url),
+    );
+    match HostWorkRuntime::start(factory).await {
         Ok(runtime) => {
             info!("official Grok ACP runtime initialized");
             AgentRuntimeConfiguration::Available(Arc::new(runtime))
@@ -1165,7 +1168,8 @@ async fn configured_legacy_agent_runtime() -> AgentRuntimeConfiguration {
             return unavailable_component_runtime();
         }
     };
-    start_agent_runtime(component, grok_home).await
+    let chat_proxy_base_url = std::env::var("GROK_ACP_CHAT_PROXY_BASE_URL").ok();
+    start_agent_runtime(component, grok_home, chat_proxy_base_url).await
 }
 
 fn legacy_acp_override_requested() -> bool {
@@ -1378,17 +1382,84 @@ fn default_grok_home_spec() -> Result<GrokHomeSpec, DynError> {
 }
 
 fn host_tools_endpoint_base() -> Result<PathBuf, DynError> {
-    let directories = directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
-        .ok_or("operating system did not provide a local application data directory")?;
-    let path = directories.data_local_dir().join("host-tools-runtime");
-    std::fs::create_dir_all(&path)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
+        unix_host_tools_endpoint_base()
     }
-    Ok(path)
+
+    #[cfg(not(unix))]
+    {
+        let directories = directories::ProjectDirs::from("net", "Grok Insider", "Grok Desktop")
+            .ok_or("operating system did not provide a local application data directory")?;
+        let path = directories.data_local_dir().join("host-tools-runtime");
+        std::fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+}
+
+#[cfg(unix)]
+fn unix_host_tools_endpoint_base() -> Result<PathBuf, DynError> {
+    let uid = rustix::process::getuid().as_raw();
+    let runtime_root = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|path| private_runtime_root(path, uid))
+        .map_or_else(
+            || {
+                let fallback = std::env::temp_dir().join(format!("grok-desktop-{uid}"));
+                ensure_private_owned_directory(&fallback, uid)?;
+                Ok::<_, DynError>(fallback)
+            },
+            Ok,
+        )?;
+    let product = runtime_root.join("grok-desktop");
+    ensure_private_owned_directory(&product, uid)?;
+    let endpoint_base = product.join("ht");
+    ensure_private_owned_directory(&endpoint_base, uid)?;
+    Ok(endpoint_base)
+}
+
+#[cfg(unix)]
+fn private_runtime_root(path: &Path, uid: u32) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if !path.is_absolute() {
+        return false;
+    }
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    metadata.file_type().is_dir()
+        && !metadata.file_type().is_symlink()
+        && metadata.uid() == uid
+        && metadata.permissions().mode().trailing_zeros() >= 6
+}
+
+#[cfg(unix)]
+fn ensure_private_owned_directory(path: &Path, uid: u32) -> Result<(), DynError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_dir()
+                || metadata.file_type().is_symlink()
+                || metadata.uid() != uid
+            {
+                return Err("Host Tools runtime directory is not privately owned".into());
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => std::fs::create_dir(path)?,
+        Err(error) => return Err(error.into()),
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != uid
+        || metadata.permissions().mode().trailing_zeros() < 6
+    {
+        return Err("Host Tools runtime directory could not be secured".into());
+    }
+    Ok(())
 }
 
 fn host_tools_denied_filesystem_roots() -> Result<Vec<String>, DynError> {
@@ -1396,39 +1467,6 @@ fn host_tools_denied_filesystem_roots() -> Result<Vec<String>, DynError> {
         .ok_or("operating system did not provide a local application data directory")?;
     let root = directories.data_local_dir().canonicalize()?;
     Ok(vec![root.to_string_lossy().into_owned()])
-}
-
-fn configured_host_tools_helper() -> Option<VerifiedHostToolsHelper> {
-    let candidate = if cfg!(debug_assertions) {
-        std::env::var_os("GROK_HOST_TOOLS_MCP_EXECUTABLE")
-            .map(PathBuf::from)
-            .or_else(packaged_host_tools_helper)
-    } else {
-        packaged_host_tools_helper()
-    };
-    let Some(path) = candidate else {
-        warn!("Host Tools helper is not packaged; Host Work remains unavailable");
-        return None;
-    };
-    if let Ok(helper) = VerifiedHostToolsHelper::verify(path) {
-        Some(helper)
-    } else {
-        warn!("Host Tools helper failed identity verification; Host Work remains unavailable");
-        None
-    }
-}
-
-fn packaged_host_tools_helper() -> Option<PathBuf> {
-    let name = if cfg!(windows) {
-        "grok-host-tools-mcp.exe"
-    } else {
-        "grok-host-tools-mcp"
-    };
-    std::env::current_exe()
-        .ok()?
-        .parent()
-        .map(|parent| parent.join(name))
-        .filter(|path| path.is_file())
 }
 
 fn invalid_agent_runtime_configuration() -> AgentRuntimeConfiguration {
@@ -1777,6 +1815,25 @@ mod tests {
     const CATALOG_SIGNATURE_DOMAIN: &[u8] = b"grok.desktop.official-component-catalog.v1\0";
     const COMPONENT_BYTES: &[u8] = b"official Grok Build test component";
     const FUTURE_EXPIRY: u64 = 4_102_444_800;
+
+    #[cfg(unix)]
+    #[test]
+    fn host_tools_runtime_directory_is_private_and_compact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("runtime root");
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("private root");
+        let uid = rustix::process::getuid().as_raw();
+        assert!(private_runtime_root(root.path(), uid));
+
+        let endpoint_base = root.path().join("grok-desktop").join("ht");
+        ensure_private_owned_directory(endpoint_base.parent().expect("product directory"), uid)
+            .expect("product directory");
+        ensure_private_owned_directory(&endpoint_base, uid).expect("endpoint directory");
+        let metadata = std::fs::symlink_metadata(&endpoint_base).expect("metadata");
+        assert_eq!(metadata.permissions().mode() & 0o077, 0);
+    }
 
     #[derive(Debug, Clone, Copy)]
     enum StartupRecoveryOutcome {

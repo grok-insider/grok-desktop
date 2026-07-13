@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDevelopmentAcpDescriptor,
+  nixGrokWrapperTarget,
   resolveDevelopmentAcpDescriptor,
   validDevelopmentExecutable,
   validDevelopmentSha256,
@@ -48,6 +49,17 @@ describe("developmentAcpDescriptor", () => {
       version: "0.2.97",
       sha256: "b".repeat(64),
     });
+  });
+
+  it("accepts only a final exact Nix-store exec target", () => {
+    const wrapper = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-grok-wrapper/bin/grok";
+    const target = "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-grok-build/libexec/grok/grok";
+    expect(nixGrokWrapperTarget(wrapper, `#!/bin/sh\nexport ALL_PROXY=socks5://proxy\nexec ${target} "$@"\n`))
+      .toBe(target);
+    expect(nixGrokWrapperTarget(wrapper, `#!/bin/sh\nexec ${target} "$@" --unsafe\n`))
+      .toBeUndefined();
+    expect(nixGrokWrapperTarget("/tmp/grok", `#!/bin/sh\nexec ${target} "$@"\n`))
+      .toBeUndefined();
   });
 
   it("rejects paths that no longer end with the official grok basename after realpath", () => {

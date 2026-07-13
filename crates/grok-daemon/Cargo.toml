@@ -41,7 +41,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["fs", "net"] }
 
 [target.'cfg(windows)'.dependencies]

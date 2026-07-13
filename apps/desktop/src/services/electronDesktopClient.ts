@@ -14,6 +14,7 @@ import type {
   DaemonHostWorkSnapshot,
   DaemonMessage,
   DaemonProject,
+  DaemonRun,
   DaemonStatus,
   DaemonThread,
   DaemonWorkExecutionMode,
@@ -1529,6 +1530,7 @@ export class ElectronDesktopClient implements DesktopClient {
       response.turns,
       response.forkMetadata,
       this.projects.get(response.thread.projectId)?.name ?? "Unknown project",
+      response.workRun,
     );
     const reconciled = this.reconcileConversationProjections(conversation);
     for (const turn of reconciled.turns) {
@@ -2307,6 +2309,7 @@ function hostWorkSummary(
   const progress = state === "completed" ? 100 : terminal ? 0 : state === "queued" ? 10 : state === "planning" ? 25 : 60;
   return {
     id: item.run.id,
+    threadId: item.run.threadId,
     title: thread?.title ?? "Host Work",
     projectName,
     state,
@@ -2388,6 +2391,7 @@ function mapConversation(
   turns: DaemonConversationTurn[],
   forkMetadata: DaemonConversationForkMetadata,
   projectName: string,
+  workRun?: DaemonRun,
 ): ConversationDetail {
   const citationsByMessage = new Map<string, ConversationDetail["messages"][number]["citations"]>();
   for (const turn of turns) {
@@ -2445,7 +2449,7 @@ function mapConversation(
     id: thread.id,
     title: thread.title,
     projectName,
-    mode: "chat",
+    mode: workRun ? "work" : "chat",
     branchName: currentBranch.label,
     branchCount: branches.length,
     branches,

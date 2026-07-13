@@ -664,7 +664,11 @@ impl ExecutionStore for InMemoryExecutionStore {
         Ok(runs)
     }
 
-    async fn list_host_work_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError> {
+    async fn list_host_work_runs(
+        &self,
+        limit: usize,
+        thread_id: Option<&ThreadId>,
+    ) -> Result<Vec<Run>, StoreError> {
         if !(1..=100).contains(&limit) {
             return Err(StoreError::Internal("invalid Host Work list limit".into()));
         }
@@ -672,7 +676,10 @@ impl ExecutionStore for InMemoryExecutionStore {
         let mut runs = state
             .runs
             .values()
-            .filter(|run| run.is_work_bound_to(WorkExecutionBackend::HostDirect))
+            .filter(|run| {
+                run.is_work_bound_to(WorkExecutionBackend::HostDirect)
+                    && thread_id.is_none_or(|thread_id| &run.thread_id == thread_id)
+            })
             .cloned()
             .collect::<Vec<_>>();
         runs.sort_by_key(|run| (std::cmp::Reverse(run.updated_at), run.id.clone()));

@@ -647,6 +647,8 @@ export interface CancelHostWorkRequest {
  */
 export interface ListHostWorkRunsRequest {
   limit: number;
+  /** Optional exact thread owner. Empty lists recent Host Work across projects. */
+  threadId: string;
 }
 
 export interface HostWorkSnapshot {
@@ -5665,13 +5667,16 @@ export const CancelHostWorkRequest: MessageFns<CancelHostWorkRequest> = {
 };
 
 function createBaseListHostWorkRunsRequest(): ListHostWorkRunsRequest {
-  return { limit: 0 };
+  return { limit: 0, threadId: "" };
 }
 
 export const ListHostWorkRunsRequest: MessageFns<ListHostWorkRunsRequest> = {
   encode(message: ListHostWorkRunsRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.limit !== 0) {
       writer.uint32(8).uint32(message.limit);
+    }
+    if (message.threadId !== "") {
+      writer.uint32(18).string(message.threadId);
     }
     return writer;
   },
@@ -5691,6 +5696,14 @@ export const ListHostWorkRunsRequest: MessageFns<ListHostWorkRunsRequest> = {
           message.limit = reader.uint32();
           continue;
         }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.threadId = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -5706,6 +5719,7 @@ export const ListHostWorkRunsRequest: MessageFns<ListHostWorkRunsRequest> = {
   fromPartial(object: DeepPartial<ListHostWorkRunsRequest>): ListHostWorkRunsRequest {
     const message = createBaseListHostWorkRunsRequest();
     message.limit = object.limit ?? 0;
+    message.threadId = object.threadId ?? "";
     return message;
   },
 };

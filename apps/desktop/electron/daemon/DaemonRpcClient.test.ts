@@ -876,11 +876,11 @@ describe("DaemonRpcClient", () => {
   it("loads a bounded durable Host Work snapshot", async () => {
     const stream = new FakeDuplex();
     const protocol = client(stream);
-    const listing = protocol.listHostWorkRuns(25);
+    const listing = protocol.listHostWorkRuns(25, "thread-1");
     const request = decodeFrame(await stream.nextWrite());
     expect(request.payload?.$case === "request" && request.payload.value.operation).toEqual({
       $case: "listHostWorkRuns",
-      value: { limit: 25 },
+      value: { limit: 25, threadId: "thread-1" },
     });
     stream.receive(responseResultFrame(request, {
       $case: "hostWorkList",

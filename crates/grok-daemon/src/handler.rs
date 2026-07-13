@@ -1801,9 +1801,17 @@ impl Daemon {
                 "Host Work list limit must be between 1 and 100".into(),
             ));
         }
+        let thread_id = if request.thread_id.is_empty() {
+            None
+        } else {
+            Some(ThreadId::new(request.thread_id)?)
+        };
         let items = self
             .runs
-            .list_host_work(usize::try_from(request.limit).unwrap_or(0))
+            .list_host_work(
+                usize::try_from(request.limit).unwrap_or(0),
+                thread_id.as_ref(),
+            )
             .await?
             .into_iter()
             .map(|(run, approval)| v1::HostWorkSnapshot {

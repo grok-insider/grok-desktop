@@ -1,4 +1,4 @@
-use std::{path::PathBuf, pin::Pin};
+use std::{fmt, path::PathBuf, pin::Pin};
 
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -55,20 +55,30 @@ pub struct AgentSessionRequest {
     pub working_directory: PathBuf,
     /// Additional canonical workspace roots authorized for this session.
     pub additional_directories: Vec<PathBuf>,
-    /// Optional daemon-created Host Tools MCP process. Presentation callers
+    /// Optional daemon-created Host Tools MCP endpoint. Presentation callers
     /// cannot supply arbitrary MCP server definitions.
     pub host_tools_mcp: Option<HostToolsMcpServer>,
     /// Existing provider session identifier, or `None` for a new session.
     pub existing_session_id: Option<String>,
 }
 
-/// Closed stdio MCP launch descriptor created by the daemon composition root.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Closed authenticated loopback MCP descriptor created by the daemon.
+#[derive(Clone, PartialEq, Eq)]
 pub struct HostToolsMcpServer {
-    /// Verified absolute path to the packaged helper.
-    pub executable: PathBuf,
-    /// Bounded opaque arguments used to bind the helper to one daemon endpoint.
-    pub arguments: Vec<String>,
+    /// Per-run loopback URL owned by the daemon.
+    pub url: String,
+    /// Opaque bearer credential retained between daemon and official agent.
+    pub authorization: String,
+}
+
+impl fmt::Debug for HostToolsMcpServer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostToolsMcpServer")
+            .field("url", &"[LOOPBACK MCP ENDPOINT]")
+            .field("authorization", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Session accepted by the official Grok agent.
@@ -164,6 +174,9 @@ pub struct AgentPermissionRequest {
     pub session_id: String,
     /// Sanitized tool title or operation summary.
     pub title: String,
+    /// Exact daemon MCP tool name when the request is only the official
+    /// client's outer permission gate for a daemon-enforced Host Tool.
+    pub managed_host_tool: Option<String>,
     /// Exact options advertised by the agent.
     pub options: Vec<AgentPermissionOption>,
 }

@@ -321,6 +321,8 @@ message CancelHostWorkRequest {
 // and never resumes or replays execution.
 message ListHostWorkRunsRequest {
   uint32 limit = 1;
+  // Optional exact thread owner. Empty lists recent Host Work across projects.
+  string thread_id = 2;
 }
 
 message HostWorkSnapshot {

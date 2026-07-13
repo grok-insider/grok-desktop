@@ -54,11 +54,14 @@ async fn run() -> Result<(), ()> {
             continue;
         };
         let result = match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": "2025-06-18",
-                "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "grok-desktop-host-tools", "version": env!("CARGO_PKG_VERSION") }
-            })),
+            "initialize" => match initialize_bridge(&configuration).await {
+                Ok(()) => Ok(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": { "tools": { "listChanged": false } },
+                    "serverInfo": { "name": "grok-desktop-host-tools", "version": env!("CARGO_PKG_VERSION") }
+                })),
+                Err(error) => Err(error),
+            },
             "ping" => Ok(json!({})),
             "tools/list" => Ok(tool_catalog()),
             "tools/call" => {
@@ -76,6 +79,23 @@ async fn run() -> Result<(), ()> {
                 .await
                 .map_err(|_| ())?;
         }
+    }
+}
+
+async fn initialize_bridge(configuration: &Configuration) -> Result<(), (i64, &'static str)> {
+    let request = json!({
+        "version": 1,
+        "runId": configuration.run_id,
+        "policyRevision": configuration.policy_revision,
+        "initialize": true
+    });
+    let response = bridge_call(&configuration.endpoint, &request)
+        .await
+        .map_err(|_| (-32000, "Host Tools daemon channel unavailable"))?;
+    if response.get("isError").and_then(Value::as_bool) == Some(false) {
+        Ok(())
+    } else {
+        Err((-32000, "Host Tools daemon binding unavailable"))
     }
 }
 

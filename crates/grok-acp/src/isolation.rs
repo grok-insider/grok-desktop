@@ -5,6 +5,7 @@ use std::{
 };
 
 use fs2::FileExt as _;
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 const CONFIG_TOML: &str = r#"# Managed by Grok Desktop. Manual changes make the runtime unavailable.
@@ -278,6 +279,28 @@ impl ProvisionedGrokHome {
             ("TEMP", self.temporary_directory.clone()),
             ("TMP", self.temporary_directory.clone()),
         ]
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn install_runtime_ca_bundle(
+        &self,
+        source: &Path,
+    ) -> Result<PathBuf, GrokHomeError> {
+        const MAX_CA_BUNDLE_BYTES: u64 = 4 * 1024 * 1024;
+
+        let canonical_source = source.canonicalize().map_err(GrokHomeError::Io)?;
+        let metadata = fs::metadata(&canonical_source).map_err(GrokHomeError::Io)?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_CA_BUNDLE_BYTES {
+            return Err(GrokHomeError::UnexpectedConfiguration);
+        }
+        let bundle = fs::read(&canonical_source).map_err(GrokHomeError::Io)?;
+        if bundle.is_empty() || bundle.len() as u64 > MAX_CA_BUNDLE_BYTES {
+            return Err(GrokHomeError::UnexpectedConfiguration);
+        }
+        let digest = hex::encode(Sha256::digest(&bundle));
+        let destination = self.home.join(format!("runtime-ca-{digest}.pem"));
+        ensure_managed_file(&destination, &bundle)?;
+        Ok(destination)
     }
 }
 

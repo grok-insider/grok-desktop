@@ -12,7 +12,7 @@ import {
   ShieldAlert,
   X,
 } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -54,6 +54,7 @@ const progressValue = (progress: number) => Math.min(100, Math.max(0, progress))
 
 export function ActivityView() {
   const { snapshot, loading } = useDesktopSnapshot();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -188,7 +189,12 @@ export function ActivityView() {
           )}
         </section>
 
-        {selected && <RunInspector run={selected} />}
+        {selected && (
+          <RunInspector
+            run={selected}
+            onOpenConversation={(threadId) => navigate(`/conversations/${encodeURIComponent(threadId)}`)}
+          />
+        )}
       </div>
     </div>
   );
@@ -214,7 +220,13 @@ function ActivityRowsSkeleton() {
   );
 }
 
-function RunInspector({ run }: { run: RunSummary }) {
+function RunInspector({
+  run,
+  onOpenConversation,
+}: {
+  run: RunSummary;
+  onOpenConversation: (threadId: string) => void;
+}) {
   const client = useDesktopClient();
   const runProgress = progressValue(run.progress);
   const control = runControl(run.state);
@@ -336,8 +348,11 @@ function RunInspector({ run }: { run: RunSummary }) {
         <Button
           type="button"
           variant="ghost"
-          disabled
-          title="Run-to-thread navigation requires daemon workspace support"
+          disabled={!run.threadId}
+          title={run.threadId ? "Open this Work conversation" : "This run has no conversation"}
+          onClick={() => {
+            if (run.threadId) onOpenConversation(run.threadId);
+          }}
         >
           Open conversation
         </Button>

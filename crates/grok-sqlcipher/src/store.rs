@@ -2144,28 +2144,50 @@ impl ExecutionStore for SqlCipherStore {
         .await
     }
 
-    async fn list_host_work_runs(&self, limit: usize) -> Result<Vec<Run>, StoreError> {
+    async fn list_host_work_runs(
+        &self,
+        limit: usize,
+        thread_id: Option<&ThreadId>,
+    ) -> Result<Vec<Run>, StoreError> {
         if !(1..=100).contains(&limit) {
             return Err(StoreError::Internal("invalid Host Work list limit".into()));
         }
+        let thread_id = thread_id.cloned();
         self.with_store(move |connection| {
-            let mut statement = connection
-                .prepare(&format!(
-                    "SELECT {RUN_COLUMNS} FROM runs
-                     WHERE run_kind=2 AND work_backend=1
-                     ORDER BY updated_at DESC,id ASC LIMIT ?1"
-                ))
-                .map_err(map_sqlite)?;
-            statement
-                .query_map(
-                    [number(u64::try_from(limit).map_err(|_| {
-                        StoreError::Internal("invalid Host Work list limit".into())
-                    })?)?],
-                    mapping::run_from_row,
-                )
-                .map_err(map_sqlite)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(map_sqlite)
+            let limit = number(
+                u64::try_from(limit)
+                    .map_err(|_| StoreError::Internal("invalid Host Work list limit".into()))?,
+            )?;
+            if let Some(thread_id) = thread_id {
+                let mut statement = connection
+                    .prepare(&format!(
+                        "SELECT {RUN_COLUMNS} FROM runs
+                         WHERE run_kind=2 AND work_backend=1 AND thread_id=?1
+                         ORDER BY updated_at DESC,id ASC LIMIT ?2"
+                    ))
+                    .map_err(map_sqlite)?;
+                statement
+                    .query_map(
+                        rusqlite::params![thread_id.as_str(), limit],
+                        mapping::run_from_row,
+                    )
+                    .map_err(map_sqlite)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(map_sqlite)
+            } else {
+                let mut statement = connection
+                    .prepare(&format!(
+                        "SELECT {RUN_COLUMNS} FROM runs
+                         WHERE run_kind=2 AND work_backend=1
+                         ORDER BY updated_at DESC,id ASC LIMIT ?1"
+                    ))
+                    .map_err(map_sqlite)?;
+                statement
+                    .query_map([limit], mapping::run_from_row)
+                    .map_err(map_sqlite)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(map_sqlite)
+            }
         })
         .await
     }

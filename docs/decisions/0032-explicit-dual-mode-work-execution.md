@@ -25,11 +25,15 @@ The daemon remains the authority for policy, approvals, effect journaling, path
 validation, process lifecycle, and recovery. The renderer and ACP client cannot
 create grants. Backend failure never enables or changes a grant.
 
-Before public protocol or persistence contracts advertise HostDirect, a pinned
-official Grok Build ACP feasibility gate must prove a daemon-created stdio MCP
-bridge, bounded additional directories, exclusive home-role switching, and the
-absence of residual native tools. Failure stops the feature rather than
-weakening the sandbox.
+The pinned official Grok Build ACP feasibility gate is satisfied by a
+daemon-created, per-run authenticated loopback HTTP MCP bridge, bounded
+additional directories, exclusive home-role switching, and a narrow ACP
+allow-once envelope for only the daemon MCP namespace. The official process
+keeps its strict sandbox; on Unix the daemon places the public platform CA
+bundle inside the managed private Grok home because the official HTTP client
+constructs a TLS-capable client even for loopback HTTP. Every other native tool
+permission remains cancelled. Failure stops the feature rather than weakening
+the sandbox.
 
 ## Consequences
 

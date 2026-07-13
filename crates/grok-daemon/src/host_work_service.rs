@@ -2,16 +2,17 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use grok_application::{
-    AgentEvent, AgentPrompt, AgentRuntime, AgentRuntimeError, AgentSessionRequest,
-    ApplicationError, ApprovalService, Clock, CreateMessage, CreateRun, ExecutionStore,
-    HostExecutionPolicyStore, HostFilesystemReader, HostFilesystemWriter, HostProcessExecutor,
-    HostToolsMcpServer, RunService, SideEffectService, WorkspaceService,
+    AgentEvent, AgentPrompt, AgentRuntime, AgentRuntimeError, AgentRuntimeErrorKind,
+    AgentSessionRequest, ApplicationError, ApprovalService, Clock, CreateMessage, CreateRun,
+    ExecutionStore, HostExecutionPolicyStore, HostFilesystemReader, HostFilesystemWriter,
+    HostProcessExecutor, HostToolsMcpServer, RunService, SideEffectService, WorkspaceService,
 };
 use grok_domain::{MessageRole, ProjectId, Run, RunState, ThreadId, WorkExecutionBackend};
 use grok_host_tools::CapabilityHostFilesystem;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::{HostToolBridge, HostToolServices, HostWorkRuntime};
 
@@ -38,7 +39,6 @@ pub struct HostWorkService {
     approvals: Arc<ApprovalService>,
     effects: Arc<SideEffectService>,
     clock: Arc<dyn Clock>,
-    endpoint_base: PathBuf,
     denied_filesystem_roots: Arc<Vec<String>>,
     active: Arc<Semaphore>,
     start_lock: Arc<Mutex<()>>,
@@ -66,7 +66,7 @@ impl HostWorkService {
         approvals: Arc<ApprovalService>,
         effects: Arc<SideEffectService>,
         clock: Arc<dyn Clock>,
-        endpoint_base: PathBuf,
+        _endpoint_base: PathBuf,
         denied_filesystem_roots: Vec<String>,
     ) -> Self {
         Self {
@@ -78,7 +78,6 @@ impl HostWorkService {
             approvals,
             effects,
             clock,
-            endpoint_base,
             denied_filesystem_roots: Arc::new(denied_filesystem_roots),
             active: Arc::new(Semaphore::new(1)),
             start_lock: Arc::new(Mutex::new(())),
@@ -90,7 +89,7 @@ impl HostWorkService {
     ///
     /// # Errors
     ///
-    /// Returns a stable application error when policy, run, helper, or capacity
+    /// Returns a stable application error when policy, run, or capacity
     /// readiness fails before ownership is durably established.
     #[allow(clippy::too_many_lines)]
     pub async fn start(
@@ -116,9 +115,6 @@ impl HostWorkService {
                 "Host Tools enrollment is not active".into(),
             ));
         }
-        let helper = self.runtime.helper().ok_or_else(|| {
-            ApplicationError::Unavailable("Host Tools helper is unavailable".into())
-        })?;
         let thread_id = ThreadId::new(thread_id)?;
         let thread = self.workspace.get_thread(&thread_id).await?;
         if thread.project_id != ProjectId::new(project_id)? {
@@ -183,7 +179,6 @@ impl HostWorkService {
                 .execute_reserved(
                     started.clone(),
                     policy,
-                    helper,
                     prompt,
                     key.clone(),
                     cancellation,
@@ -204,27 +199,28 @@ impl HostWorkService {
         &self,
         mut run: Run,
         policy: grok_domain::HostExecutionPolicy,
-        helper: crate::VerifiedHostToolsHelper,
         prompt: String,
         idempotency_key: String,
         cancellation: CancellationToken,
         _permit: OwnedSemaphorePermit,
     ) -> Result<HostWorkOutcome, ApplicationError> {
+        let run_id = run.id.to_string();
         let filesystem = Arc::new(
             CapabilityHostFilesystem::open_with_denied_roots(
                 &policy.canonical_roots,
                 self.denied_filesystem_roots.as_ref(),
             )
-            .map_err(|error| ApplicationError::Unavailable(error.message))?,
+            .map_err(|error| {
+                log_host_work_failure(&run_id, "filesystem_prepare", "filesystem_unavailable");
+                ApplicationError::Unavailable(error.message)
+            })?,
         );
         let filesystem_reader: Arc<dyn HostFilesystemReader> = filesystem.clone();
         let filesystem_writer: Arc<dyn HostFilesystemWriter> = filesystem.clone();
         let process_executor: Arc<dyn HostProcessExecutor> = filesystem;
-        let bridge = HostToolBridge::start(
-            &self.endpoint_base,
+        let bridge = HostToolBridge::start_http(
             run.id.clone(),
             policy.revision,
-            helper.clone(),
             Arc::new(HostToolServices::new(
                 self.policies.clone(),
                 self.executions.clone(),
@@ -236,7 +232,11 @@ impl HostWorkService {
                 self.clock.clone(),
             )),
             cancellation.child_token(),
-        )?;
+        )
+        .await
+        .inspect_err(|_| {
+            log_host_work_failure(&run_id, "bridge_start", "endpoint_unavailable");
+        })?;
         let roots = policy
             .canonical_roots
             .iter()
@@ -248,15 +248,8 @@ impl HostWorkService {
                 working_directory: roots[0].clone(),
                 additional_directories: roots.iter().skip(1).cloned().collect(),
                 host_tools_mcp: Some(HostToolsMcpServer {
-                    executable: helper.path().to_path_buf(),
-                    arguments: vec![
-                        "--endpoint".into(),
-                        bridge.endpoint().into(),
-                        "--run-id".into(),
-                        run.id.to_string(),
-                        "--policy-revision".into(),
-                        policy.revision.to_string(),
-                    ],
+                    url: bridge.endpoint().into(),
+                    authorization: bridge.authorization().unwrap_or_default().into(),
                 }),
                 existing_session_id: None,
             })
@@ -264,10 +257,22 @@ impl HostWorkService {
         let session = match session {
             Ok(session) => session,
             Err(error) => {
+                log_host_work_failure(&run_id, "session_create", runtime_failure_code(error.kind));
                 bridge.shutdown().await;
                 return Err(self.fail_run(run, &idempotency_key, error).await);
             }
         };
+        if !bridge.wait_until_initialized(Duration::from_secs(5)).await {
+            log_host_work_failure(&run_id, "mcp_initialize", "mcp_unavailable");
+            bridge.shutdown().await;
+            return Err(self
+                .fail_run(
+                    run,
+                    &idempotency_key,
+                    unavailable("Host Tools did not initialize"),
+                )
+                .await);
+        }
         let running = self
             .runs
             .transition(
@@ -280,6 +285,7 @@ impl HostWorkService {
         run = match running {
             Ok(run) => run,
             Err(error) => {
+                log_host_work_failure(&run_id, "running_persist", "store_unavailable");
                 bridge.shutdown().await;
                 return Err(error);
             }
@@ -294,6 +300,7 @@ impl HostWorkService {
         let mut stream = match stream {
             Ok(stream) => stream,
             Err(error) => {
+                log_host_work_failure(&run_id, "prompt_start", runtime_failure_code(error.kind));
                 bridge.shutdown().await;
                 return Err(self.fail_run(run, &idempotency_key, error).await);
             }
@@ -314,6 +321,7 @@ impl HostWorkService {
             match event {
                 Ok(AgentEvent::MessageDelta(delta)) => {
                     if assistant.len().saturating_add(delta.len()) > MAX_WORK_RESPONSE_BYTES {
+                        log_host_work_failure(&run_id, "response_stream", "response_oversize");
                         bridge.shutdown().await;
                         return Err(self
                             .fail_run(
@@ -336,6 +344,11 @@ impl HostWorkService {
                     | AgentEvent::Warning(_),
                 ) => {}
                 Err(error) => {
+                    log_host_work_failure(
+                        &run_id,
+                        "response_stream",
+                        runtime_failure_code(error.kind),
+                    );
                     bridge.shutdown().await;
                     return Err(self.fail_run(run, &idempotency_key, error).await);
                 }
@@ -343,6 +356,7 @@ impl HostWorkService {
         }
         bridge.shutdown().await;
         if !completed || assistant.trim().is_empty() {
+            log_host_work_failure(&run_id, "response_complete", "response_incomplete");
             return Err(self
                 .fail_run(
                     run,
@@ -360,7 +374,10 @@ impl HostWorkService {
                 },
                 &derived_key(&idempotency_key, "assistant-message"),
             )
-            .await?;
+            .await
+            .inspect_err(|_| {
+                log_host_work_failure(&run_id, "assistant_persist", "store_unavailable");
+            })?;
         run = self
             .runs
             .transition(
@@ -369,7 +386,10 @@ impl HostWorkService {
                 RunState::Completed,
                 &derived_key(&idempotency_key, "completed"),
             )
-            .await?;
+            .await
+            .inspect_err(|_| {
+                log_host_work_failure(&run_id, "completion_persist", "store_unavailable");
+            })?;
         Ok(HostWorkOutcome {
             run,
             assistant_text: assistant,
@@ -475,6 +495,24 @@ fn derived_key(key: &str, stage: &str) -> String {
     format!("host-work-{}", hex::encode(hasher.finalize()))
 }
 
+fn log_host_work_failure(run_id: &str, stage: &'static str, failure_code: &'static str) {
+    warn!(run_id, stage, failure_code, "Host Work execution failed");
+}
+
+const fn runtime_failure_code(kind: AgentRuntimeErrorKind) -> &'static str {
+    match kind {
+        AgentRuntimeErrorKind::ComponentVerification => "component_verification_failed",
+        AgentRuntimeErrorKind::ConfigurationIsolation => "configuration_isolation_failed",
+        AgentRuntimeErrorKind::Process => "agent_process_unavailable",
+        AgentRuntimeErrorKind::Protocol => "agent_protocol_unavailable",
+        AgentRuntimeErrorKind::InvalidRequest => "agent_request_invalid",
+        AgentRuntimeErrorKind::Authentication => "agent_authentication_failed",
+        AgentRuntimeErrorKind::Permission => "permission_channel_unavailable",
+        AgentRuntimeErrorKind::Cancelled => "agent_request_cancelled",
+        AgentRuntimeErrorKind::Unavailable => "agent_runtime_unavailable",
+    }
+}
+
 fn unavailable(message: &str) -> AgentRuntimeError {
     AgentRuntimeError {
         kind: grok_application::AgentRuntimeErrorKind::Unavailable,
@@ -496,7 +534,7 @@ mod tests {
     use grok_domain::{HOST_ACKNOWLEDGMENT_VERSION, HostExecutionPolicy, HostToolClasses};
     use grok_memory::{FixedClock, InMemoryExecutionStore, SequentialIdGenerator};
 
-    use crate::{HostWorkRoleFactory, VerifiedHostToolsHelper};
+    use crate::HostWorkRoleFactory;
 
     use super::*;
 
@@ -531,9 +569,13 @@ mod tests {
             &self,
             request: AgentSessionRequest,
         ) -> Result<AgentSession, AgentRuntimeError> {
-            if !self.work || request.host_tools_mcp.is_none() {
+            if !self.work {
                 return Err(unavailable("session denied"));
             }
+            let server = request
+                .host_tools_mcp
+                .ok_or_else(|| unavailable("session denied"))?;
+            initialize_test_mcp(&server).await?;
             self.saw_mcp.store(true, Ordering::SeqCst);
             Ok(AgentSession {
                 id: "session-1".into(),
@@ -561,6 +603,38 @@ mod tests {
         async fn shutdown(&self) -> Result<(), AgentRuntimeError> {
             Ok(())
         }
+    }
+
+    async fn initialize_test_mcp(server: &HostToolsMcpServer) -> Result<(), AgentRuntimeError> {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let authority = server
+            .url
+            .strip_prefix("http://")
+            .and_then(|value| value.strip_suffix("/mcp"))
+            .ok_or_else(|| unavailable("invalid test MCP URL"))?;
+        let mut stream = tokio::net::TcpStream::connect(authority)
+            .await
+            .map_err(|_| unavailable("test MCP unavailable"))?;
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+        let request = format!(
+            "POST /mcp HTTP/1.1\r\nHost: {authority}\r\nAuthorization: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            server.authorization,
+            body.len()
+        );
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .map_err(|_| unavailable("test MCP unavailable"))?;
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .await
+            .map_err(|_| unavailable("test MCP unavailable"))?;
+        if !response.starts_with(b"HTTP/1.1 200") {
+            return Err(unavailable("test MCP initialization failed"));
+        }
+        Ok(())
     }
 
     #[derive(Debug)]
@@ -596,19 +670,13 @@ mod tests {
     async fn executes_and_persists_a_bound_host_work_turn() {
         let root = tempfile::tempdir().expect("root");
         let endpoints = tempfile::tempdir().expect("endpoints");
-        let helper =
-            VerifiedHostToolsHelper::verify(std::env::current_exe().expect("test executable"))
-                .expect("helper");
         let saw_mcp = Arc::new(AtomicBool::new(false));
         let hang = Arc::new(AtomicBool::new(false));
         let runtime = Arc::new(
-            HostWorkRuntime::start(
-                Arc::new(ScriptedFactory {
-                    saw_mcp: saw_mcp.clone(),
-                    hang: hang.clone(),
-                }),
-                Some(helper),
-            )
+            HostWorkRuntime::start(Arc::new(ScriptedFactory {
+                saw_mcp: saw_mcp.clone(),
+                hang: hang.clone(),
+            }))
             .await
             .expect("runtime"),
         );

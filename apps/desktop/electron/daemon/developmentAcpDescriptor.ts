@@ -17,11 +17,14 @@ const VERSION_OUTPUT_TIMEOUT_MS = 5_000;
 const SEMVER_PATTERN = /^(\d+\.\d+\.\d+)(?:[-+][\w.-]+)?$/;
 const VERSION_FROM_OUTPUT = /\b(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)\b/;
 const SHA256_PATTERN = /^[0-9a-fA-F]{64}$/;
+const NIX_STORE_GROK_PATTERN = /^\/nix\/store\/[a-z0-9]{32}-[^\s"'`$;&|<>]+\/(?:bin\/grok|libexec\/grok\/(?:grok|grok-launcher))$/;
+const MAX_NIX_WRAPPER_BYTES = 64 * 1024;
 
 export interface DevelopmentAcpDescriptor {
   executable: string;
   version: string;
   sha256: string;
+  chatProxyBaseUrl?: string;
 }
 
 export interface DevelopmentAcpResolveOptions {
@@ -57,8 +60,18 @@ export function resolveDevelopmentAcpDescriptor(
 
   if (!pathExecutable) return undefined;
 
-  const executable = resolveRealPath(pathExecutable);
-  if (!executable || !officialGrokBasename(executable, options.platform)) return undefined;
+  let executable = resolveRealPath(pathExecutable);
+  let chatProxyBaseUrl: string | undefined;
+  if (!envExecutable && options.platform === "linux" && executable) {
+    const unwrapped = resolveNixGrokWrapper(executable, resolveRealPath);
+    executable = unwrapped?.executable ?? executable;
+    chatProxyBaseUrl = unwrapped?.chatProxyBaseUrl;
+  }
+  if (
+    !executable
+    || (!officialGrokBasename(executable, options.platform)
+      && !(options.platform === "linux" && NIX_STORE_GROK_PATTERN.test(executable)))
+  ) return undefined;
 
   // Bracket executable version inspection with the digest. This prevents a
   // path replacement from pairing version output from one generation with
@@ -82,7 +95,75 @@ export function resolveDevelopmentAcpDescriptor(
   // when only the digest was set; require a coherent triple.
   if (options.env.GROK_ACP_WORKSPACE_ROOTS) return undefined;
 
-  return { executable, version, sha256: sha256.toLowerCase() };
+  return {
+    executable,
+    version,
+    sha256: sha256.toLowerCase(),
+    ...(chatProxyBaseUrl ? { chatProxyBaseUrl } : {}),
+  };
+}
+
+/** Extracts only an exact final exec of an absolute Nix-store Grok binary. */
+export function nixGrokWrapperTarget(wrapperPath: string, source: string): string | undefined {
+  if (!wrapperPath.startsWith("/nix/store/") || !source.startsWith("#!")) return undefined;
+  const lines = source.split(/\r?\n/);
+  let final: string | undefined;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].trim().length > 0) {
+      final = lines[index].trim();
+      break;
+    }
+  }
+  const match = final?.match(/^exec (\/nix\/store\/[^\s"'`$;&|<>]+\/(?:bin\/grok|libexec\/grok\/grok)) "\$@"$/);
+  return match && NIX_STORE_GROK_PATTERN.test(match[1]) ? match[1] : undefined;
+}
+
+function resolveNixGrokWrapper(
+  wrapperPath: string,
+  resolveRealPath: (filePath: string) => string | undefined,
+): { executable: string; chatProxyBaseUrl?: string } | undefined {
+  try {
+    const metadata = statSync(wrapperPath);
+    if (!metadata.isFile() || metadata.size === 0 || metadata.size > MAX_NIX_WRAPPER_BYTES) {
+      return undefined;
+    }
+    const target = nixGrokWrapperTarget(wrapperPath, readFileSync(wrapperPath, "utf8"));
+    if (!target) return undefined;
+    let resolved = resolveRealPath(target);
+    if (resolved?.endsWith("/libexec/grok/grok-launcher")) {
+      resolved = resolveRealPath(path.join(path.dirname(resolved), "grok"));
+    }
+    if (!resolved || !NIX_STORE_GROK_PATTERN.test(resolved) || !statSync(resolved).isFile()) {
+      return undefined;
+    }
+    return {
+      executable: resolved,
+      chatProxyBaseUrl: nixGrokChatProxyBaseUrl(readFileSync(wrapperPath, "utf8")),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function nixGrokChatProxyBaseUrl(source: string): string | undefined {
+  const match = source.match(/^export GROK_CLI_CHAT_PROXY_BASE_URL="([^"\r\n]+)"$/m);
+  if (!match || Buffer.byteLength(match[1], "utf8") > 512) return undefined;
+  try {
+    const url = new URL(match[1]);
+    if (
+      url.protocol !== "http:"
+      || url.hostname !== "127.0.0.1"
+      || !url.port
+      || url.pathname !== "/v1"
+      || url.username
+      || url.password
+      || url.search
+      || url.hash
+    ) return undefined;
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
 }
 
 /** Applies a resolved descriptor onto a daemon child environment map. */
@@ -93,6 +174,9 @@ export function applyDevelopmentAcpDescriptor(
   environment.GROK_ACP_EXECUTABLE = descriptor.executable;
   environment.GROK_ACP_VERSION = descriptor.version;
   environment.GROK_ACP_SHA256 = descriptor.sha256;
+  if (descriptor.chatProxyBaseUrl) {
+    environment.GROK_ACP_CHAT_PROXY_BASE_URL = descriptor.chatProxyBaseUrl;
+  }
 }
 
 export function validDevelopmentExecutable(

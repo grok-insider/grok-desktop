@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   DaemonConversationForkMetadata,
+  DaemonMessage,
+  DaemonRun,
   DaemonThread,
 } from "../../src/contracts/bridge.js";
 import {
@@ -920,6 +922,78 @@ describe("conversation fork response validation", () => {
 });
 
 describe("conversation numeric response validation", () => {
+  it("accepts only a completed Host Work aggregate with its exact persisted outcome", () => {
+    const thread: DaemonThread = {
+      id: "thread-work",
+      projectId: "project-1",
+      title: "Inspect workspace",
+      state: "open",
+      revision: 0,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+      lineage: { origin: "original", rootThreadId: "thread-work", forkDepth: 0 },
+    };
+    const user: DaemonMessage = {
+      id: "message-work-user",
+      threadId: thread.id,
+      sequence: 1,
+      role: "user",
+      content: "Inspect workspace",
+      state: "active",
+      revision: 0,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 1,
+      derivation: { origin: "original" },
+    };
+    const assistant: DaemonMessage = {
+      ...user,
+      id: "message-work-assistant",
+      sequence: 2,
+      role: "assistant",
+      content: "Workspace inspected.",
+      createdAtUnixMs: 2,
+      updatedAtUnixMs: 2,
+    };
+    const run: DaemonRun = {
+      id: "run-work",
+      projectId: thread.projectId,
+      threadId: thread.id,
+      state: "completed",
+      revision: 3,
+      createdAtUnixMs: 1,
+      updatedAtUnixMs: 2,
+      kind: "work",
+      workBackend: "host_direct",
+    };
+    const metadata = originalForkMetadata(thread);
+
+    expect(() => validateConversationAggregate(thread, [user, assistant], [], metadata, run))
+      .not.toThrow();
+    expect(() => validateConversationAggregate(thread, [user], [], metadata, run))
+      .toThrow("Work conversation aggregate is invalid");
+    expect(() => validateConversationAggregate(
+      thread,
+      [user, assistant],
+      [],
+      metadata,
+      { ...run, state: "failed", revision: 1 },
+    )).toThrow("Work conversation aggregate is invalid");
+    expect(() => validateConversationAggregate(
+      thread,
+      [user, assistant],
+      [mapConversationTurn(validConversationTurn())],
+      metadata,
+      run,
+    )).toThrow("Work conversation aggregate is invalid");
+    expect(() => validateConversationAggregate(
+      thread,
+      [user, assistant],
+      [],
+      metadata,
+      { ...run, threadId: "thread-other" },
+    )).toThrow("Work conversation aggregate is invalid");
+  });
+
   it("accepts the exact JavaScript-safe usage bound and rejects one unit over", () => {
     const turn = validConversationTurn();
     const maximum = BigInt(Number.MAX_SAFE_INTEGER);
@@ -1638,6 +1712,7 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
       }),
       listConversationTurns: vi.fn().mockResolvedValue({ turns: [], nextCursor: "" }),
       getConversationForkMetadata: vi.fn().mockResolvedValue(metadata),
+      listHostWorkRuns: vi.fn().mockResolvedValue({ items: [] }),
     };
     const internal = supervisor as unknown as { requireProtocol(): typeof protocol };
     internal.requireProtocol = () => protocol;
@@ -1654,6 +1729,7 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
       },
     });
     expect(protocol.getConversationForkMetadata).toHaveBeenCalledWith("thread-child");
+    expect(protocol.listHostWorkRuns).toHaveBeenCalledWith(2, "thread-child");
   });
 
   it("does not reinterpret an ambiguous fork transport failure", async () => {

@@ -593,27 +593,35 @@ export class DaemonSupervisor {
     messages: DaemonMessage[];
     turns: DaemonConversationTurn[];
     forkMetadata: DaemonConversationForkMetadata;
+    workRun?: DaemonRun;
   }> {
     await this.start();
     const protocol = this.requireProtocol();
     let lastInconsistency: DaemonProtocolError | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const [thread, messages, turns, forkMetadata] = await Promise.all([
+      const [thread, messages, turns, forkMetadata, workRuns] = await Promise.all([
         protocol.getThread(threadId),
         collectConversationMessages(protocol, threadId),
         collectConversationTurns(protocol, threadId),
         protocol.getConversationForkMetadata(threadId),
+        protocol.listHostWorkRuns(2, threadId),
       ]);
       const mappedThread = mapThread(thread);
       const mappedMessages = messages.map(mapMessage);
       const mappedTurns = turns.map(mapConversationTurn);
       const mappedForkMetadata = mapConversationForkMetadata(forkMetadata, threadId);
+      const mappedWorkRuns = workRuns.items.map(mapHostWorkSnapshot);
+      if (mappedWorkRuns.length > 1) {
+        throw new DaemonProtocolError("daemon Work conversation has multiple owning runs");
+      }
+      const workRun = mappedWorkRuns[0]?.run;
       try {
         validateConversationAggregate(
           mappedThread,
           mappedMessages,
           mappedTurns,
           mappedForkMetadata,
+          workRun,
         );
         this.setConnected();
         return {
@@ -621,6 +629,7 @@ export class DaemonSupervisor {
           messages: mappedMessages,
           turns: mappedTurns,
           forkMetadata: mappedForkMetadata,
+          ...(workRun ? { workRun } : {}),
         };
       } catch (error) {
         if (!(error instanceof DaemonProtocolError)) throw error;
@@ -1893,6 +1902,7 @@ export function validateConversationAggregate(
   messages: DaemonMessage[],
   turns: DaemonConversationTurn[],
   forkMetadata: DaemonConversationForkMetadata,
+  workRun?: DaemonRun,
 ): void {
   if (!sameThreadLineage(thread.lineage, forkMetadata.lineage)) {
     throw new DaemonProtocolError("daemon conversation fork metadata lineage is inconsistent");
@@ -1940,6 +1950,10 @@ export function validateConversationAggregate(
     canonical.set(message.id, message);
   }
   validateConversationForkMessagePrefix(thread, messages);
+  if (workRun) {
+    validateWorkConversation(thread, messages, turns, forkMetadata, workRun);
+    return;
+  }
   const linkedMessages = new Set<string>();
   const inheritedOutcomes = new Map(
     forkMetadata.inheritedAssistantOutcomes.map((outcome) => [
@@ -2051,6 +2065,49 @@ export function validateConversationAggregate(
   }
   if (inheritedOutcomes.size !== 0) {
     throw new DaemonProtocolError("daemon inherited outcome references missing history");
+  }
+}
+
+function validateWorkConversation(
+  thread: DaemonThread,
+  messages: DaemonMessage[],
+  turns: DaemonConversationTurn[],
+  forkMetadata: DaemonConversationForkMetadata,
+  run: DaemonRun,
+): void {
+  const terminalWithoutOutput = run.state === "failed"
+    || run.state === "cancelled"
+    || run.state === "interrupted_needs_review";
+  const expectedMessages = run.state === "completed" ? 2 : 1;
+  if (
+    thread.lineage.origin !== "original"
+    || forkMetadata.familyThreads.length !== 1
+    || forkMetadata.inheritedAssistantOutcomes.length !== 0
+    || turns.length !== 0
+    || run.kind !== "work"
+    || run.workBackend !== "host_direct"
+    || run.projectId !== thread.projectId
+    || run.threadId !== thread.id
+    || messages.length !== expectedMessages
+    || messages[0]?.role !== "user"
+    || messages[0]?.sequence !== 1
+    || messages[0]?.state !== "active"
+    || messages[0]?.derivation.origin !== "original"
+    || Boolean(terminalWithoutOutput && messages.some((message) => message.role === "assistant"))
+  ) {
+    throw new DaemonProtocolError("daemon Work conversation aggregate is invalid");
+  }
+  if (run.state === "completed") {
+    const assistant = messages[1];
+    if (
+      !assistant
+      || assistant.role !== "assistant"
+      || assistant.sequence !== 2
+      || assistant.state !== "active"
+      || assistant.derivation.origin !== "original"
+    ) {
+      throw new DaemonProtocolError("daemon Work conversation outcome is invalid");
+    }
   }
 }
 

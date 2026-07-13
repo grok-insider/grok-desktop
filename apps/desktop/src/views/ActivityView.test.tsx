@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { DesktopClientProvider } from "../services/DesktopClientContext";
 import type { DesktopSnapshot, RunSummary } from "../services/desktopClient";
@@ -37,11 +37,16 @@ class HostActionClient extends MockDesktopClient {
   }
 }
 
+function LocationProbe() {
+  return <output data-testid="location">{useLocation().pathname}</output>;
+}
+
 function renderActivity(client: MockDesktopClient = new MockDesktopClient(), initialEntry = "/activity") {
   render(
     <DesktopClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <ActivityView />
+        <LocationProbe />
       </MemoryRouter>
     </DesktopClientProvider>,
   );
@@ -166,5 +171,17 @@ describe("ActivityView", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Cancel run" }));
     await waitFor(() => expect(client.cancellations).toEqual([snapshot.runs[0].id]));
+  });
+
+  it("opens the daemon-owned conversation for a Host Work run", async () => {
+    const snapshot = structuredClone(initialSnapshot);
+    snapshot.runs[0].threadId = "thread-host-work";
+    renderActivity(new SnapshotClient(snapshot));
+
+    const open = await screen.findByRole("button", { name: "Open conversation" });
+    expect(open).toBeEnabled();
+    fireEvent.click(open);
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/conversations/thread-host-work");
   });
 });

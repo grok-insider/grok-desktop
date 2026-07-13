@@ -44,8 +44,9 @@ impl RunService {
     pub async fn list_host_work(
         &self,
         limit: usize,
+        thread_id: Option<&ThreadId>,
     ) -> Result<Vec<(Run, Option<Approval>)>, ApplicationError> {
-        let runs = self.store.list_host_work_runs(limit).await?;
+        let runs = self.store.list_host_work_runs(limit, thread_id).await?;
         let mut snapshots = Vec::with_capacity(runs.len());
         for run in runs {
             let approval = self.store.pending_approval_for_run(&run.id).await?;

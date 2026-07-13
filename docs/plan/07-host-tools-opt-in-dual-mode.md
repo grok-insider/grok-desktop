@@ -36,7 +36,7 @@ the design sections below preserve the decisions and contracts that led to it.
 | ACP feasibility boundary | Complete | constrained HostWorkTools role, exclusive ACP-home ownership, fail-closed runtime preparation |
 | Durable policy | Complete | SQLCipher schemas 25–26; versioned enrollment, roots, tool classes, revision and replay journal |
 | Capability and IPC | Complete | protocol epochs 25–28; daemon-owned `work_execution_backend`, readiness, authoritative active-run state, run list and approval projection |
-| Host bridge | Complete | packaged stdio MCP helper, authenticated per-run daemon bridge, bounded framing and peer/run binding |
+| Host bridge | Complete | authenticated per-run loopback Streamable HTTP MCP, closed tool set, bounded framing, bearer/run binding, and strict-sandbox CA provisioning |
 | Filesystem tools | Complete | capability-rooted list/read plus reparse-aware write validation |
 | Mutating tools | Complete | exact write/process approval, intent-before-effect journal, bounded argv/environment/output, interruption review |
 | Desktop UX | Complete | three-step enrollment, native root chooser, exact warning phrase, persistent Host indicator, revoke confirmation, Work composer, Activity approvals/cancel/reload |
@@ -215,7 +215,7 @@ Rules:
 - New **Unavailable** reason codes only:
   - `host_tools_not_enrolled`
   - `host_tools_runtime_not_prepared` — enrolled + HostControl authenticated, but `PrepareHostWorkRuntime` not yet succeeded this daemon lifetime (or deactivated and not re-prepared)
-  - `host_tools_runtime_unavailable` — helper/package/IPC factory missing or HostWorkTools cannot compose
+  - `host_tools_runtime_unavailable` — official HostWorkTools runtime cannot compose or resume
   - `host_tools_auth_resume_failed` — prepare/role switch: non-interactive authenticate failed
   - `host_tools_runtime_busy` — role mutex / switch blocked (e.g. Setup auth while Host Work owns home)
   - existing: `work_execution_unavailable`, `subscription_session_unavailable`, `strong_isolation_unavailable`, `mcp_sandbox_unavailable`
@@ -228,7 +228,7 @@ Rules:
 |------------------|----------|
 | Capability snapshot / UI refresh | Recompute effective mode from live isolation + policy |
 | **New** Work run start | Bind `run.work_backend` durably to the resolved backend at start; refuse start if Limited |
-| **Every host tool dispatch** | Re-check: policy still effective, verified runtime/helper still bound, run’s bound mode still allowed. Deny with stable reason if not |
+| **Every host tool dispatch** | Re-check: policy still effective, authenticated per-run endpoint still bound, run’s bound mode still allowed. Deny with stable reason if not |
 | Isolation becomes ready mid Host run | **Sticky run mode**: in-flight Host run keeps `HostDirect` until terminal (durable `runs.work_backend`); **new** runs become Isolated. **Chrome:** while any non-terminal run is Host-bound, keep **HOST TOOLS** warning chrome even if global effective mode is Isolated (see § Persistent indicator). Notice: “Isolated Work is ready — new sessions use the protected guest. This session still runs on this computer.” |
 | Isolation lost mid Isolated run | Existing isolation/interrupt paths; do **not** migrate the run to Host mid-flight. New runs may use Host if enrolled |
 | Policy revoked mid Host run | Cancel in-flight tool dispatches; non-idempotent effects → `interrupted_needs_review`; run fails closed |
@@ -309,7 +309,7 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 **Step 2 scope:**
 
 - Path roots via **main-process folder chooser**; daemon re-canonicalizes and may reject (see enroll errors).
-- Tool classes: v1 `fs_read`, `fs_write`, `process_exec`. The packaged MCP helper is an internal transport, not an enrollable fourth class.
+- Tool classes: v1 `fs_read`, `fs_write`, `process_exec`. The internal MCP transport is not an enrollable fourth class.
 - Consent is durable until explicit revoke. There is no wall-clock or daemon-session expiry in v1; an acknowledgment-version change makes the grant ineffective until re-enrollment.
 - **Broad-scope confirm** (mandatory UX **and** daemon gate): if any root is filesystem root (`/` or drive root `X:\`) or the user’s home directory, UI requires checkbox “I am granting access to my entire home/drive” **and** enroll request must set `broad_scope_acknowledged = true` (included in the request fingerprint). Daemon rejects broad roots when the flag is false. UI-only checking is never sufficient.
 
@@ -329,7 +329,7 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 | `active` | IsolatedGuest | yes | yes | Badge ISOLATED; Settings: Host enrollment “saved, not active (Isolated preferred)”. If Host-bound run still live → HOST TOOLS warning (chrome derivation) |
 | `active` + sticky Host run | IsolatedGuest (global) | yes | yes | Banner: **HOST TOOLS — active session on this computer**; dual plan string |
 | stale acknowledgment / `needs_reconsent` | Limited | yes | no | Settings: Re-enable; Work Unavailable |
-| `active` + verified helper unavailable | Limited | yes | no | reason `host_tools_runtime_not_prepared` |
+| `active` + official runtime unavailable | Limited | yes | no | reason `host_tools_runtime_not_prepared` |
 | any | Limited | yes | no | Plan “Limited mode” only when Host not effective **and** no Host-bound active run |
 | daemon offline | n/a | n/a | n/a | Plan “Connecting” / degraded — **never** show HOST badge |
 
@@ -343,7 +343,7 @@ Footer: Isolated Work is recommended when available; Host Tools is optional prod
 | root is symlink that escapes or is denied private dir | “This folder can’t be used” |
 | empty tool classes | Disable Continue on step 2 |
 | broad root without acknowledgment | Highlight roots; force broad-scope checkbox + re-submit |
-| verified helper unavailable | Keep Work unavailable; explain that the signed Host Tools runtime is missing |
+| official runtime unavailable | Keep Work unavailable; direct the user to Setup/runtime repair |
 
 **Folder picker:** Electron main `dialog.showOpenDialog({ properties: ['openDirectory'] })` only supplies **candidates**. Daemon `EnrollHostExecution` is authoritative: exists, is directory, canonicalize, reject reparse-escape, reject daemon private paths (DB, vault, guest images, integration staging).
 
@@ -453,8 +453,8 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 | Switch → HostWorkTools | **Only via `PrepareHostWorkRuntime`** (or internal re-prepare), **never** as a side effect of `StartWorkRun`. Steps under **role mutex**: (1) require policy effective + HostControl authenticated; (2) shutdown HostControl + drop lock; (3) provision same home as HostWorkTools; (4) start agent; (5) non-interactive `authenticate` resume. |
 | Resume success | Retain the authenticated method daemon-side for this process; keep HostWorkTools **resident** (warm pool — see idle policy); then `host_work_runtime_ready` becomes true. No authentication material or separate auth-ready bit is projected to the renderer. |
 | Resume failure | **Fail closed:** tear down HostWorkTools, attempt to restore HostControl, leave runtime readiness false, and require Setup re-auth then Prepare again. Never open Host Work unauthenticated. |
-| Switch ← HostControl | Via **`DeactivateHostWorkRuntime`**, Host policy revoke/re-enroll, verified helper/runtime loss, or daemon exit. Shutdown HostWorkTools and re-provision HostControl; a later Work run requires Prepare again. |
-| What “session state” means | ACP session ids / prompts / MCP helpers die with process or run end. Auth materials the **component** keeps under the shared home may remain for a future Prepare resume — daemon never exports them. |
+| Switch ← HostControl | Via **`DeactivateHostWorkRuntime`**, Host policy revoke/re-enroll, runtime loss, or daemon exit. Shutdown HostWorkTools and re-provision HostControl; a later Work run requires Prepare again. |
+| What “session state” means | ACP session ids, prompts, and per-run MCP endpoints die with the run/process. Auth materials the **component** keeps under the shared home may remain for a future Prepare resume — daemon never exports them. |
 | Concurrent roles | **Forbidden**. All provision/start/shutdown under a **daemon `AcpHomeRole` mutex** so `capability_facts` / Prepare / Deactivate / Setup auth cannot double-provision (`RuntimeBusy`). |
 | Auth fact rebind | `subscription_authenticated` is read from the **current role owner**’s last successful authenticate (HostControl or HostWorkTools). While HostWorkTools is resident and authed, Setup interactive auth is busy (`host_tools_runtime_busy`) until Deactivate. |
 | Rejected | Chicken-egg “start run to become ready”; HostControl-only boolean as `host_work_runtime_ready`; parallel homes; secret copy; second OAuth happy path. |
@@ -477,7 +477,7 @@ Not Option C (second interactive OAuth for Host Work) unless resume fails and th
 2. Explicit Settings / Work panel button **Prepare Host Tools runtime**.
 3. **Not** on every capability poll; **not** inside `StartWorkRun`.
 
-**Preconditions for Prepare:** policy effective; roots non-empty; packaged helper path verified; IPC factory ready; HostControl currently authenticated (or restore HostControl first if orphaned); no non-terminal Host-bound run requiring opposite transition mid-flight.
+**Preconditions for Prepare:** policy effective; roots non-empty; HostControl currently authenticated (or restore HostControl first if orphaned); no non-terminal Host-bound run requiring an opposite transition mid-flight. MCP endpoint creation is per-run and is not a Prepare-time package dependency.
 
 **Post-success warm policy:** HostWorkTools **stays up** after Prepare (resident warm runtime) so `host_work_runtime_ready` remains true and the user can start Work without another switch. V1 has no silent idle deactivation; only explicit Deactivate, revoke/re-enroll, runtime loss, or daemon exit removes readiness.
 
@@ -519,10 +519,10 @@ flowchart LR
     HC -->|PrepareHostWorkRuntime| HWT
     HWT -->|DeactivateHostWorkRuntime| HC
   end
-  Helper[grok-host-tools-mcp]
+  MCP[Per-run loopback HTTP MCP]
   Gate[HostToolGate]
-  HWT -->|stdio MCP per run| Helper
-  Helper -->|per-run UDS| Gate
+  HWT -->|HTTP + random bearer| MCP
+  MCP -->|in daemon| Gate
 ```
 
 | Runtime role | Lifecycle | GROK_HOME | Responsibilities |
@@ -541,8 +541,6 @@ fn host_work_runtime_ready(facts) -> bool {
   facts.host_tools_runtime_composable
   && facts.host_policy_effective          // active, current ack version, non-empty scope
   && facts.host_roots_non_empty
-  && facts.packaged_helper_path_verified
-  && facts.host_tools_ipc_factory_ready
   && facts.host_work_tools_role_up        // HostWorkTools currently owns shared home
   && facts.host_work_tools_subscription_ok // that process's authenticate succeeded
 }
@@ -560,58 +558,58 @@ fn host_work_runtime_ready(facts) -> bool {
 | Prepare success, HostWorkTools resident | **true** | Available | HostDirect |
 | Resume failed | false | Unavailable `host_tools_auth_resume_failed` | Limited |
 | Deactivated | false | Unavailable `host_tools_runtime_not_prepared` | Limited |
-| Helper missing | false | Unavailable `host_tools_runtime_unavailable` | Limited |
+| MCP endpoint cannot bind | true until a run starts | Start fails closed without executing a tool | HostDirect |
 
 **External gate (residual, not a design branch):** whether Grok Build always resumes non-interactively from the same `GROK_HOME` after process recycle is an **ACP contract** risk. PR 4 contract-tests it; failure → `host_tools_auth_resume_failed` + Setup re-auth. Track on implementation-status / open risks as an external gate (like other ACP behaviors).
 
 **Process cost:** one `grok agent stdio` at a time; after Prepare it stays resident until Deactivate.
 
-#### MCP process model (stdio — implementable)
+#### MCP process model (authenticated loopback HTTP)
 
-ACP `NewSessionRequest.mcp_servers` uses **`McpServer::Stdio`**: the **agent process spawns** an absolute `command` and talks MCP over that child’s stdio. That is **not** an in-process daemon service. Today `open_session` sends `NewSessionRequest::new(cwd)` with **empty** `mcp_servers` (`grok-acp/src/runtime.rs` ~900).
+Host Work injects exactly one daemon-created `McpServer::Http` entry into the ACP `NewSessionRequest`. The endpoint binds an ephemeral IPv4 loopback port, uses the fixed `/mcp` path, and requires a fresh random bearer on every request. Neither the renderer nor model chooses the URL, credentials, server name, or tool catalog.
 
-**Chosen transport: session-injected Stdio helper (recommended)**
+**Chosen transport: daemon-owned Streamable HTTP MCP**
 
 | Element | Spec |
 |---------|------|
-| Binary | Packaged, **fixed absolute path** e.g. `resources/bin/grok-host-tools-mcp` (Windows: `grok-host-tools-mcp.exe`). Same code identity policy as daemon where packaging allows (digest/path re-verify at session open). **Never** a user- or renderer-supplied command. |
-| Role | Thin MCP stdio front-end only: parse MCP JSON-RPC, forward tool calls to daemon, return results. **Holds no policy, no roots, no approvals.** |
-| Agent spawn | HostWorkTools `open_session` builds `mcp_servers: [Stdio { command: <fixed path>, args: ["--daemon-socket", <path>], env: <non-secret only> }]` |
-| Daemon link | **Per-run** private UDS (Linux) or named pipe (Windows). See **Helper↔daemon framing** below. Auth: **peer credential** matching helper binary path/digest allowlist. **No secrets in `env` or argv.** |
-| Policy/execution | All `HostToolGate` / `HostDirectBackend` work runs **inside the daemon** after the helper forwards the call. |
-| Out of v1 | HTTP/SSE localhost MCP; unstable MCP-over-ACP; arbitrary agent-configured MCP commands. |
-| Managed config | Keep `mcps = false` / forbid `.mcp.json` / compat MCP discovery. **Only** session-injected Host Tools MCP entry is allowed — not file-discovered servers. |
+| Listener | Daemon-owned `127.0.0.1:0`; exact `/mcp`; destroyed when the run terminals or is cancelled. |
+| Authentication | 256-bit random bearer retained by the daemon and official child environment/session request only; Debug output redacts it. Host and Origin validation reject cross-origin/browser traffic. |
+| Agent connection | HostWorkTools `open_session` injects one fixed-name HTTP server with the daemon URL and `Authorization` header. No discovered/file-configured MCP is enabled. |
+| Strict sandbox compatibility | The official client constructs a TLS-capable HTTP client even for loopback HTTP. On Unix the daemon copies the public platform CA bundle into the private managed Grok home and sets `SSL_CERT_FILE` to that sandbox-readable immutable-content file. Strict sandbox remains enabled. |
+| Policy/execution | All `HostToolGate` / `HostDirectBackend` work runs **inside the daemon** after the authenticated MCP handler validates the call. |
+| Out of v1 | Arbitrary localhost servers, SSE compatibility endpoints, MCP-over-ACP, and user-configured MCP commands. |
+| Managed config | Keep `mcps = false` / forbid `.mcp.json` / compat MCP discovery. **Only** the session-injected daemon MCP entry is allowed. |
 
 ```text
 NewSessionRequest (Host Work):
   cwd = primary_root
   additional_directories = other_roots[]
   mcp_servers = [
-    Stdio {
-      command: PACKAGED_HOST_TOOLS_MCP_ABS,
-      args: ["serve", "--ipc", PER_RUN_SOCK_PATH],  // path identifies pre-bound run; not a secret
-      env: { /* LANG only; no secrets; no XAI_API_KEY */ }
+    Http {
+      url: "http://127.0.0.1:<ephemeral>/mcp",
+      headers: { Authorization: "Bearer <per-run random>" }
     }
   ]
 ```
 
-#### Helper↔daemon framing (run binding, concurrency, approvals)
+#### HTTP MCP binding (run binding, concurrency, approvals)
 
 | Rule | Spec |
 |------|------|
 | Concurrent Host Work runs (v1) | **Max 1** non-terminal Host-bound Work run (matches single HostWorkTools role + simpler binding). Additional starts → conflict / queue. |
-| Connection bind | At Host run start, daemon creates `PER_RUN_SOCK_PATH` (or pipe name) **pre-registered** to that `run_id` + ACP `session_id` (once known). Helper argv receives only that path. |
-| Accept | One accepted connection per path; peer must be the packaged helper. After peer auth, all tool frames on that connection **inherit** the bound `run_id` — helper does **not** send client-chosen run ids. |
-| Unbound calls | Reject if path unknown, run terminal, policy inactive, or peer mismatch. |
-| Multiplex | No shared global socket multiplexing multiple runs in v1. |
+| Connection bind | At Host run start, daemon creates one listener and bearer pre-bound to `run_id` and policy revision. Calls never carry a client-selected run id. |
+| Accept | IPv4 loopback peer, exact Host header, absent/allowed Origin, exact bearer, bounded header/body, and valid MCP JSON-RPC are all required. |
+| Unbound calls | Reject if bearer/listener is wrong, run terminal, policy inactive/revised, or tool/schema is outside the closed set. |
+| Multiplex | No shared global endpoint across runs in v1. |
 | Approval wait | `tools/call` blocks in daemon until `ApprovalService` decides or approval `expires_at` (existing domain deadline). Helper/daemon RPC deadline ≥ approval expiry (cap e.g. 15 minutes). Agent-side MCP client timeout must be configured ≥ that cap where the runtime allows; otherwise fail with stable “approval wait exceeded”. |
-| Cancel | Run cancel, Host revoke, or role switch away from HostWorkTools → daemon **aborts** in-flight helper RPCs; non-idempotent effects → `interrupted_needs_review`; helper returns MCP error; connection closed. |
-| Idle (run) | When run terminals, tear down per-run socket and helper connection. **Does not** Deactivate HostWorkTools (runtime stays prepared). |
+| Cancel | Run cancel, Host revoke, or role switch away from HostWorkTools → daemon aborts in-flight HTTP RPCs; non-idempotent effects → `interrupted_needs_review`; endpoint closes. |
+| Idle (run) | When run terminals, tear down the listener and bearer. **Does not** Deactivate HostWorkTools (runtime stays prepared). |
 
 **Readiness:** use the **single** `host_work_runtime_ready` definition in § Host Work runtime bootstrap — no HostControl-only alternate.
 
-If agent `sandbox.profile=strict` blocks spawning the session MCP child, the PR
-2 feasibility gate fails closed before schema or UI work begins.
+If the strict sandbox cannot read the daemon-provisioned public CA bundle or
+connect to IPv4 loopback, session MCP initialization fails before the run is
+marked Running.
 
 #### Multi-root → session cwd / additional_directories
 
@@ -633,7 +631,6 @@ sequenceDiagram
     participant HC as HostControl ACP
     participant ACP as HostWorkTools ACP
     participant Ag as grok agent process
-    participant H as grok-host-tools-mcp
     participant Gate as HostToolGate
     participant Appr as ApprovalService
     participant FX as SideEffectService
@@ -643,14 +640,13 @@ sequenceDiagram
     U->>UI: Start Work turn
     UI->>D: StartWorkRun (idempotent)
     D->>D: resolve backend must be HostDirect; persist runs.work_backend=HostDirect
-    D->>D: create per-run IPC path bound to run_id
-    D->>ACP: open_session(cwd, additional_directories, mcp_servers Stdio)
+    D->>D: bind per-run loopback MCP + bearer to run_id
+    D->>ACP: open_session(cwd, additional_directories, mcp_servers Http)
     ACP->>Ag: NewSessionRequest
-    Ag->>H: spawn absolute helper (stdio MCP)
-    H->>D: connect per-run UDS/pipe peer-auth → inherit run_id
+    Ag->>D: MCP initialize over loopback + bearer
     D->>ACP: prompt(user text)
-    Ag->>H: tools/call host_filesystem_read|…
-    H->>Gate: forward op
+    Ag->>D: tools/call host_filesystem_read|…
+    D->>Gate: dispatch bound op
     Gate->>Gate: policy class + path under roots
     alt write or exec
         Gate->>Appr: request Approval
@@ -660,17 +656,16 @@ sequenceDiagram
     Gate->>BE: execute (reparse-at-use)
     BE-->>Gate: result
     Gate->>FX: succeed / fail / interrupt
-    Gate-->>H: tool result
-    H-->>Ag: MCP result
+    Gate-->>Ag: MCP result
     ACP-->>D: AgentEvent stream
     D-->>UI: run events / approvals
 ```
 
-**Session open → agent spawns helper → tool call → policy → approval → effect journal → backend → event stream** is the mandatory PR-bridge acceptance path.
+**Session open → authenticated MCP initialize → tool call → policy → approval → effect journal → backend → event stream** is the mandatory bridge acceptance path.
 
 #### Host Tools MCP tool surface (v1)
 
-Closed tool names only (helper rejects all others before daemon):
+Closed tool names only (the daemon MCP handler rejects all others):
 
 | Tool | Class | Bounds |
 |------|-------|--------|
@@ -681,10 +676,10 @@ Closed tool names only (helper rejects all others before daemon):
 
 #### Residual agent-native tools and sandbox
 
-- HostWorkTools managed config: unmanaged MCP **off**; compat MCP **off**; session injects **only** Host Tools Stdio MCP.
+- HostWorkTools managed config: unmanaged MCP **off**; compat MCP **off**; session injects **only** the authenticated Host Tools HTTP MCP.
 - **Only** Host Tools MCP tool names may reach OS I/O. Contract test: no `HostDirectBackend` write/exec without gate; no path op without MCP name in closed set.
-- `HostPermissionChannel`: any non-Host residual tool permission → **Cancel** (including ambient shell/edit if the agent offers them).
-- `sandbox.profile=strict` retained; if it prevents helper spawn or MCP tools, PR 4 fails closed (`host_tools_runtime_unavailable`) rather than loosening sandbox ad hoc.
+- `HostPermissionChannel`: select **AllowOnce** only when the official request is an exact `UseTool` envelope for the `grok-desktop-host-tools__<closed-name>` namespace. Every other native tool permission is cancelled. The selected outer permission grants no OS authority; the daemon MCP gate still revalidates the exact call.
+- `sandbox.profile=strict` retained; the managed CA copy solves native root loading without broadening filesystem or process authority.
 
 #### Mapping to existing types
 
@@ -699,7 +694,7 @@ Closed tool names only (helper rejects all others before daemon):
 | Host Work sessions | HostWorkTools only after Prepare; `StartWorkRun` never role-switches |
 | Runtime prepare | `PrepareHostWorkRuntime` / `DeactivateHostWorkRuntime` |
 
-Chat pipelines (`StartConversationTurn`, xAI/SuperGrok rails) **must not** receive `Arc<dyn WorkToolBackend>`, HostWorkTools runtime, or helper IPC handles (see § Structural non-inheritance).
+Chat pipelines (`StartConversationTurn`, xAI/SuperGrok rails) **must not** receive `Arc<dyn WorkToolBackend>`, HostWorkTools runtime, or MCP endpoint handles (see § Structural non-inheritance).
 
 ---
 
@@ -1094,7 +1089,7 @@ ADR 0032 and PR 1 amend **all** of:
 | Enroll without understanding | Multi-step + typed ack + **daemon** broad-scope flag |
 | Renderer forges broad roots | `broad_scope_acknowledged` in fingerprint; reject without |
 | Prompt injection → host steal | Roots, approvals, MCP closed set, Chat non-inheritance |
-| Agent ambient tools bypass MCP | Permission Cancel; OS I/O only via helper→gate |
+| Agent ambient tools bypass MCP | Cancel all non-namespaced ACP permissions; OS I/O only via authenticated MCP → gate |
 | Helper binary swap | Fixed package path + peer identity + re-verify |
 | Guest down → host | No code path + tests in policy PR |
 | Mode flap mid-tool | Sticky run mode; re-check policy each dispatch |
@@ -1122,32 +1117,31 @@ ADR 0032 and PR 1 amend **all** of:
 
 | Build | Host Tools availability |
 |-------|-------------------------|
-| Dev / dogfood | Helper may be selected with the debug-only absolute override; policy still defaults inactive |
-| Packaged release | Available only when the signed release packages the verified sibling helper; policy still defaults inactive |
+| Dev / dogfood | Daemon-owned loopback MCP is composed in-process; policy still defaults inactive |
+| Packaged release | Same daemon-owned endpoint; no sibling helper is required; policy still defaults inactive |
 
-The release kill switch is component composition, not a broad runtime
-environment flag: packaged builds ignore the debug helper override and remain
-unavailable if the verified helper is absent or fails identity checks. This
-keeps production enablement owned by signed release policy.
+The release kill switch is component composition plus durable enrollment, not
+a broad runtime environment flag. The renderer cannot supply an endpoint,
+bearer, tool catalog, or readiness fact.
 
 **Kill-switch matrix:**
 
-| verified packaged helper | DB active | acknowledgment | effective |
-|---------------------------|-----------|----------------|-----------|
-| absent/invalid | 1 | current | **false** (runtime cannot prepare) |
-| present | 1 | stale | false (`needs_reconsent`) |
-| present | 1 | current | true if subscription + runtime prepared |
-| present | 0 | — | false |
+| official runtime | DB active | acknowledgment | effective |
+|------------------|-----------|----------------|-----------|
+| unavailable | 1 | current | **false** (runtime cannot prepare) |
+| available | 1 | stale | false (`needs_reconsent`) |
+| available | 1 | current | true if subscription + runtime prepared |
+| available | 0 | — | false |
 
-Tests cover absent/invalid helper, inactive policy, stale acknowledgment, and
-unprepared runtime behavior.
+Tests cover unavailable runtime, inactive policy, stale acknowledgment,
+unprepared runtime, invalid MCP authentication, and closed tool dispatch.
 
 ---
 
 ## Key Decisions
 
 1. **Three states** — Limited / Host Tools / Isolated Work; domain `WorkExecutionBackend` has only executable backends, while absence means Limited.
-2. **Host agent model** — HostWorkTools ACP + **packaged Stdio MCP helper** (`grok-host-tools-mcp`) peer-auth’d to daemon gate + `HostDirectBackend` (not in-process MCP, not permission-only agent I/O).
+2. **Host agent model** — HostWorkTools ACP + authenticated daemon-owned loopback HTTP MCP + `HostDirectBackend` (not arbitrary localhost MCP, not permission-only agent I/O).
 3. **Credential continuity** — **shared install `GROK_HOME` with exclusive serial ownership**; non-interactive resume; fail closed + Setup re-auth. Preserves `.runtime.lock`.
 4. **Bootstrap via `PrepareHostWorkRuntime`** — single `host_work_runtime_ready` definition; enroll alone ≠ Available; `StartWorkRun` never role-switches; warm resident HostWorkTools after Prepare; explicit `DeactivateHostWorkRuntime` returns HostControl.
 5. **Subscription required for Host Work** — same as Isolated; BYOK never enables Host Work/Shell.

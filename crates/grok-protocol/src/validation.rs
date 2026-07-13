@@ -1200,14 +1200,18 @@ mod tests {
 
         let list = v1::Request {
             operation: Some(v1::request::Operation::ListHostWorkRuns(
-                v1::ListHostWorkRunsRequest { limit: 25 },
+                v1::ListHostWorkRunsRequest {
+                    limit: 25,
+                    thread_id: "thread-work".into(),
+                },
             )),
         };
         let decoded = v1::Request::decode(list.encode_to_vec().as_slice())
             .expect("decode bounded Host Work list request");
         assert!(matches!(
             decoded.operation,
-            Some(v1::request::Operation::ListHostWorkRuns(value)) if value.limit == 25
+            Some(v1::request::Operation::ListHostWorkRuns(value))
+                if value.limit == 25 && value.thread_id == "thread-work"
         ));
 
         let snapshots = v1::HostWorkList {

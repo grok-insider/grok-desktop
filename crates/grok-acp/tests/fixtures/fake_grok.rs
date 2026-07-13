@@ -2,7 +2,7 @@ use std::io::{self, BufRead, Write};
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args != ["agent", "stdio"] {
+    if args != ["--no-auto-update", "agent", "stdio"] {
         std::process::exit(64);
     }
     let grok_home = std::env::var_os("GROK_HOME").expect("GROK_HOME");
@@ -34,7 +34,10 @@ fn main() {
         } else if line.contains("\"method\":\"session/new\"") {
             let host_tools_contract = line.contains("\"additionalDirectories\"")
                 && line.contains("grok-desktop-host-tools")
-                && line.contains("host-tools-contract");
+                && line.contains("http://127.0.0.1:39281/mcp")
+                && line.contains(
+                    "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                );
             respond(
                 &mut stdout,
                 id(&line),

@@ -101,7 +101,7 @@ Architecture principles:
   lifecycle contract, authenticated guest channel v2, reproducible NixOS guest,
   and fail-closed capability reporting.
 - Explicit Host Tools v1 behind daemon-owned, versioned risk enrollment. Runs
-  bind immutably to HostDirect, use an authenticated packaged stdio MCP bridge,
+  bind immutably to HostDirect, use an authenticated per-run loopback HTTP MCP bridge,
   enforce capability roots for filesystem operations, require exact one-time
   approval for writes and processes, persist intent before side effects, and
   recover uncertain mutations as `interrupted_needs_review`. Chat and scheduled
@@ -352,6 +352,12 @@ remain under **Windows qualification blockers**.
 - Isolated session execution still needs the qualified guest proxy. Host Tools
   now has a separate daemon-owned ACP lifecycle and authenticated MCP bridge;
   it is deliberately not represented as guest isolation or used as fallback.
+  Local Linux qualification completed an official Grok Build turn through the
+  strict sandbox: MCP initialized with four closed tools, the daemon executed
+  `host_filesystem_list`, persisted the assistant result, and completed the
+  owning HostDirect run. Public platform CA material is copied into the managed
+  Grok home so the official TLS-capable HTTP client can initialize without
+  widening sandbox access.
 - BYOK add/replace needs native qualification of packaged process/window
   identity, prompt accessibility, cancellation, HWND reuse, buffer cleanup, and
   crash behavior on Windows. Linux additionally needs representative

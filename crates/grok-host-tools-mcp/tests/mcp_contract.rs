@@ -5,6 +5,7 @@ use std::io::{BufRead, Write};
 use serde_json::Value;
 
 #[test]
+#[cfg(unix)]
 fn self_test_and_closed_tool_catalog_are_stable() {
     let executable = env!("CARGO_BIN_EXE_grok-host-tools-mcp");
     let self_test = std::process::Command::new(executable)
@@ -14,10 +15,31 @@ fn self_test_and_closed_tool_catalog_are_stable() {
     assert!(self_test.status.success());
     assert_eq!(self_test.stdout, b"grok-host-tools-mcp-v1\n");
 
+    let endpoint = std::env::temp_dir().join(format!(
+        "grok-host-tools-contract-{}-{}.sock",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    ));
+    let listener = std::os::unix::net::UnixListener::bind(&endpoint).expect("bind endpoint");
+    let bridge = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept initialization");
+        let mut request = String::new();
+        std::io::BufReader::new(stream.try_clone().expect("clone stream"))
+            .read_line(&mut request)
+            .expect("read initialization");
+        assert!(request.contains("\"initialize\":true"));
+        stream
+            .write_all(b"{\"content\":[],\"isError\":false}\n")
+            .expect("write initialization");
+    });
+
     let mut child = std::process::Command::new(executable)
         .args([
             "--endpoint",
-            "/private/grok-host-tools.sock",
+            endpoint.to_str().expect("endpoint UTF-8"),
             "--run-id",
             "run-1",
             "--policy-revision",
@@ -48,6 +70,8 @@ fn self_test_and_closed_tool_catalog_are_stable() {
         initialize["result"]["serverInfo"]["name"],
         "grok-desktop-host-tools"
     );
+    bridge.join().expect("bridge thread");
+    let _ = std::fs::remove_file(&endpoint);
 
     writeln!(
         stdin,

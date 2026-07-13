@@ -42,6 +42,7 @@ export interface CreateProjectInput {
 
 export interface RunSummary {
   id: string;
+  threadId?: string;
   title: string;
   projectName: string;
   state: RunState;

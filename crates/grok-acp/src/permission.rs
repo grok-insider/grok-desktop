@@ -131,6 +131,7 @@ mod tests {
             request_id: "permission-1".into(),
             session_id: "session-1".into(),
             title: "Write report".into(),
+            managed_host_tool: None,
             options: vec![AgentPermissionOption {
                 id: "allow-once".into(),
                 name: "Allow once".into(),

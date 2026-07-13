@@ -1696,7 +1696,23 @@ async fn host_recovery_queries_return_only_unfinished_host_direct_work() {
     );
     assert_eq!(
         store.list_recoverable_host_runs(10).await.expect("runs"),
-        vec![run]
+        vec![run.clone()]
+    );
+    let matching_thread = ThreadId::new("thread-host").expect("thread ID");
+    let unrelated_thread = ThreadId::new("thread-other").expect("thread ID");
+    assert_eq!(
+        store
+            .list_host_work_runs(10, Some(&matching_thread))
+            .await
+            .expect("thread runs"),
+        vec![run.clone()]
+    );
+    assert!(
+        store
+            .list_host_work_runs(10, Some(&unrelated_thread))
+            .await
+            .expect("unrelated thread runs")
+            .is_empty()
     );
 }
 
