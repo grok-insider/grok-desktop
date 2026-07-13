@@ -45,6 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: nix develop --command cargo fmt --all --check
       - run: nix develop --command buf lint
       - run: nix develop --command buf format --diff --exit-code
@@ -124,6 +127,9 @@ jobs:
           go-version: "1.26.x"
           cache-dependency-path: |
             native/windows-vm-service/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: Cross-check audited Windows boundaries on ARM64
