@@ -66,7 +66,9 @@ async function main() {
   });
 
   try {
-    await runChecked("cargo", ["build", "--locked", "--package", "grok-daemon"], repositoryRoot);
+    await runChecked("cargo", [
+      "build", "--locked", "--package", "grok-daemon", "--package", "grok-host-tools-mcp",
+    ], repositoryRoot);
     const buildEnvironment = productionRendererBuildEnvironment();
     await runPnpm(["--filter", "@grok-desktop/desktop", "build"], buildEnvironment);
     if (receivedSignal) return;
@@ -82,7 +84,13 @@ async function main() {
       throw new Error("the workspace Electron executable could not be resolved");
     }
 
-    const environment = { ...process.env, GROK_DAEMON_BINARY: daemonBinary };
+    const hostToolsHelper = path.join(repositoryRoot, "target", "debug",
+      process.platform === "win32" ? "grok-host-tools-mcp.exe" : "grok-host-tools-mcp");
+    const environment = {
+      ...process.env,
+      GROK_DAEMON_BINARY: daemonBinary,
+      GROK_HOST_TOOLS_MCP_EXECUTABLE: hostToolsHelper,
+    };
     delete environment.ELECTRON_RUN_AS_NODE;
     delete environment.VITE_BROWSER_PREVIEW;
     delete environment.VITE_DEV_SERVER_URL;

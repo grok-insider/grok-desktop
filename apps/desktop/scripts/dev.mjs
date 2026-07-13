@@ -11,6 +11,31 @@ if (!pnpmScript || !path.isAbsolute(pnpmScript)) {
   throw new Error("the pnpm executable path is unavailable");
 }
 
+const repositoryRoot = path.resolve(desktopRoot, "../..");
+const nativeBuild = spawn("cargo", [
+  "build", "--locked", "--package", "grok-daemon", "--package", "grok-host-tools-mcp",
+  "--features", "grok-daemon/debug-acp-descriptor",
+], {
+  cwd: repositoryRoot,
+  env: process.env,
+  shell: false,
+  stdio: "inherit",
+  windowsHide: false,
+});
+const nativeOutcome = await childOutcome(nativeBuild, -1);
+if (nativeOutcome.code !== 0) {
+  throw new Error("native development binaries failed to build");
+}
+
+const nativeExtension = process.platform === "win32" ? ".exe" : "";
+const developmentEnvironment = {
+  ...process.env,
+  GROK_DAEMON_BINARY: path.join(repositoryRoot, "target", "debug", `grok-daemon${nativeExtension}`),
+  GROK_HOST_TOOLS_MCP_EXECUTABLE: path.join(
+    repositoryRoot, "target", "debug", `grok-host-tools-mcp${nativeExtension}`,
+  ),
+};
+
 const graphicsArguments = process.argv.slice(2);
 const children = [
   spawn(process.execPath, [pnpmScript, "exec", "vite", "--host", "127.0.0.1"], childOptions()),
@@ -43,7 +68,7 @@ else process.exitCode = first.code ?? 1;
 function childOptions() {
   return {
     cwd: desktopRoot,
-    env: process.env,
+    env: developmentEnvironment,
     shell: false,
     stdio: "inherit",
     windowsHide: false,

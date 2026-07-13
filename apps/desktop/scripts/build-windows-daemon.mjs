@@ -86,6 +86,8 @@ async function main() {
       "--target", rustTargets[options.architecture],
       "--package", "grok-daemon",
       "--bin", "grok-daemon",
+      "--package", "grok-host-tools-mcp",
+      "--bin", "grok-host-tools-mcp",
       "--no-default-features",
     ], { cwd: buildLayout.workingDirectory, env: buildEnvironment });
     const executable = path.join(
@@ -93,8 +95,17 @@ async function main() {
     );
     await inspectPortableExecutable(executable, options.architecture);
     await inspectDaemonAcpCatalogTrust(executable, trust);
+    const hostToolsHelper = path.join(
+      buildLayout.targetDirectory, rustTargets[options.architecture], "release", "grok-host-tools-mcp.exe",
+    );
+    await inspectPortableExecutable(hostToolsHelper, options.architecture);
     await mkdir(path.dirname(options.output), { recursive: true });
     await copyFile(executable, options.output, fsConstants.COPYFILE_EXCL);
+    await copyFile(
+      hostToolsHelper,
+      path.join(path.dirname(options.output), "grok-host-tools-mcp.exe"),
+      fsConstants.COPYFILE_EXCL,
+    );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

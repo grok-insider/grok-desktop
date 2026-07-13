@@ -1175,6 +1175,7 @@ dependencies = [
  "grok-sqlcipher",
  "grok-vault",
  "grok-vm-service-client",
+ "grok-windows-acl",
  "grok-xai",
  "hex",
  "prost",
@@ -1211,6 +1212,7 @@ dependencies = [
  "async-trait",
  "cap-std",
  "grok-application",
+ "process-wrap",
  "rustix",
  "tempfile",
  "tokio",
@@ -1305,6 +1307,7 @@ name = "grok-windows-acl"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 

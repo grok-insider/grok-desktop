@@ -44,6 +44,9 @@ zeroize.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["fs", "net"] }
 
+[target.'cfg(windows)'.dependencies]
+grok-windows-acl = { path = "../grok-windows-acl", version = "0.1.0" }
+
 [lints]
 workspace = true
 

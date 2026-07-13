@@ -12,6 +12,7 @@ import {
   renderLinuxVmServiceUnit,
   renderLinuxDesktopEntry,
   resolveLinuxDaemonBinary,
+  resolveLinuxHostToolsHelper,
   stageLinuxVmServiceBundle,
   stageVerifiedLinuxAcp,
   verifyLinuxPackagedLayout,
@@ -174,7 +175,7 @@ test("renderLinuxDesktopEntry registers protocol and exec", () => {
   assert.match(entry, /X-GrokDesktop-Version=0\.1\.0/);
 });
 
-test("resolveLinuxDaemonBinary and verifyLinuxPackagedLayout use real files", async () => {
+test("native helper resolution and verifyLinuxPackagedLayout use real files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-linux-pkg-"));
   try {
     const daemon = path.join(root, "grok-daemon");
@@ -184,12 +185,24 @@ test("resolveLinuxDaemonBinary and verifyLinuxPackagedLayout use real files", as
       daemonBinary: daemon,
     });
     assert.equal(resolved, daemon);
+    const helper = path.join(root, "grok-host-tools-mcp");
+    await writeFile(helper, "#!/bin/sh\necho ok\n", { mode: 0o755 });
+    const resolvedHelper = await resolveLinuxHostToolsHelper({
+      architecture: process.arch === "arm64" ? "arm64" : "x64",
+      hostToolsHelper: helper,
+    });
+    assert.equal(resolvedHelper, helper);
 
     const appDir = path.join(root, "app");
     await mkdir(path.join(appDir, "resources", "bin"), { recursive: true });
     await writeFile(path.join(appDir, "resources", "bin", "grok-daemon"), "#!/bin/sh\n", {
       mode: 0o755,
     });
+    await writeFile(
+      path.join(appDir, "resources", "bin", "grok-host-tools-mcp"),
+      "#!/bin/sh\n",
+      { mode: 0o755 },
+    );
     await writeFile(
       path.join(appDir, "resources", "bin", "appimageupdatetool.AppImage"),
       "#!/bin/sh\n",

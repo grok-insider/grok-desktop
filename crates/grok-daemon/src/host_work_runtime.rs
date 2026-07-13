@@ -45,7 +45,7 @@ impl VerifiedHostToolsHelper {
         })
     }
 
-    fn reverify(&self) -> Result<(), AgentRuntimeError> {
+    pub(crate) fn reverify(&self) -> Result<(), AgentRuntimeError> {
         let current = Self::verify(self.path.clone())?;
         if current.sha256 != self.sha256 {
             return Err(unavailable("Host Tools helper identity changed"));

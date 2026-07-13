@@ -46,7 +46,7 @@ export function parseLinuxPackageArguments(argv) {
     }
     if (!["--arch", "--out", "--daemon", "--acp-catalog", "--acp-component", "--appimagetool", "--appimagetool-sha256",
       "--appimageupdatetool", "--appimageupdatetool-sha256",
-      "--update-trust-file",
+      "--update-trust-file", "--host-tools-helper",
       "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
       throw new Error(`unsupported linux package option ${option}`);
     }
@@ -94,6 +94,9 @@ export function parseLinuxPackageArguments(argv) {
       ? path.resolve(values["--out"])
       : path.join(repositoryRoot, "out", "release", "linux", architecture),
     daemonBinary: values["--daemon"] ? path.resolve(values["--daemon"]) : undefined,
+    hostToolsHelper: values["--host-tools-helper"]
+      ? path.resolve(values["--host-tools-helper"])
+      : undefined,
     acpCatalog: values["--acp-catalog"] ? path.resolve(values["--acp-catalog"]) : undefined,
     acpComponent: values["--acp-component"] ? path.resolve(values["--acp-component"]) : undefined,
     acpTrustFile: values["--acp-trust-file"] ? path.resolve(values["--acp-trust-file"]) : undefined,
@@ -237,6 +240,31 @@ export async function resolveLinuxDaemonBinary(options) {
   }
   throw new Error(
     "grok-daemon binary not found; build with `cargo build -p grok-daemon --release` or pass --daemon",
+  );
+}
+
+/** Resolves the policy-free Host Tools MCP helper for a Linux package. */
+export async function resolveLinuxHostToolsHelper(options) {
+  if (options.hostToolsHelper) {
+    await assertExecutableFile(options.hostToolsHelper, "Host Tools helper override");
+    return options.hostToolsHelper;
+  }
+  const hostMatches =
+    (options.architecture === "x64" && process.arch === "x64") ||
+    (options.architecture === "arm64" && process.arch === "arm64");
+  if (hostMatches) {
+    for (const profile of ["release", "debug"]) {
+      const candidate = path.join(repositoryRoot, "target", profile, "grok-host-tools-mcp");
+      try {
+        await assertExecutableFile(candidate, "Host Tools helper candidate");
+        return candidate;
+      } catch {
+        // try next
+      }
+    }
+  }
+  throw new Error(
+    "grok-host-tools-mcp binary not found; build with `cargo build -p grok-host-tools-mcp --release` or pass --host-tools-helper",
   );
 }
 
@@ -390,6 +418,8 @@ X-GrokDesktop-Version=${version}
 export async function verifyLinuxPackagedLayout(appDirectory, daemonRelativePath = "resources/bin/grok-daemon") {
   const daemonPath = path.join(appDirectory, daemonRelativePath);
   await assertExecutableFile(daemonPath, "packaged daemon");
+  const hostToolsHelperPath = path.join(appDirectory, "resources", "bin", "grok-host-tools-mcp");
+  await assertExecutableFile(hostToolsHelperPath, "packaged Host Tools helper");
   await assertExecutableFile(
     path.join(appDirectory, "resources", "bin", "appimageupdatetool.AppImage"),
     "packaged AppImage update helper",
@@ -404,7 +434,7 @@ export async function verifyLinuxPackagedLayout(appDirectory, daemonRelativePath
     throw new Error("packaged desktop entry missing grok-desktop protocol handler");
   }
   if (!entry.includes("Exec=")) throw new Error("packaged desktop entry missing Exec");
-  return { daemonPath, desktopEntry };
+  return { daemonPath, hostToolsHelperPath, desktopEntry };
 }
 
 export async function sha256File(filePath) {
@@ -563,6 +593,7 @@ async function main() {
   const packageMetadata = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
   await ensureDesktopBuild();
   const daemonSource = await resolveLinuxDaemonBinary(options);
+  const hostToolsHelperSource = await resolveLinuxHostToolsHelper(options);
 
   await rm(options.out, { recursive: true, force: true });
   await mkdir(options.out, { recursive: true, mode: 0o700 });
@@ -573,6 +604,9 @@ async function main() {
   const stagedDaemon = path.join(resourcesBin, "grok-daemon");
   await cp(daemonSource, stagedDaemon);
   await chmod(stagedDaemon, 0o755);
+  const stagedHostToolsHelper = path.join(resourcesBin, "grok-host-tools-mcp");
+  await cp(hostToolsHelperSource, stagedHostToolsHelper);
+  await chmod(stagedHostToolsHelper, 0o755);
   const stagedUpdateTool = await stageAppImageUpdateTool(resourcesBin, options);
   const stagedUpdateTrust = await stageUpdateTrust(path.dirname(resourcesBin), options);
   const stagedAcp = await stageVerifiedLinuxAcp(

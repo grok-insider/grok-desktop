@@ -146,9 +146,82 @@ impl HostToolBridge {
         })
     }
 
-    /// Fails closed until the audited Windows named-pipe peer verifier is
-    /// composed.
-    #[cfg(not(unix))]
+    /// Starts an owner-only Windows named pipe and authenticates every client
+    /// against the retained packaged helper identity.
+    #[cfg(windows)]
+    pub fn start(
+        _base: &Path,
+        run_id: RunId,
+        policy_revision: u64,
+        helper: VerifiedHostToolsHelper,
+        services: Arc<HostToolServices>,
+        cancellation: CancellationToken,
+    ) -> Result<Self, StoreError> {
+        let endpoint = format!(r"\\.\pipe\grok-desktop-host-tools-{}", uuid::Uuid::new_v4());
+        let listener = grok_windows_acl::create_private_named_pipe_server(&endpoint, true)
+            .map_err(|_| StoreError::Unavailable("Host Tools endpoint unavailable".into()))?;
+        let task_cancellation = cancellation.clone();
+        let endpoint_for_task = endpoint.clone();
+        let task = tokio::spawn(async move {
+            let mut connections = tokio::task::JoinSet::new();
+            let mut listener = listener;
+            loop {
+                let connected = tokio::select! {
+                    () = task_cancellation.cancelled() => break,
+                    Some(_) = connections.join_next(), if !connections.is_empty() => continue,
+                    connected = listener.connect() => connected,
+                };
+                if connected.is_err() {
+                    break;
+                }
+                let next = match grok_windows_acl::create_private_named_pipe_server(
+                    &endpoint_for_task,
+                    false,
+                ) {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+                if helper.reverify().is_err() {
+                    let _ = listener.disconnect();
+                    listener = next;
+                    continue;
+                }
+                let Ok(peer) =
+                    grok_windows_acl::verify_named_pipe_client_executable(&listener, helper.path())
+                else {
+                    let _ = listener.disconnect();
+                    listener = next;
+                    continue;
+                };
+                let services = services.clone();
+                let run_id = run_id.clone();
+                let connection_cancellation = task_cancellation.child_token();
+                connections.spawn(async move {
+                    let _peer = peer;
+                    let _ = handle_connection(
+                        listener,
+                        &run_id,
+                        policy_revision,
+                        services.as_ref(),
+                        connection_cancellation,
+                    )
+                    .await;
+                });
+                listener = next;
+            }
+            task_cancellation.cancel();
+            while connections.join_next().await.is_some() {}
+        });
+        Ok(Self {
+            endpoint,
+            cancellation,
+            task,
+            directory: None,
+        })
+    }
+
+    /// Fails closed on unsupported platforms.
+    #[cfg(not(any(unix, windows)))]
     pub fn start(
         _base: &Path,
         _run_id: RunId,

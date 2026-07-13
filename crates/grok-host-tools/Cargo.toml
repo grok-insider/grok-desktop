@@ -13,6 +13,7 @@ grok-application = { path = "../grok-application", version = "0.1.0" }
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
+process-wrap = { version = "9.1.0", features = ["tokio1"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }

@@ -380,7 +380,7 @@ test("independently verifies official Grok catalog trust and strict metadata", a
 test("validates the complete signed release inventory and native digest bindings", async (t) => {
   const fixture = await createReleaseStage(t);
   const validated = await validateReleaseInputs(fixture.root, fixture.expected);
-  assert.equal(validated.files.size, 8);
+  assert.equal(validated.files.size, 9);
   assert.equal(validated.acpCatalog.sequence, 7);
   assert.equal(validated.acpComponent.version, "0.2.95");
   assert.equal(validated.acpComponent.stagePath, "bin/components/grok-acp/bin/grok.exe");
@@ -508,6 +508,7 @@ async function createReleaseStage(t) {
   const acpExecutable = portableExecutable(0x8664);
   const files = new Map([
     ["bin/grok-daemon.exe", trustedDaemonExecutable(0x8664)],
+    ["bin/grok-host-tools-mcp.exe", portableExecutable(0x8664)],
     ["bin/components/grok-acp/bin/grok.exe", acpExecutable],
     ["bin/components/grok-acp/catalog.json", signedAcpCatalog({
       sha256: hash(acpExecutable), size: acpExecutable.length,

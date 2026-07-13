@@ -19,8 +19,10 @@ mod windows;
 
 #[cfg(windows)]
 pub use windows::{
-    apply_private_acl, apply_private_directory_acl, create_private_directory, file_has_single_link,
-    open_private_file, open_private_lock_file, verify_private_acl, verify_private_directory,
+    VerifiedNamedPipeClient, apply_private_acl, apply_private_directory_acl,
+    create_private_directory, create_private_named_pipe_server, file_has_single_link,
+    open_private_file, open_private_lock_file, verify_named_pipe_client_executable,
+    verify_private_acl, verify_private_directory,
 };
 
 #[cfg(any(windows, test))]

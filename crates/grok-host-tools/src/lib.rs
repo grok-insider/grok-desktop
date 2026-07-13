@@ -18,6 +18,7 @@ use grok_application::{
     HostFilesystemWriter, HostProcessError, HostProcessErrorKind, HostProcessExecutor,
     HostProcessOutput, HostProcessRequest,
 };
+use process_wrap::tokio::{ChildWrapper, CommandWrap};
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
@@ -284,32 +285,33 @@ impl HostProcessExecutor for CapabilityHostFilesystem {
         cancellation: CancellationToken,
     ) -> Result<HostProcessOutput, HostProcessError> {
         let request = self.validate(request).await?;
-        let mut command = tokio::process::Command::new(&request.argv[0]);
-        command
-            .args(&request.argv[1..])
-            .current_dir(&request.cwd)
-            .env_clear()
-            .env("PATH", platform_path())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(false);
-        add_safe_locale_environment(&mut command);
-        add_safe_user_environment(&mut command);
+        let mut command = CommandWrap::with_new(&request.argv[0], |command| {
+            command
+                .args(&request.argv[1..])
+                .current_dir(&request.cwd)
+                .env_clear()
+                .env("PATH", platform_path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(false);
+            add_safe_locale_environment(command);
+            add_safe_user_environment(command);
+        });
         #[cfg(unix)]
-        {
-            command.process_group(0);
-        }
+        command.wrap(process_wrap::tokio::ProcessGroup::leader());
+        #[cfg(windows)]
+        command.wrap(process_wrap::tokio::JobObject);
         let mut child = command
             .spawn()
             .map_err(|_| process_unavailable("Host process could not be started"))?;
         let pid = child.id();
         let stdout = child
-            .stdout
+            .stdout()
             .take()
             .ok_or_else(|| process_unavailable("Host process stdout is unavailable"))?;
         let stderr = child
-            .stderr
+            .stderr()
             .take()
             .ok_or_else(|| process_unavailable("Host process stderr is unavailable"))?;
         let retained = Arc::new(tokio::sync::Mutex::new(RetainedOutput::default()));
@@ -325,14 +327,14 @@ impl HostProcessExecutor for CapabilityHostFilesystem {
                 status.map_err(|_| process_unavailable("Host process wait failed"))?
             }
             ProcessTerminal::Cancelled => {
-                kill_process_tree(pid, &mut child);
+                kill_process_tree(pid, child.as_mut());
                 let _ = child.wait().await;
                 let _ = stdout_task.await;
                 let _ = stderr_task.await;
                 return Err(process_interrupted("Host process was cancelled"));
             }
             ProcessTerminal::TimedOut => {
-                kill_process_tree(pid, &mut child);
+                kill_process_tree(pid, child.as_mut());
                 let _ = child.wait().await;
                 let _ = stdout_task.await;
                 let _ = stderr_task.await;
@@ -510,7 +512,7 @@ fn add_safe_user_environment(command: &mut tokio::process::Command) {
 }
 
 #[cfg(unix)]
-fn kill_process_tree(pid: Option<u32>, child: &mut tokio::process::Child) {
+fn kill_process_tree(pid: Option<u32>, child: &mut dyn ChildWrapper) {
     if let Some(pid) = pid
         .and_then(|value| i32::try_from(value).ok())
         .and_then(rustix::process::Pid::from_raw)
@@ -522,7 +524,7 @@ fn kill_process_tree(pid: Option<u32>, child: &mut tokio::process::Child) {
 }
 
 #[cfg(not(unix))]
-fn kill_process_tree(_pid: Option<u32>, child: &mut tokio::process::Child) {
+fn kill_process_tree(_pid: Option<u32>, child: &mut dyn ChildWrapper) {
     let _ = child.start_kill();
 }
 

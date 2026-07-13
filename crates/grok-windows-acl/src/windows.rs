@@ -4,11 +4,11 @@ use std::{
     io,
     mem::{size_of, size_of_val},
     os::windows::{
-        ffi::OsStrExt as _,
+        ffi::{OsStrExt as _, OsStringExt as _},
         fs::MetadataExt as _,
-        io::{AsRawHandle as _, FromRawHandle as _, RawHandle},
+        io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle},
     },
-    path::Path,
+    path::{Path, PathBuf},
     ptr::{addr_of, null, null_mut},
     slice,
 };
@@ -37,12 +37,118 @@ use windows_sys::Win32::{
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL, WRITE_DAC, WRITE_OWNER,
     },
-    System::Threading::{GetCurrentProcess, OpenProcessToken},
+    System::{
+        Pipes::GetNamedPipeClientProcessId,
+        Threading::{
+            GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+            QueryFullProcessImageNameW,
+        },
+    },
 };
+
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
 use crate::{PrivateObjectKind, private_sddl};
 
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+const MAX_PROCESS_PATH_CHARS: usize = 32_768;
+
+/// Retains the kernel process object used to qualify a named-pipe client.
+///
+/// Keeping this value alive while the connection is served prevents PID reuse
+/// from changing the identity associated with the qualified pipe client.
+pub struct VerifiedNamedPipeClient {
+    _process: OwnedHandle,
+}
+
+/// Creates the first, local-only instance of an owner-only named pipe.
+///
+/// # Errors
+///
+/// Returns an operating-system error when the current token cannot produce the
+/// private security descriptor or the pipe cannot be created atomically with it.
+pub fn create_private_named_pipe_server(
+    name: &str,
+    first_instance: bool,
+) -> io::Result<NamedPipeServer> {
+    if !name.starts_with(r"\\.\pipe\grok-desktop-host-tools-") || name.len() > 512 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid private pipe name",
+        ));
+    }
+    let descriptor = LocalDescriptor::private(PrivateObjectKind::File)?;
+    let mut attributes = descriptor.security_attributes();
+    let mut options = ServerOptions::new();
+    options
+        .first_pipe_instance(first_instance)
+        .reject_remote_clients(true);
+    // SAFETY: attributes points into descriptor, which remains live throughout
+    // the synchronous CreateNamedPipeW call performed by Tokio.
+    unsafe { options.create_with_security_attributes_raw(name, (&raw mut attributes).cast()) }
+}
+
+/// Verifies that the connected pipe client is the expected executable.
+///
+/// # Errors
+///
+/// Returns an operating-system error if the kernel-reported client PID cannot
+/// be held open or its executable path does not match the expected absolute path.
+pub fn verify_named_pipe_client_executable(
+    pipe: &NamedPipeServer,
+    expected: &Path,
+) -> io::Result<VerifiedNamedPipeClient> {
+    if !expected.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected path is not absolute",
+        ));
+    }
+    let handle = pipe.as_raw_handle() as HANDLE;
+    let mut pid = 0_u32;
+    // SAFETY: handle is borrowed from a connected live server and pid is writable.
+    if handle.is_null()
+        || unsafe { GetNamedPipeClientProcessId(handle, &raw mut pid) } == 0
+        || pid == 0
+    {
+        return Err(last_error());
+    }
+    // SAFETY: pid is kernel-reported for this pipe and access is query-only.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return Err(last_error());
+    }
+    // SAFETY: OpenProcess returned a new owned handle.
+    let process = unsafe { OwnedHandle::from_raw_handle(process) };
+    let actual = process_executable(process.as_raw_handle() as HANDLE)?;
+    let expected = expected.canonicalize()?;
+    if !expected
+        .as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&actual.as_os_str().to_string_lossy())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "pipe client identity mismatch",
+        ));
+    }
+    Ok(VerifiedNamedPipeClient { _process: process })
+}
+
+fn process_executable(process: HANDLE) -> io::Result<PathBuf> {
+    let mut buffer = vec![0_u16; MAX_PROCESS_PATH_CHARS];
+    let mut length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+    // SAFETY: process has query rights and the UTF-16 buffer is writable.
+    if unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &raw mut length) } == 0
+        || length == 0
+        || usize::try_from(length).map_or(true, |value| value >= buffer.len())
+    {
+        return Err(last_error());
+    }
+    buffer
+        .truncate(usize::try_from(length).map_err(|_| io::Error::other("process path overflow"))?);
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(&buffer)))
+}
 
 /// Creates a directory with its owner-only protected DACL applied atomically.
 ///

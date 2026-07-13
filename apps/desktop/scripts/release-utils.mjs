@@ -55,6 +55,7 @@ const ambientSigningSecretVariables = [
 const ambientSigningSecretVariableSet = new Set(ambientSigningSecretVariables);
 const expectedInputLimits = new Map([
   ["bin/grok-daemon.exe", 128 * 1024 * 1024],
+  ["bin/grok-host-tools-mcp.exe", 128 * 1024 * 1024],
   ["service/grok-vm-service.exe", 64 * 1024 * 1024],
   ["guest/grok-guest.vhdx", 32 * 1024 * 1024 * 1024],
   ["guest/grok-guest.vhdx.sha256", 256],
@@ -318,6 +319,7 @@ export async function validateReleaseInputs(stageRoot, expected) {
     throw new Error("signed guest metadata does not match the release inventory");
   }
   await inspectPortableExecutable(verified.get("bin/grok-daemon.exe"), architecture);
+  await inspectPortableExecutable(verified.get("bin/grok-host-tools-mcp.exe"), architecture);
   await inspectDaemonAcpCatalogTrust(verified.get("bin/grok-daemon.exe"), acpCatalogTrust);
   await inspectPortableExecutable(verified.get("service/grok-vm-service.exe"), architecture);
   await inspectServiceGuestCatalogTrust(verified.get("service/grok-vm-service.exe"), releaseMetadataKeys);
@@ -568,6 +570,7 @@ export async function verifyPackagedNativeLayout(
     "components/grok-acp/bin/grok.exe",
     "components/grok-acp/catalog.json",
     "grok-daemon.exe",
+    "grok-host-tools-mcp.exe",
   ].toSorted();
   const binRoot = await realpath(path.join(resourcesRoot, "bin"));
   const actualBinFiles = await listStageFiles(binRoot);
@@ -578,6 +581,7 @@ export async function verifyPackagedNativeLayout(
   const byteStablePaths = [acpCatalogStagePath, acpComponentStagePath];
   if (!firstPartyBinariesSigned) {
     byteStablePaths.push("bin/grok-daemon.exe");
+    byteStablePaths.push("bin/grok-host-tools-mcp.exe");
   }
   for (const relativePath of byteStablePaths) {
     const expectedRecord = inputs.manifest.files.find((record) => record.path === relativePath);
@@ -591,12 +595,16 @@ export async function verifyPackagedNativeLayout(
     }
   }
   await inspectPortableExecutable(path.join(resourcesRoot, "bin", "grok-daemon.exe"), architecture);
+  await inspectPortableExecutable(
+    path.join(resourcesRoot, "bin", "grok-host-tools-mcp.exe"), architecture,
+  );
   await inspectDaemonAcpCatalogTrust(
     path.join(resourcesRoot, "bin", "grok-daemon.exe"), inputs.acpCatalogTrust,
   );
   await inspectPortableExecutable(path.join(resourcesRoot, ...acpComponentStagePath.split("/")), architecture);
   return {
     daemon: path.join(resourcesRoot, "bin", "grok-daemon.exe"),
+    hostToolsHelper: path.join(resourcesRoot, "bin", "grok-host-tools-mcp.exe"),
     catalog: path.join(resourcesRoot, ...acpCatalogStagePath.split("/")),
     component: path.join(resourcesRoot, ...acpComponentStagePath.split("/")),
   };
