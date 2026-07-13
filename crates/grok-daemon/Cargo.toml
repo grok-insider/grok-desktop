@@ -18,6 +18,7 @@ grok-artifact-storage = { path = "../grok-artifact-storage", version = "0.1.0" }
 grok-application = { path = "../grok-application", version = "0.1.0" }
 grok-credential-enrollment = { path = "../grok-credential-enrollment", version = "0.1.0" }
 grok-domain = { path = "../grok-domain", version = "0.1.0" }
+grok-host-tools = { path = "../grok-host-tools", version = "0.1.0" }
 grok-memory = { path = "../grok-memory", version = "0.1.0" }
 grok-protocol = { path = "../grok-protocol", version = "0.1.0" }
 grok-sqlcipher = { path = "../grok-sqlcipher", version = "0.1.0" }

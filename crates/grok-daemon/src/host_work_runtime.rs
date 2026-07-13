@@ -12,7 +12,7 @@ use grok_domain::HostExecutionPolicy;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
-const MAX_HELPER_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_HELPER_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Exact packaged helper identity revalidated before a Host Work role switch.
 #[derive(Debug, Clone)]
@@ -49,6 +49,27 @@ impl VerifiedHostToolsHelper {
         let current = Self::verify(self.path.clone())?;
         if current.sha256 != self.sha256 {
             return Err(unavailable("Host Tools helper identity changed"));
+        }
+        Ok(())
+    }
+
+    /// Verifies that a Linux peer PID is the retained packaged helper.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized identity error if the process executable cannot be
+    /// resolved or no longer matches the retained helper digest and path.
+    #[cfg(target_os = "linux")]
+    pub fn verify_linux_peer(&self, pid: u32) -> Result<(), AgentRuntimeError> {
+        self.reverify()?;
+        let peer = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .map_err(|_| unavailable("Host Tools helper peer is unavailable"))?;
+        let expected = self
+            .path
+            .canonicalize()
+            .map_err(|_| unavailable("Host Tools helper is unavailable"))?;
+        if peer != expected {
+            return Err(unavailable("Host Tools helper peer identity mismatch"));
         }
         Ok(())
     }

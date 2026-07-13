@@ -1,6 +1,7 @@
 //! Trusted daemon composition and bounded Protobuf IPC dispatch.
 
 mod handler;
+mod host_tool_bridge;
 mod host_work_runtime;
 mod managed_integration;
 mod transport;
@@ -8,6 +9,7 @@ mod transport;
 pub use handler::{
     AgentRuntimeUnavailableReason, AutomationSchedulerLifecycle, Daemon, HandlerError,
 };
+pub use host_tool_bridge::HostToolBridge;
 pub use host_work_runtime::{
     GrokAcpRoleFactory, HostWorkRoleFactory, HostWorkRuntime, VerifiedHostToolsHelper,
 };
