@@ -122,22 +122,10 @@ export function readReleaseEnvironment(environment) {
   const acpCatalogTrust = parseAcpCatalogTrustedKeys(
     boundedEnvironment(environment, "GROK_ACP_CATALOG_TRUSTED_KEYS", 4096),
   );
-  const acpProvenanceEvidenceID = boundedEnvironment(
-    environment, "GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID", 128,
-  );
-  const acpRedistributionEvidenceID = boundedEnvironment(
-    environment, "GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID", 128,
-  );
-  if (!evidenceIDPattern.test(acpProvenanceEvidenceID) ||
-      !evidenceIDPattern.test(acpRedistributionEvidenceID)) {
-    throw new Error("official Grok component evidence identifiers are invalid");
-  }
   return {
     ...base,
     releaseMetadataKeys,
     acpCatalogTrust,
-    acpProvenanceEvidenceID,
-    acpRedistributionEvidenceID,
   };
 }
 
@@ -158,10 +146,20 @@ export function readCoreWindowsReleaseEnvironment(environment) {
   const updateTrustedKeysJSON = boundedEnvironment(
     environment, "GROK_UPDATE_TRUSTED_KEYS_JSON", 65_536,
   );
+  const acpProvenanceEvidenceID = boundedEnvironment(
+    environment, "GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID", 128,
+  );
+  const acpRedistributionEvidenceID = boundedEnvironment(
+    environment, "GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID", 128,
+  );
   parseReleaseMetadataKeys(updateTrustedKeysJSON);
   if (!packageIdentityPattern.test(packageIdentity)) throw new Error("GROK_MSIX_IDENTITY is invalid");
   if (!publisher.startsWith("CN=") || hasInvalidXmlCharacters(publisher)) throw new Error("GROK_MSIX_PUBLISHER is invalid");
   if (hasInvalidXmlCharacters(publisherDisplayName)) throw new Error("GROK_MSIX_PUBLISHER_DISPLAY_NAME is invalid");
+  if (!evidenceIDPattern.test(acpProvenanceEvidenceID) ||
+      !evidenceIDPattern.test(acpRedistributionEvidenceID)) {
+    throw new Error("official Grok component evidence identifiers are invalid");
+  }
   const maxVersion = parseWindowsVersion(maxTestedVersion);
   if (compareVersions(maxVersion, [10, 0, 22_000, 0]) < 0) throw new Error("the tested Windows version predates Windows 11");
   if (!path.win32.isAbsolute(signToolPath)) throw new Error("GROK_WINDOWS_SIGNTOOL_PATH must be an absolute Windows path");
@@ -181,6 +179,8 @@ export function readCoreWindowsReleaseEnvironment(environment) {
     signerThumbprint,
     signingArguments,
     updateTrustedKeysJSON,
+    acpProvenanceEvidenceID,
+    acpRedistributionEvidenceID,
   };
 }
 

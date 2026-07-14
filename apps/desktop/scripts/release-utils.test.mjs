@@ -18,6 +18,7 @@ import {
   parseReleaseArguments,
   parseReleaseMetadataKeys,
   readReleaseEnvironment,
+  readCoreWindowsReleaseEnvironment,
   releaseInputSigningBytes,
   renderStableAppInstaller,
   renderPreviewAppInstaller,
@@ -310,6 +311,27 @@ test("accepts only public trust and hardware or certificate-store signing policy
   }, { GROK_SIGNATURE_FILE: "C:\\release\\Grok.msix" }), {
     SystemRoot: "C:\\Windows", GROK_SIGNATURE_FILE: "C:\\release\\Grok.msix",
   });
+});
+
+test("requires official component evidence for the minimal Windows core release", () => {
+  const environment = releaseEnvironment();
+  const parsed = readCoreWindowsReleaseEnvironment(environment);
+  assert.equal(parsed.acpProvenanceEvidenceID, "xai-download-attestation-42");
+  assert.equal(parsed.acpRedistributionEvidenceID, "xai-redistribution-approval-7");
+  assert.throws(
+    () => readCoreWindowsReleaseEnvironment({
+      ...environment,
+      GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: "invalid/evidence",
+    }),
+    /evidence identifiers/,
+  );
+  assert.throws(
+    () => readCoreWindowsReleaseEnvironment({
+      ...environment,
+      GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: "",
+    }),
+    /required and bounded/,
+  );
 });
 
 test("validates signer identity and renders the packaged application manifest", async () => {

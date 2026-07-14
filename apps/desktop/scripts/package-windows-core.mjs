@@ -142,6 +142,8 @@ async function main() {
         size: inputs.manifest.size,
         trustBinding: inputs.manifest.binding,
         authenticodePolicy: "preserve-vendor-signature-do-not-resign",
+        provenanceEvidenceId: environment.acpProvenanceEvidenceID,
+        redistributionEvidenceId: environment.acpRedistributionEvidenceID,
       },
       signer,
       artifact: {
