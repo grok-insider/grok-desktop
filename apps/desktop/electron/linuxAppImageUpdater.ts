@@ -62,6 +62,10 @@ export class LinuxAppImageUpdateRunner {
       throw error;
     }
   }
+
+  install(): void {
+    // The coordinator relaunches after this runner atomically replaces the AppImage.
+  }
 }
 
 async function downloadSignedArtifact(

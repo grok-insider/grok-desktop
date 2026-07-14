@@ -98,6 +98,8 @@ export function normalizeMsixVersion(version, channel = "stable") {
   const parts = match.slice(1, 4).map(Number);
   if (parts.some((part) => part > 65_535)) throw new Error("application version exceeds the MSIX component limit");
   const prerelease = match[4];
+  const patchPreview = channel === "beta" && parts[0] === 0 && parts[1] === 0 && !prerelease;
+  if (patchPreview) return `${parts[0]}.${parts[1]}.${parts[2]}.1`;
   if (channel === "stable") {
     if (prerelease) throw new Error("stable releases cannot use a prerelease version");
     return `${parts[0]}.${parts[1]}.${parts[2]}.65535`;
@@ -356,6 +358,17 @@ export function renderStableAppInstaller({ architecture, packageIdentity, publis
   const assetName = `GrokDesktop-stable-${architecture}.msix`;
   const base = "https://github.com/grok-insider/grok-desktop/releases/latest/download";
   return `<?xml version="1.0" encoding="utf-8"?>\n<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="${escapeXml(version)}" Uri="${base}/GrokDesktop-stable-${architecture}.appinstaller">\n  <MainPackage Name="${escapeXml(packageIdentity)}" Publisher="${escapeXml(publisher)}" Version="${escapeXml(version)}" ProcessorArchitecture="${architecture}" Uri="${base}/${assetName}" />\n  <UpdateSettings>\n    <OnLaunch HoursBetweenUpdateChecks="6" ShowPrompt="true" UpdateBlocksActivation="false" />\n    <AutomaticBackgroundTask />\n  </UpdateSettings>\n</AppInstaller>\n`;
+}
+
+export function renderPreviewAppInstaller({ architecture, packageIdentity, publisher, version, releaseTag }) {
+  if (!RELEASE_ARCHITECTURES.has(architecture)) throw new Error("unsupported App Installer architecture");
+  if (!packageIdentityPattern.test(packageIdentity) || !publisher.startsWith("CN=")
+      || hasInvalidXmlCharacters(publisher)) throw new Error("App Installer package identity is invalid");
+  if (!windowsVersionPattern.test(version) || !/^v0\.0\.(0|[1-9]\d*)$/.test(releaseTag)) {
+    throw new Error("preview App Installer version is invalid");
+  }
+  const base = `https://github.com/grok-insider/grok-desktop/releases/download/${releaseTag}`;
+  return `<?xml version="1.0" encoding="utf-8"?>\n<AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="${escapeXml(version)}" Uri="${base}/GrokDesktop-beta-${architecture}.appinstaller">\n  <MainPackage Name="${escapeXml(packageIdentity)}" Publisher="${escapeXml(publisher)}" Version="${escapeXml(version)}" ProcessorArchitecture="${architecture}" Uri="${base}/GrokDesktop-beta-${architecture}.msix" />\n</AppInstaller>\n`;
 }
 
 export async function validateReleaseInputs(stageRoot, expected) {

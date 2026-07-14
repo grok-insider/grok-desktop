@@ -20,6 +20,7 @@ jobs:
       channel: ${{ steps.release.outputs.channel }}
       windows_environment: ${{ steps.release.outputs.windows_environment }}
       publish_environment: ${{ steps.release.outputs.publish_environment }}
+      linux_environment: ${{ steps.release.outputs.linux_environment }}
     steps:
       - uses: actions/checkout@v7
       - id: release
@@ -28,12 +29,17 @@ jobs:
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
           test "$GITHUB_REF_NAME" = "v$version"
+          major="${version%%.*}"
+          remainder="${version#*.}"
+          minor="${remainder%%.*}"
           channel=stable
+          if [[ "$major" = 0 && "$minor" = 0 ]]; then channel=beta; fi
           if [[ "$version" == *-* ]]; then channel=beta; fi
           {
             echo "channel=$channel"
             echo "windows_environment=${channel}-windows-signing"
             echo "publish_environment=${channel}-release"
+            if [[ "$channel" = beta ]]; then echo "linux_environment=beta-build"; else echo "linux_environment=stable-release"; fi
           } >> "$GITHUB_OUTPUT"
 
   linux:
@@ -42,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
-      name: ${{ needs.resolve.outputs.publish_environment }}
+      name: ${{ needs.resolve.outputs.linux_environment }}
     env:
       UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
       APPIMAGETOOL_SHA256: b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2
@@ -116,7 +122,7 @@ jobs:
         with:
           name: release-linux-x64
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
           path: |
             out/release/linux/x64/GrokDesktop-*-x64.AppImage
             out/release/linux/x64/GrokDesktop-*-x64.AppImage.zsync
@@ -169,7 +175,31 @@ jobs:
           if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
           $version = (Get-Content package.json | ConvertFrom-Json).version
           if ($env:GROK_UPDATE_TRUSTED_KEYS_JSON.Length -gt 65536) { throw "update trust is oversized" }
+          if ("${{ needs.resolve.outputs.channel }}" -eq "beta") {
+            if ($env:GROK_MSIX_IDENTITY -ne "GrokInsider.GrokDesktop.Preview") { throw "preview package identity is invalid" }
+            if ($env:GROK_MSIX_PUBLISHER -ne "CN=Grok Desktop Preview") { throw "preview publisher is invalid" }
+            if ($env:GROK_MSIX_PUBLISHER_DISPLAY_NAME -ne "Grok Desktop Preview") { throw "preview display name is invalid" }
+          }
           "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Provision isolated preview signing certificate
+        if: needs.resolve.outputs.channel == 'beta'
+        shell: pwsh
+        env:
+          PREVIEW_PFX_BASE64: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64 }}
+          PREVIEW_PFX_PASSWORD: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PASSWORD }}
+        run: |
+          if (-not $env:PREVIEW_PFX_BASE64 -or -not $env:PREVIEW_PFX_PASSWORD) { throw "preview signing secrets are unavailable" }
+          $pfx = Join-Path $env:RUNNER_TEMP "grok-preview-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PREVIEW_PFX_BASE64))
+          & icacls.exe $pfx /inheritance:r /grant:r "${env:USERNAME}:(R)" | Out-Null
+          $password = ConvertTo-SecureString $env:PREVIEW_PFX_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable:$false
+          if (-not $certificate -or $certificate.Thumbprint -ne $env:GROK_WINDOWS_SIGNER_SHA1) { throw "preview certificate does not match the protected thumbprint" }
+          if ($certificate.Subject -ne $env:GROK_MSIX_PUBLISHER) { throw "preview certificate subject does not match the package publisher" }
+          $cer = Join-Path $env:RUNNER_TEMP "GrokDesktop-Preview.cer"
+          Export-Certificate -Cert $certificate -FilePath $cer -Type CERT | Out-Null
+          "PREVIEW_PFX_PATH=$pfx" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PREVIEW_CERT_PATH=$cer" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: pnpm build
       - name: Build and stage source-pinned native runtime
         shell: pwsh
@@ -195,15 +225,24 @@ jobs:
         run: |
           pnpm --filter @grok-desktop/desktop package:windows-core -- `
             --arch x64 --channel $env:RELEASE_CHANNEL --stage $env:CORE_STAGE
+      - name: Remove preview private signing material
+        if: always() && needs.resolve.outputs.channel == 'beta'
+        shell: pwsh
+        run: |
+          if ($env:GROK_WINDOWS_SIGNER_SHA1) {
+            Remove-Item "Cert:\CurrentUser\My\$env:GROK_WINDOWS_SIGNER_SHA1" -Force -ErrorAction SilentlyContinue
+          }
+          Remove-Item (Join-Path $env:RUNNER_TEMP "grok-preview-signing.pfx") -Force -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v7
         with:
           name: release-windows-x64
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
           path: |
             out/release/windows/*/x64/GrokDesktop-*-x64.msix
             out/release/windows/*/x64/GrokDesktop-*-x64.appinstaller
             out/release/windows/*/x64/*.json
+            ${{ env.PREVIEW_CERT_PATH }}
             apps/desktop/release/components/grok-build/windows-x64.json
 
   publish:
@@ -215,6 +254,8 @@ jobs:
       name: ${{ needs.resolve.outputs.publish_environment }}
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       UPDATE_KEY_ID: ${{ vars.GROK_UPDATE_SIGNING_KEY_ID }}
       UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
@@ -247,26 +288,44 @@ jobs:
           printf '%s\n' "$UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/update-private-key.pem"
           printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
           version="${GITHUB_REF_NAME#v}"
-          awk -v version="$version" '
-            function hver(line, value) {
-              value=line
-              sub(/^##+[ \t]+/, "", value)
-              sub(/^\[/, "", value)
-              sub(/\].*/, "", value)
-              sub(/[ \t].*/, "", value)
-              return value
-            }
-            /^## / { if (found) exit; if (hver($0) == version) { found=1; next } }
-            found { print }
-          ' CHANGELOG.md > release-assets/release-notes.md
+          # shellcheck disable=SC2016
+          RELEASE_VERSION="$version" node <<'NODE' > release-assets/release-notes.md
+          const fs = require("node:fs");
+          const version = process.env.RELEASE_VERSION;
+          const sections = fs.readFileSync("CHANGELOG.md", "utf8").split(/^## /m).slice(1);
+          const section = sections.find((candidate) => {
+            const heading = candidate.split("\n", 1)[0].replace(/^\[/, "").replace(/\].*$/, "").split(/\s/, 1)[0];
+            return heading === version;
+          });
+          if (!section) process.exit(1);
+          process.stdout.write(section.slice(section.indexOf("\n") + 1).trimStart());
+          NODE
           test -s release-assets/release-notes.md
+          major="${version%%.*}"
+          remainder="${version#*.}"
+          minor="${remainder%%.*}"
+          if [[ "$major" = 0 && "$minor" = 0 ]]; then
+            cert_sha="$(sha256sum release-assets/GrokDesktop-Preview.cer | cut -d' ' -f1)"
+            notes="$(mktemp)"
+            {
+              printf '> **Preview release:** this 0.0.z build is prerelease software. Windows uses a self-signed preview certificate and a separate package identity. Install \140GrokDesktop-Preview.cer\140 into the current user Trusted People store only after verifying SHA-256 \140%s\140. A future stable certificate uses a separate identity and may require uninstall/reinstall.\n\n' "$cert_sha"
+              cat release-assets/release-notes.md
+            } > "$notes"
+            mv "$notes" release-assets/release-notes.md
+          fi
       - name: Generate and verify signed update manifests
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           channel=stable
           native_version="${version}.65535"
-          if [[ "$version" == *-* ]]; then
+          major="${version%%.*}"
+          remainder="${version#*.}"
+          minor="${remainder%%.*}"
+          if [[ "$major" = 0 && "$minor" = 0 ]]; then
+            channel=beta
+            native_version="${version}.1"
+          elif [[ "$version" == *-* ]]; then
             channel=beta
             core="${version%%-*}"
             ordinal="${version##*.}"
@@ -291,6 +350,44 @@ jobs:
               --platform "$platform" --architecture "$architecture" --version "$version"
           done
           rm -f "$RUNNER_TEMP/update-private-key.pem"
+      - name: Generate release SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-assets/grok-desktop.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate checksums and release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="${{ needs.resolve.outputs.channel }}"
+          cert_sha=""
+          if [[ -f release-assets/GrokDesktop-Preview.cer ]]; then
+            cert_sha="$(sha256sum release-assets/GrokDesktop-Preview.cer | cut -d' ' -f1)"
+          fi
+          jq -n \
+            --arg schema "grok.release-evidence/v1" \
+            --arg version "${GITHUB_REF_NAME#v}" \
+            --arg channel "$channel" \
+            --arg source "$GITHUB_SHA" \
+            --arg workflow "$GITHUB_RUN_ID" \
+            --arg certificateSha256 "$cert_sha" \
+            --arg promotionEnvironment "${{ needs.resolve.outputs.publish_environment }}" \
+            '{schema:$schema,version:$version,channel:$channel,sourceRevision:$source,workflowRunId:$workflow,promotionEnvironment:$promotionEnvironment,windowsPreviewCertificateSha256:$certificateSha256}' \
+            > release-assets/release-evidence.json
+          checksums="$(mktemp)"
+          (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs -r sha256sum) > "$checksums"
+          mv "$checksums" release-assets/SHA256SUMS
+      - name: Attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-assets/*.AppImage
+            release-assets/*.msix
+            release-assets/*.appinstaller
+            release-assets/*.cer
       - name: Publish immutable tag release
         shell: bash
         env:
@@ -298,7 +395,13 @@ jobs:
         run: |
           test "$(git tag --points-at HEAD)" = "$GITHUB_REF_NAME"
           release_flags=()
-          [[ "$GITHUB_REF_NAME" == *-* ]] && release_flags+=(--prerelease)
+          version="${GITHUB_REF_NAME#v}"
+          major="${version%%.*}"
+          remainder="${version#*.}"
+          minor="${remainder%%.*}"
+          if [[ "$major" = 0 && "$minor" = 0 ]] || [[ "$version" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo grok-insider/grok-desktop --title "Grok Desktop $GITHUB_REF_NAME" \
             --notes-file release-assets/release-notes.md --verify-tag "${release_flags[@]}"

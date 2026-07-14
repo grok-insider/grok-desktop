@@ -1,8 +1,11 @@
 import { fileURLToPath, URL } from "node:url";
+import { readFileSync } from "node:fs";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { rendererContentSecurityPolicy } from "./electron/rendererSecurityPolicy.js";
+
+const desktopVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version as string;
 
 export function contentSecurityPolicy(development: boolean): string {
   return rendererContentSecurityPolicy(development, "header");
@@ -24,6 +27,7 @@ export default defineConfig(({ command }) => ({
     },
   }],
   base: "./",
+  define: { "import.meta.env.VITE_APP_VERSION": JSON.stringify(desktopVersion) },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

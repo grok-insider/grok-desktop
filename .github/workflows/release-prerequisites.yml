@@ -1,0 +1,83 @@
+name: Release prerequisites
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  automation:
+    name: Release automation token
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify owner release token
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: test -n "$RELEASE_PLZ_TOKEN"
+
+  beta-build:
+    name: Preview public build inputs
+    runs-on: ubuntu-latest
+    environment: beta-build
+    steps:
+      - name: Verify public update trust
+        env:
+          UPDATE_TRUST: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+        run: |
+          test -n "$UPDATE_TRUST"
+          test "${#UPDATE_TRUST}" -le 65536
+
+  beta-windows:
+    name: Preview Windows signing inputs
+    runs-on: ubuntu-latest
+    environment: beta-windows-signing
+    steps:
+      - name: Verify protected Windows inputs without exposing them
+        env:
+          IDENTITY: ${{ vars.GROK_MSIX_IDENTITY }}
+          PUBLISHER: ${{ vars.GROK_MSIX_PUBLISHER }}
+          DISPLAY_NAME: ${{ vars.GROK_MSIX_PUBLISHER_DISPLAY_NAME }}
+          SIGNER: ${{ vars.GROK_WINDOWS_SIGNER_SHA1 }}
+          UPDATE_TRUST: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+          PROVENANCE: ${{ vars.GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID }}
+          REDISTRIBUTION: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
+          PFX: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PASSWORD }}
+        run: |
+          test "$IDENTITY" = "GrokInsider.GrokDesktop.Preview"
+          test "$PUBLISHER" = "CN=Grok Desktop Preview"
+          test "$DISPLAY_NAME" = "Grok Desktop Preview"
+          [[ "$SIGNER" =~ ^[A-Fa-f0-9]{40}$ ]]
+          test -n "$UPDATE_TRUST"
+          test -n "$PROVENANCE"
+          test -n "$REDISTRIBUTION"
+          test -n "$PFX"
+          test -n "$PFX_PASSWORD"
+
+  beta-publish:
+    name: Preview publication inputs
+    runs-on: ubuntu-latest
+    environment: beta-release
+    steps:
+      - name: Verify update signing inputs
+        env:
+          KEY_ID: ${{ vars.GROK_UPDATE_SIGNING_KEY_ID }}
+          UPDATE_TRUST: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
+          PRIVATE_KEY: ${{ secrets.GROK_UPDATE_SIGNING_PRIVATE_KEY_PEM }}
+        run: |
+          test "$KEY_ID" = "preview-update-2026"
+          test -n "$UPDATE_TRUST"
+          test -n "$PRIVATE_KEY"
+
+  windows-runner:
+    name: Disposable Windows runner availability
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an online x64 Windows runner
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" --paginate --jq '[.runners[] | select(.status == "online" and (.labels | map(.name) | contains(["self-hosted", "windows", "x64"])))] | length' | awk '{sum += $1} END {print sum + 0}')"
+          test "$count" -ge 1

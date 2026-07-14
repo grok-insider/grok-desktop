@@ -83,6 +83,8 @@ Start here if you are new to the repository. Canonical agent checklist:
 | [plan/04-agent-handoff.md](plan/04-agent-handoff.md) | Multi-agent ownership and handoff contract |
 | [plan/05-commit-plan.md](plan/05-commit-plan.md) | Forward-only Conventional Commit sequence |
 | [plan/06-open-risks-and-external-gates.md](plan/06-open-risks-and-external-gates.md) | Open security and release gates |
+| [plan/07-host-tools-opt-in-dual-mode.md](plan/07-host-tools-opt-in-dual-mode.md) | Host Tools opt-in and deferred isolation plan |
+| [plan/08-v0.0.1-release-readiness.md](plan/08-v0.0.1-release-readiness.md) | First preview release contract and external prerequisites |
 
 ### Platform and research
 

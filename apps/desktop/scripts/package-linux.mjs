@@ -126,10 +126,14 @@ export function parseLinuxPackageArguments(argv) {
   };
 }
 
-export function linuxAppImageUpdateInformation(architecture, channel = "stable") {
+export function linuxAppImageUpdateInformation(architecture, channel = "stable", version = "") {
   if (!LINUX_PACKAGE_ARCHITECTURES.has(architecture)) throw new Error("unsupported AppImage architecture");
   if (channel !== "stable" && channel !== "beta") throw new Error("unsupported AppImage channel");
-  return `gh-releases-zsync|grok-insider|grok-desktop|latest|GrokDesktop-${channel}-${architecture}.AppImage.zsync`;
+  if (channel === "beta" && !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error("beta AppImage update information requires an exact release version");
+  }
+  const release = channel === "stable" ? "latest" : `v${version}`;
+  return `gh-releases-zsync|grok-insider|grok-desktop|${release}|GrokDesktop-${channel}-${architecture}.AppImage.zsync`;
 }
 
 async function createLinuxAppImage(appDirectory, out, options, version) {
@@ -172,7 +176,7 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   await symlink("usr/share/icons/hicolor/32x32/apps/grok-desktop.png", path.join(appDir, "grok-desktop.png"));
   const appImage = path.join(out, `GrokDesktop-${options.channel}-${options.architecture}.AppImage`);
   await new Promise((resolve, reject) => {
-    const child = spawn(options.appimagetool, ["--updateinformation", linuxAppImageUpdateInformation(options.architecture, options.channel), appDir, appImage], {
+    const child = spawn(options.appimagetool, ["--updateinformation", linuxAppImageUpdateInformation(options.architecture, options.channel, version), appDir, appImage], {
       cwd: out,
       env: {
         PATH: process.env.PATH ?? "",

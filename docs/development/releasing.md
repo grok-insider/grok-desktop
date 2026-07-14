@@ -7,15 +7,19 @@ land in `dev` first. Only `dev`, `release-please--*`, and
 ## Automated patch releases
 
 After a pull request merges into `master`, Release Please opens or updates one
-standing release pull request. The first proposal is `v0.1.0`; later automatic
-proposals increment only the patch component. The workflow synchronizes the
+standing release pull request. The first proposal is `v0.0.1`; later automatic
+proposals increment only the patch component. Every `0.0.z` release is an
+explicit GitHub prerelease on the beta channel even though its SemVer has no
+suffix. The workflow synchronizes the
 Node, Electron, Cargo workspace, internal Rust dependency, Cargo lock, and Nix
 versions before adding bounded user-facing highlights to `CHANGELOG.md`.
 
 The release pull request uses `RELEASE_PLZ_TOKEN`, a fine-grained token with
 repository Contents and Pull requests read/write permission. This token is
 required so commits created by the release workflow run the normal protected
-CI checks. `OPENROUTER_API_KEY` is optional: without it, the deterministic
+CI checks. It is not a Release Please vendor token: it is an owner-managed
+GitHub token stored under that repository secret name. `OPENROUTER_API_KEY` is
+optional: without it, the deterministic
 Release Please notes remain unchanged.
 
 Do not merge a release pull request until the exact artifact has passed
@@ -29,6 +33,7 @@ Repository administrators use **Manual Version Bump** for a deliberate minor
 or major release. The workflow fails before the initial release, rejects
 non-administrators, opens an approved `release-please-manual-*` pull request,
 and creates the tag only after that protected pull request merges.
+Release Please never changes the major or minor component automatically.
 
 ## Protected environments
 
@@ -37,6 +42,18 @@ material:
 
 - `stable-windows-signing` and `stable-release`
 - `beta-windows-signing` and `beta-release`
+- `beta-build` for unprivileged Linux preview assembly before promotion
+
+The beta Windows package uses the separate identity
+`GrokInsider.GrokDesktop.Preview`, publisher `CN=Grok Desktop Preview`, and
+display name `Grok Desktop Preview`. Its protected environment additionally
+owns `GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64` and
+`GROK_WINDOWS_PREVIEW_CERT_PASSWORD`. Those secrets exist only during the
+certificate-import step on an ephemeral worker; packaging receives only the
+certificate-store thumbprint. The public `.cer` and its SHA-256 digest are
+release assets. Preview users explicitly install it into the current-user
+Trusted People store. A future publicly trusted stable identity is separate
+and may require uninstall/reinstall.
 
 The Windows environment owns the documented `GROK_MSIX_*`,
 `GROK_WINDOWS_*`, `GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON`,
@@ -50,6 +67,13 @@ The Windows job also requires a qualified, ephemeral runner with labels
 `self-hosted`, `windows`, and `x64`. The absence of any runner, environment
 approval, signing input, update trust, or redistribution evidence must stop the
 release before publication.
+
+The `beta-release` environment is the promotion hold. Linux and Windows build
+artifacts remain workflow artifacts for seven days while the exact bytes are
+qualified. Approving publication signs update metadata, creates SPDX SBOM,
+checksums, GitHub artifact attestations, release evidence, and the prerelease.
+Do not approve `v0.0.1` until Wisp/CDP Linux QA and clean-VM Windows QA refer to
+the exact workflow run and artifact hashes.
 
 ## Operator checks
 
