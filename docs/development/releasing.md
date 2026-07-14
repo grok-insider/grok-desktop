@@ -22,10 +22,14 @@ GitHub token stored under that repository secret name. `OPENROUTER_API_KEY` is
 optional: without it, the deterministic
 Release Please notes remain unchanged.
 
-Do not merge a release pull request until the exact artifact has passed
-[release qualification](../quality/release-qualification.md). Merging creates
-the immutable tag; the tag workflow, not Release Please, creates the GitHub
-Release after every artifact and manifest is signed and verified.
+Do not merge a release pull request until the protected release prerequisites
+pass. Release Please intentionally skips GitHub release creation. After the
+approved release PR merges, **Finalize approved release** revalidates the
+manifest, synchronized versions, changelog, branch, and title before pushing
+the immutable tag with the owner token. That authenticated tag event starts the
+artifact workflow; the tag workflow creates the GitHub Release only after every
+artifact and manifest is signed and verified. Exact artifact qualification then
+occurs at the protected `beta-release` promotion hold before publication.
 
 ## Manual milestones
 
