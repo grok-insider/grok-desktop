@@ -1,4 +1,4 @@
-name: Finalize manual release
+name: Finalize approved release
 
 on:
   pull_request:
@@ -10,11 +10,12 @@ permissions:
 
 jobs:
   tag:
-    name: Tag approved manual release
+    name: Tag approved release
     if: >
       github.repository_owner == 'grok-insider'
       && github.event.pull_request.merged == true
-      && startsWith(github.event.pull_request.head.ref, 'release-please-manual-')
+      && (startsWith(github.event.pull_request.head.ref, 'release-please--')
+          || startsWith(github.event.pull_request.head.ref, 'release-please-manual-'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,12 +32,27 @@ jobs:
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Verify and create the immutable tag
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
           node scripts/sync-release-version.mjs "$version" --check
           test "$(jq -r '.["."]' .release-please-manifest.json)" = "$version"
           grep -Eq "^## \\[$version\\]|^## $version([[:space:]]|$)" CHANGELOG.md
+          case "$HEAD_REF" in
+            release-please--*)
+              test "$PR_TITLE" = "chore(master): release grok-desktop ${version}"
+              ;;
+            release-please-manual-*)
+              test "$PR_TITLE" = "chore(release): v${version}"
+              ;;
+            *)
+              echo "::error::Unapproved release head."
+              exit 1
+              ;;
+          esac
           if git rev-parse "v${version}" >/dev/null 2>&1; then
             echo "::error::Tag v${version} already exists."
             exit 1

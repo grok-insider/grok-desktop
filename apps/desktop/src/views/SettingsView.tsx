@@ -688,6 +688,8 @@ function GeneralSettings() {
     }
   };
 
+  const previewChannelLocked = update?.channel === "beta" && /^0\.0\.[0-9]+$/.test(update.currentVersion);
+
   return (
     <>
       <SettingsHeading section="general" title="General" description="Daemon-owned desktop close behavior." />
@@ -719,11 +721,13 @@ function GeneralSettings() {
       <SettingsGroup>
         <SettingRow
           title="Update channel"
-          description="Stable receives production releases. Beta receives signed previews and may change more frequently."
+          description={previewChannelLocked
+            ? "The 0.0.z preview line is locked to signed beta updates. Stable becomes selectable after the first stable milestone."
+            : "Stable receives production releases. Beta receives signed previews and may change more frequently."}
         >
           <Select
-            value={preferences?.updateChannel ?? "stable"}
-            disabled={!preferences || savingPreference || update?.phase === "downloaded"}
+            value={previewChannelLocked ? "beta" : (preferences?.updateChannel ?? "stable")}
+            disabled={!preferences || previewChannelLocked || savingPreference || update?.phase === "downloaded"}
             onValueChange={(value) => void updateChannel(value as "stable" | "beta")}
           >
             <SelectTrigger className="h-9 w-32" aria-label="Update channel">

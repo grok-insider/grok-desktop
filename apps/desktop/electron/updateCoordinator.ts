@@ -18,15 +18,9 @@ export interface DesktopUpdateState {
   reasonCode: "" | "development_install" | "platform_unsupported" | "check_failed";
 }
 
-export interface NativeAutoUpdater {
-  on(event: "checking-for-update" | "update-available" | "update-not-available" | "update-downloaded" | "error", listener: (...arguments_: unknown[]) => void): this;
-  setFeedURL(options: { url: string; allowAnyVersion: false }): void;
-  checkForUpdates(): void;
-  quitAndInstall(): void;
-}
-
-export interface LinuxAppImageUpdater {
+export interface PlatformUpdater {
   download(expected?: AuthorizedUpdate["artifact"]): Promise<boolean>;
+  install(): void | Promise<void>;
 }
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
@@ -36,44 +30,40 @@ export class UpdateCoordinator {
   private state: DesktopUpdateState;
   private checkTimer: ReturnType<typeof setInterval> | undefined;
   private initialCheckTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly linuxUpdater: LinuxAppImageUpdater | undefined;
-  private readonly restart: (() => void) | undefined;
+  private readonly platformUpdater: PlatformUpdater | undefined;
   private readonly authorizer: UpdateAuthorizer | undefined;
-  private authorizedVersion = "";
   private channelGeneration = 0;
+  private readonly previewChannelLocked: boolean;
 
   constructor(
-    private readonly updater: NativeAutoUpdater | undefined,
     options: {
       packaged: boolean;
       platform: NodeJS.Platform;
       architecture: string;
       version: string;
-      linuxUpdater?: LinuxAppImageUpdater;
-      restart?: () => void;
+      platformUpdater?: PlatformUpdater;
       authorizer?: UpdateAuthorizer;
       channel?: "stable" | "beta";
     },
   ) {
-    this.linuxUpdater = options.linuxUpdater;
-    this.restart = options.restart;
+    this.platformUpdater = options.platformUpdater;
     this.authorizer = options.authorizer;
+    this.previewChannelLocked = /^0\.0\.[0-9]+$/.test(options.version);
     const supported = options.packaged && (
-      (options.platform === "win32" && (options.architecture === "x64" || options.architecture === "arm64")
-        && updater && options.authorizer)
-      || (options.platform === "linux" && options.linuxUpdater && options.restart && options.authorizer)
+      (options.platform === "win32" || options.platform === "linux")
+      && (options.architecture === "x64" || options.architecture === "arm64")
+      && options.platformUpdater && options.authorizer
     );
     this.state = {
       phase: supported ? "idle" : "unsupported",
       currentVersion: options.version,
       targetVersion: "",
-      channel: options.channel ?? "stable",
+      channel: this.previewChannelLocked ? "beta" : (options.channel ?? "stable"),
       checkedAtUnixMs: 0,
       reasonCode: options.packaged ? "platform_unsupported" : "development_install",
     };
     if (!supported) return;
     this.state.reasonCode = "";
-    if (updater && options.platform === "win32") this.bindEvents(updater);
   }
 
   getState(): DesktopUpdateState {
@@ -81,9 +71,9 @@ export class UpdateCoordinator {
   }
 
   setChannel(channel: "stable" | "beta"): DesktopUpdateState {
+    if (this.previewChannelLocked) channel = "beta";
     if (channel === this.state.channel) return this.getState();
     this.channelGeneration += 1;
-    this.authorizedVersion = "";
     this.state = {
       ...this.state,
       phase: this.state.phase === "unsupported" ? "unsupported" : "idle",
@@ -96,7 +86,7 @@ export class UpdateCoordinator {
   }
 
   start(): void {
-    if ((!this.updater && !this.linuxUpdater) || this.state.phase === "unsupported"
+    if (!this.platformUpdater || this.state.phase === "unsupported"
         || this.checkTimer || this.initialCheckTimer) return;
     this.initialCheckTimer = setTimeout(() => {
       this.initialCheckTimer = undefined;
@@ -115,12 +105,13 @@ export class UpdateCoordinator {
   }
 
   check(): DesktopUpdateState {
-    if ((!this.updater && !this.linuxUpdater) || !this.authorizer || this.state.phase === "unsupported") {
+    if (!this.platformUpdater || !this.authorizer || this.state.phase === "unsupported") {
       return this.getState();
     }
     if (this.state.phase === "checking" || this.state.phase === "available") return this.getState();
     this.state = { ...this.state, phase: "checking", reasonCode: "" };
     const generation = this.channelGeneration;
+    const platformUpdater = this.platformUpdater;
     void this.authorizer.authorize(this.state.channel).then((authorized) => {
       if (generation !== this.channelGeneration) return;
       if (!authorized.available) {
@@ -133,10 +124,8 @@ export class UpdateCoordinator {
         };
         return;
       }
-      this.authorizedVersion = authorized.version;
       this.state = { ...this.state, phase: "available", targetVersion: authorized.version, reasonCode: "" };
-      if (this.linuxUpdater) {
-        void this.linuxUpdater.download(authorized.artifact).then((changed) => {
+      void platformUpdater.download(authorized.artifact).then((changed) => {
           if (generation !== this.channelGeneration) return;
           this.state = {
             ...this.state,
@@ -148,14 +137,6 @@ export class UpdateCoordinator {
         }, () => {
           if (generation === this.channelGeneration) this.fail();
         });
-        return;
-      }
-      try {
-        this.updater?.setFeedURL({ url: authorized.artifact.url, allowAnyVersion: false });
-        this.updater?.checkForUpdates();
-      } catch {
-        this.fail();
-      }
     }, () => {
       if (generation === this.channelGeneration) this.fail();
     });
@@ -164,41 +145,12 @@ export class UpdateCoordinator {
 
   install(): boolean {
     if (this.state.phase !== "downloaded") return false;
-    if (this.linuxUpdater && this.restart) this.restart();
-    else if (this.updater) this.updater.quitAndInstall();
-    else return false;
+    if (!this.platformUpdater) return false;
+    void Promise.resolve(this.platformUpdater.install()).catch(() => this.fail());
     return true;
-  }
-
-  private bindEvents(updater: NativeAutoUpdater): void {
-    updater.on("checking-for-update", () => {
-      this.state = { ...this.state, phase: "checking", reasonCode: "" };
-    });
-    updater.on("update-available", (...arguments_) => {
-      const version = eventVersion(arguments_[0]);
-      if (!version || version !== this.authorizedVersion) return this.fail();
-      this.state = { ...this.state, phase: "available", targetVersion: version, reasonCode: "" };
-    });
-    updater.on("update-not-available", () => {
-      this.state = { ...this.state, phase: "not_available", checkedAtUnixMs: Date.now(), targetVersion: "", reasonCode: "" };
-    });
-    updater.on("update-downloaded", (...arguments_) => {
-      const version = eventVersion(arguments_[1]) || this.state.targetVersion;
-      if (!version || version !== this.authorizedVersion) return this.fail();
-      this.state = { ...this.state, phase: "downloaded", checkedAtUnixMs: Date.now(), targetVersion: version, reasonCode: "" };
-    });
-    updater.on("error", () => this.fail());
   }
 
   private fail(): void {
     this.state = { ...this.state, phase: "failed", checkedAtUnixMs: Date.now(), reasonCode: "check_failed" };
   }
-}
-
-function eventVersion(value: unknown): string {
-  if (!value || typeof value !== "object") return "";
-  const candidate = "version" in value ? value.version : "releaseName" in value ? value.releaseName : "";
-  return typeof candidate === "string" && candidate.length <= 64 && /^[0-9A-Za-z.-]+$/.test(candidate)
-    ? candidate
-    : "";
 }

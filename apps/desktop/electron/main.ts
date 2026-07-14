@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell, Tray, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell, Tray, type WebContents } from "electron";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -36,8 +36,9 @@ import { resolveTrayIconPath } from "./trayIcon.js";
 import { isTrustedTopLevelAppSender } from "./trustedSenderPolicy.js";
 import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy.js";
 import { withStartupDeadline } from "./startupDeadline.js";
-import { UpdateCoordinator } from "./updateCoordinator.js";
+import { UpdateCoordinator, type PlatformUpdater } from "./updateCoordinator.js";
 import { resolveLinuxUpdateRunner } from "./linuxAppImageUpdater.js";
+import { loadWindowsUpdateTrust, WindowsMsixUpdateRunner } from "./windowsMsixUpdater.js";
 import { loadUpdateTrust, SignedUpdateManifestAuthorizer } from "./updateManifestVerifier.js";
 import {
   applyGraphicsPolicy,
@@ -999,6 +1000,7 @@ if (primaryInstance) app.whenReady().then(async () => {
   const distributionRoot = path.join(directory, "../../dist");
   const applicationDocument = developmentServer ?? productionDocument;
   let updateAuthorizer;
+  let platformUpdater: PlatformUpdater | undefined;
   if (app.isPackaged && (process.platform === "linux" || process.platform === "win32")
       && (process.arch === "x64" || process.arch === "arm64")) {
     try {
@@ -1011,25 +1013,41 @@ if (primaryInstance) app.whenReady().then(async () => {
         schemaVersion: 27,
         trustedKeys,
       });
+      if (process.platform === "linux") {
+        const runner = resolveLinuxUpdateRunner({
+          packaged: app.isPackaged,
+          platform: process.platform,
+          resourcesPath: process.resourcesPath,
+          appImagePath: process.env.APPIMAGE,
+        });
+        if (runner) {
+          platformUpdater = {
+            download: (expected: Parameters<typeof runner.download>[0]) => runner.download(expected),
+            install: () => {
+              app.relaunch();
+              app.quit();
+            },
+          };
+        }
+      } else if (process.platform === "win32") {
+        const windowsTrust = await loadWindowsUpdateTrust(path.join(process.resourcesPath, "windows-update-trust.json"));
+        platformUpdater = new WindowsMsixUpdateRunner(
+          path.join(app.getPath("userData"), "updates"),
+          windowsTrust,
+          (filePath) => shell.openPath(filePath),
+        );
+      }
     } catch {
       updateAuthorizer = undefined;
+      platformUpdater = undefined;
     }
   }
-  updateCoordinator = new UpdateCoordinator(autoUpdater, {
+  updateCoordinator = new UpdateCoordinator({
     packaged: app.isPackaged,
     platform: process.platform,
     architecture: process.arch,
     version: app.getVersion(),
-    linuxUpdater: resolveLinuxUpdateRunner({
-      packaged: app.isPackaged,
-      platform: process.platform,
-      resourcesPath: process.resourcesPath,
-      appImagePath: process.env.APPIMAGE,
-    }),
-    restart: () => {
-      app.relaunch();
-      app.quit();
-    },
+    platformUpdater,
     authorizer: updateAuthorizer,
   });
   if (!developmentServer) {

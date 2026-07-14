@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-grok-application = { path = "../grok-application", version = "0.1.0" }
+grok-application = { path = "../grok-application", version = "0.0.1" }
 tokio = { workspace = true, features = ["sync"] }
 
 [target.'cfg(unix)'.dependencies]

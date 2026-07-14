@@ -14,18 +14,18 @@ debug-linux-vm-service = []
 async-trait.workspace = true
 directories.workspace = true
 futures-util.workspace = true
-grok-acp = { path = "../grok-acp", version = "0.1.0" }
-grok-artifact-storage = { path = "../grok-artifact-storage", version = "0.1.0" }
-grok-application = { path = "../grok-application", version = "0.1.0" }
-grok-credential-enrollment = { path = "../grok-credential-enrollment", version = "0.1.0" }
-grok-domain = { path = "../grok-domain", version = "0.1.0" }
-grok-host-tools = { path = "../grok-host-tools", version = "0.1.0" }
-grok-memory = { path = "../grok-memory", version = "0.1.0" }
-grok-protocol = { path = "../grok-protocol", version = "0.1.0" }
-grok-sqlcipher = { path = "../grok-sqlcipher", version = "0.1.0" }
-grok-vault = { path = "../grok-vault", version = "0.1.0" }
-grok-vm-service-client = { path = "../grok-vm-service-client", version = "0.1.0" }
-grok-xai = { path = "../grok-xai", version = "0.1.0" }
+grok-acp = { path = "../grok-acp", version = "0.0.1" }
+grok-artifact-storage = { path = "../grok-artifact-storage", version = "0.0.1" }
+grok-application = { path = "../grok-application", version = "0.0.1" }
+grok-credential-enrollment = { path = "../grok-credential-enrollment", version = "0.0.1" }
+grok-domain = { path = "../grok-domain", version = "0.0.1" }
+grok-host-tools = { path = "../grok-host-tools", version = "0.0.1" }
+grok-memory = { path = "../grok-memory", version = "0.0.1" }
+grok-protocol = { path = "../grok-protocol", version = "0.0.1" }
+grok-sqlcipher = { path = "../grok-sqlcipher", version = "0.0.1" }
+grok-vault = { path = "../grok-vault", version = "0.0.1" }
+grok-vm-service-client = { path = "../grok-vm-service-client", version = "0.0.1" }
+grok-xai = { path = "../grok-xai", version = "0.0.1" }
 base64 = "0.22.1"
 ed25519-dalek = "2.2.0"
 hex = "0.4.3"
@@ -45,7 +45,7 @@ zeroize.workspace = true
 rustix = { workspace = true, features = ["fs", "net"] }
 
 [target.'cfg(windows)'.dependencies]
-grok-windows-acl = { path = "../grok-windows-acl", version = "0.1.0" }
+grok-windows-acl = { path = "../grok-windows-acl", version = "0.0.1" }
 
 [lints]
 workspace = true
