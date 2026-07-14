@@ -29,12 +29,8 @@ jobs:
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
           test "$GITHUB_REF_NAME" = "v$version"
-          major="${version%%.*}"
-          remainder="${version#*.}"
-          minor="${remainder%%.*}"
-          channel=stable
-          if [[ "$major" = 0 && "$minor" = 0 ]]; then channel=beta; fi
-          if [[ "$version" == *-* ]]; then channel=beta; fi
+          policy="$(node scripts/release-policy.mjs "$version")"
+          channel="$(jq -r .channel <<< "$policy")"
           {
             echo "channel=$channel"
             echo "windows_environment=${channel}-windows-signing"
@@ -317,21 +313,9 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          channel=stable
-          native_version="${version}.65535"
-          major="${version%%.*}"
-          remainder="${version#*.}"
-          minor="${remainder%%.*}"
-          if [[ "$major" = 0 && "$minor" = 0 ]]; then
-            channel=beta
-            native_version="${version}.1"
-          elif [[ "$version" == *-* ]]; then
-            channel=beta
-            core="${version%%-*}"
-            ordinal="${version##*.}"
-            [[ "$ordinal" =~ ^[1-9][0-9]*$ ]] && (( ordinal <= 65534 ))
-            native_version="${core}.${ordinal}"
-          fi
+          policy="$(node scripts/release-policy.mjs "$version")"
+          channel="$(jq -r .channel <<< "$policy")"
+          native_version="$(jq -r .nativeVersion <<< "$policy")"
           for target in linux:x64:AppImage win32:x64:msix; do
             IFS=: read -r platform architecture extension <<< "$target"
             native_package_version="$native_version"
@@ -396,10 +380,8 @@ jobs:
           test "$(git tag --points-at HEAD)" = "$GITHUB_REF_NAME"
           release_flags=()
           version="${GITHUB_REF_NAME#v}"
-          major="${version%%.*}"
-          remainder="${version#*.}"
-          minor="${remainder%%.*}"
-          if [[ "$major" = 0 && "$minor" = 0 ]] || [[ "$version" == *-* ]]; then
+          policy="$(node scripts/release-policy.mjs "$version")"
+          if [[ "$(jq -r .prerelease <<< "$policy")" = true ]]; then
             release_flags+=(--prerelease)
           fi
           gh release create "$GITHUB_REF_NAME" release-assets/* \
