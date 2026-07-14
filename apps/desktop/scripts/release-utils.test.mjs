@@ -161,6 +161,7 @@ test("creates isolated native build environments and deterministic public trust 
   };
   const toolchainEnvironment = parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
+    visualCppInstallRoot: "C:\\BuildTools\\VC",
     executablePaths: ["C:\\Rust\\bin", "C:\\BuildTools\\bin"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
@@ -185,6 +186,8 @@ test("creates isolated native build environments and deterministic public trust 
   assert.equal(daemonEnvironment.HOME, layout.homeDirectory);
   assert.equal(daemonEnvironment.PATH, "C:\\Rust\\bin;C:\\BuildTools\\bin");
   assert.equal(daemonEnvironment.RUSTC, "C:\\Rust\\bin\\rustc.exe");
+  assert.equal(daemonEnvironment.VCINSTALLDIR, "C:\\BuildTools\\VC");
+  assert.equal(daemonEnvironment.VSCMD_ARG_TGT_ARCH, "x64");
   assert.equal(
     daemonEnvironment.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER,
     "C:\\BuildTools\\bin\\link.exe",
@@ -217,6 +220,7 @@ test("rejects ambient Cargo configuration and malformed Windows toolchain contra
   ), /strict JSON/);
   assert.throws(() => parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
+    visualCppInstallRoot: "C:\\BuildTools\\VC",
     executablePaths: ["C:\\Rust\\bin", "c:\\rust\\bin"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
@@ -224,6 +228,7 @@ test("rejects ambient Cargo configuration and malformed Windows toolchain contra
   })), /unique/);
   assert.throws(() => parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
+    visualCppInstallRoot: "C:\\BuildTools\\VC",
     executablePaths: ["\\\\worker\\share\\bin"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
