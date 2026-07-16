@@ -2,6 +2,10 @@
 
 ## [0.0.7](https://github.com/grok-insider/grok-desktop/compare/v0.0.6...v0.0.7) (2026-07-16)
 
+### Highlights
+
+- Fixed Electron packager metadata to ensure consistent builds.
+
 
 ### Bug Fixes
 
