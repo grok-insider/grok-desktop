@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.6](https://github.com/grok-insider/grok-desktop/compare/v0.0.5...v0.0.6) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** fail closed on Windows runtime build ([#28](https://github.com/grok-insider/grok-desktop/issues/28)) ([8f8e3ce](https://github.com/grok-insider/grok-desktop/commit/8f8e3cec15dd91a294d5cab3aa1a309942d303f0))
+
 ## [0.0.5](https://github.com/grok-insider/grok-desktop/compare/v0.0.4...v0.0.5) (2026-07-16)
 
 
