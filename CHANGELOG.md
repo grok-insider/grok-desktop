@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.4](https://github.com/grok-insider/grok-desktop/compare/v0.0.3...v0.0.4) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** forward Windows package options ([d35da9b](https://github.com/grok-insider/grok-desktop/commit/d35da9bbf39e1a600e6787544ffb80454ca3dd3b))
+* **release:** forward Windows package options ([b0f4c27](https://github.com/grok-insider/grok-desktop/commit/b0f4c278d4fe4df33379d5c5287ce40ef2e312a6))
+* **release:** provide valid AppStream metadata ([4e6bc13](https://github.com/grok-insider/grok-desktop/commit/4e6bc133f7c85386b5ab976d93b343cf6730a0be))
+* **release:** provide valid AppStream metadata ([fe873cf](https://github.com/grok-insider/grok-desktop/commit/fe873cf0e49f2d49dded7539b7ee673a61648d7f))
+
 ## [0.0.3](https://github.com/grok-insider/grok-desktop/compare/v0.0.2...v0.0.3) (2026-07-16)
 
 
