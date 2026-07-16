@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.5](https://github.com/grok-insider/grok-desktop/compare/v0.0.4...v0.0.5) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** clean Windows core staging ([856adbd](https://github.com/grok-insider/grok-desktop/commit/856adbda142d73913e1c989693e26df7cdb109d3))
+* **release:** clean Windows core staging ([f220bcb](https://github.com/grok-insider/grok-desktop/commit/f220bcb5eba6c6a83e19092c57f4430cfd198fc5))
+
 ## [0.0.4](https://github.com/grok-insider/grok-desktop/compare/v0.0.3...v0.0.4) (2026-07-16)
 
 ### Highlights
