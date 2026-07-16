@@ -110,3 +110,9 @@ manually outside the documented workflows.
 Release tool downloads must use immutable versioned release assets with a
 tracked SHA-256. Do not use rolling or `continuous` asset URLs: a byte change
 after tagging makes the release irreproducible and must fail closed.
+
+Arguments forwarded through a filtered pnpm package command are resolved from
+that package's working directory. Release workflows must pass
+`release/components/...` to desktop package scripts while retaining
+`apps/desktop/release/components/...` for root-level workflow steps; contract
+tests pin both forms to prevent duplicated `apps/desktop/apps/desktop` paths.

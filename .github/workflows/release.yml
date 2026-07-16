@@ -107,7 +107,7 @@ jobs:
       - name: Package updateable AppImage
         run: |
           pnpm package:linux -- --arch x64 --channel "$RELEASE_CHANNEL" \
-            --acp-pinned-manifest apps/desktop/release/components/grok-build/linux-x64.json \
+            --acp-pinned-manifest release/components/grok-build/linux-x64.json \
             --acp-component "$RUNNER_TEMP/grok" \
             --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \
             --appimagetool-sha256 "$APPIMAGETOOL_SHA256" \
@@ -203,13 +203,14 @@ jobs:
       - name: Build and stage source-pinned native runtime
         shell: pwsh
         run: |
-          $manifest = "apps/desktop/release/components/grok-build/windows-x64.json"
+          $sourceManifest = "apps/desktop/release/components/grok-build/windows-x64.json"
+          $packageManifest = "release/components/grok-build/windows-x64.json"
           $stage = Join-Path $env:RUNNER_TEMP "grok-windows-core-stage"
           New-Item -ItemType Directory -Force (Join-Path $stage "bin/components/grok-acp/bin") | Out-Null
           pnpm --filter @grok-desktop/desktop build:windows-daemon -- `
             --arch x64 --out (Join-Path $stage "bin/grok-daemon.exe") `
-            --acp-pinned-manifest $manifest
-          $pin = Get-Content -Raw $manifest | ConvertFrom-Json
+            --acp-pinned-manifest $packageManifest
+          $pin = Get-Content -Raw $sourceManifest | ConvertFrom-Json
           curl.exe --fail --location --proto '=https' --tlsv1.2 `
             --output (Join-Path $stage "bin/components/grok-acp/bin/grok.exe") $pin.sourceUrl
           $component = Get-Item (Join-Path $stage "bin/components/grok-acp/bin/grok.exe")
@@ -217,7 +218,7 @@ jobs:
           if ((Get-FileHash -Algorithm SHA256 $component.FullName).Hash.ToLowerInvariant() -ne $pin.sha256) {
             throw "official Grok component digest mismatch"
           }
-          Copy-Item $manifest (Join-Path $stage "bin/components/grok-acp/pinned-component.json")
+          Copy-Item $sourceManifest (Join-Path $stage "bin/components/grok-acp/pinned-component.json")
           "CORE_STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Assemble and sign core MSIX
         shell: pwsh
