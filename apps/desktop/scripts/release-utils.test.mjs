@@ -595,6 +595,12 @@ test("validates and preserves the minimal source-pinned Windows core layout", as
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, contents);
   }
+  await writeFile(path.join(root, "stale-input.tmp"), "stale");
+  await assert.rejects(
+    validateCoreWindowsInputs(root, { architecture: "x64" }),
+    /must contain exactly 4 files; found 5/,
+  );
+  await rm(path.join(root, "stale-input.tmp"));
   const inputs = await validateCoreWindowsInputs(root, { architecture: "x64" });
   const appDirectory = path.join(root, "packaged");
   await mkdir(path.join(appDirectory, "resources"), { recursive: true });

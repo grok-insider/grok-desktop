@@ -209,6 +209,13 @@ jobs:
           $sourceManifest = "apps/desktop/release/components/grok-build/windows-x64.json"
           $packageManifest = "release/components/grok-build/windows-x64.json"
           $stage = Join-Path $env:RUNNER_TEMP "grok-windows-core-stage"
+          if (Test-Path -LiteralPath $stage) {
+            $stageItem = Get-Item -LiteralPath $stage -Force
+            if (($stageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+              throw "Windows core stage must not be a reparse point"
+            }
+            Remove-Item -LiteralPath $stage -Recurse -Force
+          }
           New-Item -ItemType Directory -Force (Join-Path $stage "bin/components/grok-acp/bin") | Out-Null
           pnpm --filter @grok-desktop/desktop build:windows-daemon -- `
             --arch x64 --out (Join-Path $stage "bin/grok-daemon.exe") `
