@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.7](https://github.com/grok-insider/grok-desktop/compare/v0.0.6...v0.0.7) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** pin Electron packager metadata ([#31](https://github.com/grok-insider/grok-desktop/issues/31)) ([17ab5e8](https://github.com/grok-insider/grok-desktop/commit/17ab5e8f9f908e1d5634bcf2adcef862cb5e6cb6))
+
 ## [0.0.6](https://github.com/grok-insider/grok-desktop/compare/v0.0.5...v0.0.6) (2026-07-16)
 
 ### Highlights
