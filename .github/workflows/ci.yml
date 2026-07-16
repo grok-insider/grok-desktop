@@ -28,7 +28,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm audit --audit-level=high
+      # pnpm 10 targets npm's retired legacy audit endpoints. Keep installs on
+      # the repository-pinned client, but use the first bulk-advisory client
+      # for the read-only vulnerability gate until the workspace migrates.
+      - run: corepack pnpm@11.4.0 --pm-on-fail=ignore audit --audit-level=high
       - name: Verify generated daemon protocol
         run: |
           pnpm --filter @grok-desktop/desktop generate:proto
