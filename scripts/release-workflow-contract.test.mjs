@@ -43,6 +43,11 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.doesNotMatch(workflow, /"\$\{env:USERNAME\}:\(R\)"/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
   assert.match(workflow, /\$packageManifest = "release\/components\/grok-build\/windows-x64\.json"/);
+  assert.match(
+    workflow,
+    /pnpm --filter @grok-desktop\/desktop package:windows-core `\n\s+--arch x64/,
+  );
+  assert.doesNotMatch(workflow, /package:windows-core -- `/);
   assert.doesNotMatch(
     workflow,
     /pnpm package:linux[^]*--acp-pinned-manifest apps\/desktop\/release\/components\/grok-build\/linux-x64\.json/,
