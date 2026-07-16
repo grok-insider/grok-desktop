@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "grok-acp"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "grok-application"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "grok-artifact-storage"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "ashpd",
  "async-trait",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "grok-credential-enrollment"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "grok-application",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "grok-daemon"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "base64",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "grok-domain"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1208,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "grok-host-tools"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "cap-std",
@@ -1223,7 +1223,7 @@ dependencies = [
 
 [[package]]
 name = "grok-host-tools-mcp"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde_json",
  "tokio",
@@ -1231,7 +1231,7 @@ dependencies = [
 
 [[package]]
 name = "grok-memory"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "grok-protocol"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "grok-application",
  "grok-domain",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "grok-sqlcipher"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "fs2",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "grok-vault"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "getrandom 0.4.3",
  "grok-application",
@@ -1291,7 +1291,7 @@ dependencies = [
 
 [[package]]
 name = "grok-vm-service-client"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "grok-windows-acl"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "tempfile",
  "tokio",
@@ -1314,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "grok-xai"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "async-stream",
  "async-trait",
