@@ -9,7 +9,7 @@ description = "Operating-system credential vault adapter for Grok Desktop"
 
 [dependencies]
 getrandom.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.2" }
+grok-application = { path = "../grok-application", version = "0.0.3" }
 keyring.workspace = true
 zeroize.workspace = true
 
