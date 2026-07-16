@@ -126,6 +126,46 @@
             system:
             let
               pkgs = import nixpkgs { inherit system; };
+              staticRustTarget = pkgs.pkgsStatic.stdenv.hostPlatform.rust.rustcTarget;
+              portableLinuxRuntime = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
+                pname = "grok-desktop-portable-linux-runtime";
+                version = "0.0.1";
+                src = self;
+                cargoLock.lockFile = ./Cargo.lock;
+                cargoBuildFlags = [
+                  "--package"
+                  "grok-daemon"
+                  "--package"
+                  "grok-host-tools-mcp"
+                ];
+                nativeBuildInputs = with pkgs; [
+                  cmake
+                  perl
+                  pkg-config
+                ];
+                GROK_ACP_PINNED_MANIFEST_BINDING = "grok-acp-pinned-manifest-v1:${builtins.hashFile "sha256" ./apps/desktop/release/components/grok-build/linux-x64.json}";
+                doCheck = false;
+                installPhase = ''
+                  runHook preInstall
+                  install -Dm0755 target/${staticRustTarget}/release/grok-daemon \
+                    $out/bin/grok-daemon
+                  install -Dm0755 target/${staticRustTarget}/release/grok-host-tools-mcp \
+                    $out/bin/grok-host-tools-mcp
+                  runHook postInstall
+                '';
+                # The Nix linker wrapper may leave an empty RUNPATH on static
+                # PIE outputs. Remove the tag entirely so release verification
+                # can reject every host-library search path without exceptions.
+                postFixup = ''
+                  patchelf --remove-rpath $out/bin/grok-daemon
+                  patchelf --remove-rpath $out/bin/grok-host-tools-mcp
+                '';
+                meta = {
+                  description = "Statically linked musl runtime for the Grok Desktop AppImage";
+                  license = pkgs.lib.licenses.agpl3Plus;
+                  platforms = pkgs.lib.platforms.linux;
+                };
+              };
               guestRunner = pkgs.buildGoModule {
                 pname = "grok-integration-runner";
                 version = "0.0.1";
@@ -174,11 +214,18 @@
                 pkgs.runCommandLocal "grok-runner-module-evaluation" { } "touch $out";
               default = guestRunner;
             }
+            // pkgs.lib.optionalAttrs (system == "x86_64-linux") { inherit portableLinuxRuntime; }
           );
 
-      checks = nixpkgs.lib.mapAttrs (system: packages: {
-        guest-runner = packages.guestRunner;
-        guest-module-evaluation = packages.guestModuleEvaluation;
-      }) self.packages;
+      checks = nixpkgs.lib.mapAttrs (
+        system: packages:
+        {
+          guest-runner = packages.guestRunner;
+          guest-module-evaluation = packages.guestModuleEvaluation;
+        }
+        // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          portable-linux-runtime = packages.portableLinuxRuntime;
+        }
+      ) self.packages;
     };
 }

@@ -11,6 +11,7 @@ import {
   ELECTRON_FUSE_POLICY,
   readVerifiedFuseState,
 } from "./electron-fuse-policy.mjs";
+import { inspectPortableLinuxRuntimeHandle } from "./linux-native-runtime-policy.mjs";
 import { verifyOfficialGrokPinnedManifestBytes } from "./release-utils.mjs";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -109,9 +110,13 @@ async function hashRegularFile(
   maximumSize,
   executable = false,
   includeSha1 = false,
+  portableArchitecture = undefined,
 ) {
   const retained = await openRegularFile(filePath, label, maximumSize, executable);
   try {
+    if (portableArchitecture) {
+      await inspectPortableLinuxRuntimeHandle(retained.handle, portableArchitecture, label);
+    }
     const digest = createHash("sha256");
     const legacyDigest = includeSha1 ? createHash("sha1") : undefined;
     const stream = retained.handle.createReadStream({ autoClose: false, start: 0 });
@@ -400,14 +405,14 @@ export async function verifyLinuxReleaseArtifact(options, operations = defaultOp
 
     const daemon = await hashRegularFile(
       path.join(binRoot, "resources", "bin", "grok-daemon"),
-      "embedded daemon", MAX_NATIVE_SIZE, true,
+      "embedded daemon", MAX_NATIVE_SIZE, true, false, record.architecture,
     );
     if (daemon.sha256 !== record.daemonSha256) {
       throw new Error("embedded daemon differs from Linux package metadata");
     }
     const hostToolsHelper = await hashRegularFile(
       path.join(binRoot, "resources", "bin", "grok-host-tools-mcp"),
-      "embedded Host Tools helper", MAX_NATIVE_SIZE, true,
+      "embedded Host Tools helper", MAX_NATIVE_SIZE, true, false, record.architecture,
     );
     if (hostToolsHelper.sha256 !== record.hostToolsHelperSha256) {
       throw new Error("embedded Host Tools helper differs from Linux package metadata");

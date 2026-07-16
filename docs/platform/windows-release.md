@@ -7,6 +7,13 @@ Unknown Publisher or Microsoft Defender SmartScreen warnings. ARM64 and the
 signed MSIX isolated-work train remain deferred until their native, guest,
 identity, certificate, and service inputs are qualified.
 
+Each candidate starts with a new ephemeral GitHub runner registration and a
+fresh runner workspace owned by the service identity. An administrator removes
+the previous workspace before registration and verifies that the new work root
+inherits access for `Runner.Worker`; stale source or package output must never
+cross runner identities. Qualified toolchains and bounded dependency caches
+live outside the work root and are the only persistent build inputs.
+
 ## Public core package
 
 The public core job constructs its release input tree on the trusted worker:

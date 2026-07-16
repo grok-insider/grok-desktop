@@ -28,6 +28,9 @@ test("hardens and records Linux Electron fuses before AppImage assembly", async 
   const layoutIndex = main.indexOf(
     "const packagedLayout = await verifyLinuxPackagedLayout(appDirectory)",
   );
+  const nativeRuntimeIndex = main.indexOf(
+    "await inspectPortableLinuxRuntimeFile(\n      packagedLayout.daemonPath",
+  );
   const appImageIndex = main.indexOf("const appImage = await createLinuxAppImage");
   const recordIndex = main.indexOf("const record = {");
   const recordWriteIndex = main.indexOf('path.join(options.out, "linux-package.json")');
@@ -40,7 +43,8 @@ test("hardens and records Linux Electron fuses before AppImage assembly", async 
   assert.ok(packagerIndex >= 0 && hardenIndex > packagerIndex);
   assert.ok(readIndex > hardenIndex, "Linux packaging must attest the hardened fuse state");
   assert.ok(layoutIndex > readIndex, "layout verification must use the hardened app directory");
-  assert.ok(appImageIndex > layoutIndex, "fuse hardening must happen before AppImage assembly");
+  assert.ok(nativeRuntimeIndex > layoutIndex, "native runtimes must be inspected after packaging");
+  assert.ok(appImageIndex > nativeRuntimeIndex, "runtime inspection must happen before AppImage assembly");
   assert.ok(recordIndex > appImageIndex, "metadata must describe the assembled AppImage");
   assert.ok(recordWriteIndex > recordIndex, "verified metadata must be persisted after assembly");
   assert.match(main, /const record = \{[\s\S]*?\bfuses,/);

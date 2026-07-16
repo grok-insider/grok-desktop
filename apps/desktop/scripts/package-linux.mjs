@@ -15,6 +15,10 @@ import { spawn } from "node:child_process";
 import { packager } from "@electron/packager";
 import { hardenElectronExecutable, readVerifiedFuseState } from "./electron-fuse-policy.mjs";
 import {
+  inspectPortableLinuxRuntimeFile,
+  inspectPortableLinuxRuntimeHandle,
+} from "./linux-native-runtime-policy.mjs";
+import {
   inspectDaemonAcpCatalogTrustBytes,
   inspectDaemonAcpPinnedManifestBytes,
   parseAcpCatalogTrustedKeys,
@@ -731,17 +735,33 @@ async function main() {
   const resourcesBin = path.join(options.out, "stage-resources", "bin");
   await mkdir(resourcesBin, { recursive: true });
   const stagedDaemon = path.join(resourcesBin, "grok-daemon");
-  await cp(daemonSource, stagedDaemon);
-  await chmod(stagedDaemon, 0o755);
   const stagedHostToolsHelper = path.join(resourcesBin, "grok-host-tools-mcp");
-  await cp(hostToolsHelperSource, stagedHostToolsHelper);
-  await chmod(stagedHostToolsHelper, 0o755);
+  const nativeRuntimeSources = await openRetainedSources([
+    [daemonSource, "daemon", 128 * 1024 * 1024, true],
+    [hostToolsHelperSource, "Host Tools helper", 128 * 1024 * 1024, true],
+  ]);
+  try {
+    await inspectPortableLinuxRuntimeHandle(
+      nativeRuntimeSources[0].handle,
+      options.architecture,
+      "daemon",
+    );
+    await inspectPortableLinuxRuntimeHandle(
+      nativeRuntimeSources[1].handle,
+      options.architecture,
+      "Host Tools helper",
+    );
+    await copyRetainedSource(nativeRuntimeSources[0], stagedDaemon, 0o755);
+    await copyRetainedSource(nativeRuntimeSources[1], stagedHostToolsHelper, 0o755);
+  } finally {
+    await Promise.all(nativeRuntimeSources.map((source) => source.handle.close()));
+  }
   const stagedUpdateTool = await stageAppImageUpdateTool(resourcesBin, options);
   const stagedUpdateTrust = await stageUpdateTrust(path.dirname(resourcesBin), options);
   const stagedAcp = await stageVerifiedLinuxAcp(
-    resourcesBin, options, daemonSource, Math.floor(Date.now() / 1000),
+    resourcesBin, options, stagedDaemon, Math.floor(Date.now() / 1000),
   );
-  const stagedVmService = await stageLinuxVmServiceBundle(options.out, options, daemonSource);
+  const stagedVmService = await stageLinuxVmServiceBundle(options.out, options, stagedDaemon);
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "grok-desktop-linux-pkg-"));
   try {
@@ -794,6 +814,16 @@ async function main() {
     });
 
     const packagedLayout = await verifyLinuxPackagedLayout(appDirectory);
+    await inspectPortableLinuxRuntimeFile(
+      packagedLayout.daemonPath,
+      options.architecture,
+      "packaged daemon",
+    );
+    await inspectPortableLinuxRuntimeFile(
+      packagedLayout.hostToolsHelperPath,
+      options.architecture,
+      "packaged Host Tools helper",
+    );
     const appImage = await createLinuxAppImage(appDirectory, options.out, options, packageMetadata.version);
     const zsync = await inspectGeneratedZsync(appImage);
 
