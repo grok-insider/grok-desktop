@@ -49,7 +49,8 @@ export function parseLinuxPackageArguments(argv) {
     if (!["--arch", "--channel", "--out", "--daemon", "--acp-catalog", "--acp-pinned-manifest", "--acp-component", "--appimagetool", "--appimagetool-sha256",
       "--appimageupdatetool", "--appimageupdatetool-sha256",
       "--update-trust-file", "--host-tools-helper",
-      "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group"].includes(option)) {
+      "--acp-trust-file", "--vm-service", "--daemon-uid", "--service-group",
+      "--release-date"].includes(option)) {
       throw new Error(`unsupported linux package option ${option}`);
     }
     if (values[option]) throw new Error(`linux package option ${option} was repeated`);
@@ -88,6 +89,11 @@ export function parseLinuxPackageArguments(argv) {
   const updateTrustFile = values["--update-trust-file"]
     ? path.resolve(values["--update-trust-file"])
     : undefined;
+  const releaseDate = values["--release-date"];
+  if ((releaseDate !== undefined && !isCanonicalReleaseDate(releaseDate))
+      || (appimagetool && releaseDate === undefined)) {
+    throw new Error("--release-date is required for AppImage packaging and must be YYYY-MM-DD");
+  }
   if (!vmService && values["--daemon-uid"] !== undefined) {
     throw new Error("--daemon-uid is valid only with --vm-service");
   }
@@ -121,9 +127,42 @@ export function parseLinuxPackageArguments(argv) {
     appimageupdatetool,
     appimageupdatetoolSha256,
     updateTrustFile,
+    releaseDate,
     daemonUid: vmService ? Number(values["--daemon-uid"]) : undefined,
     serviceGroup,
   };
+}
+
+function isCanonicalReleaseDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export function renderLinuxAppStreamMetadata({ version, releaseDate }) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error("AppStream metadata requires an exact release version");
+  }
+  if (!isCanonicalReleaseDate(releaseDate)) {
+    throw new Error("AppStream metadata requires a canonical release date");
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.grokinsider.GrokDesktop</id>
+  <name>Grok Desktop</name>
+  <summary>Official Grok and xAI desktop workspace</summary>
+  <description>
+    <p>Use official Grok services for chat and explicitly scoped work from a desktop workspace.</p>
+  </description>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <url type="homepage">https://github.com/grok-insider/grok-desktop</url>
+  <launchable type="desktop-id">grok-desktop.desktop</launchable>
+  <releases>
+    <release version="${version}" date="${releaseDate}" />
+  </releases>
+</component>
+`;
 }
 
 export function linuxAppImageUpdateInformation(architecture, channel = "stable", version = "") {
@@ -163,8 +202,8 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
     { errorOnExist: true },
   );
   await writeFile(
-    path.join(metadataDirectory, "grok-desktop.appdata.xml"),
-    `<?xml version="1.0" encoding="UTF-8"?>\n<component type="desktop-application">\n  <id>io.grokinsider.GrokDesktop</id>\n  <name>Grok Desktop</name>\n  <summary>Official Grok and xAI desktop workspace</summary>\n  <metadata_license>CC0-1.0</metadata_license>\n  <project_license>AGPL-3.0-or-later</project_license>\n  <launchable type="desktop-id">grok-desktop.desktop</launchable>\n  <releases><release version="${version}" /></releases>\n</component>\n`,
+    path.join(metadataDirectory, "io.grokinsider.GrokDesktop.metainfo.xml"),
+    renderLinuxAppStreamMetadata({ version, releaseDate: options.releaseDate }),
     { encoding: "utf8", mode: 0o644, flag: "wx" },
   );
   await writeFile(
