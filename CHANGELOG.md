@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.2](https://github.com/grok-insider/grok-desktop/compare/v0.0.1...v0.0.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** finalize Release Please lifecycle ([87873ef](https://github.com/grok-insider/grok-desktop/commit/87873ef8efe14ae2273ec755a7929620f843c283))
+* **release:** finalize release-please lifecycle ([711f4f4](https://github.com/grok-insider/grok-desktop/commit/711f4f4e95ea5b663c1a2d5001e7decf0bbf6016))
+* **release:** pin immutable AppImage tooling ([73e4aad](https://github.com/grok-insider/grok-desktop/commit/73e4aaddd24c0e82e50665463ff3ddb9104d4065))
+* **release:** pin immutable AppImage tooling ([b433211](https://github.com/grok-insider/grok-desktop/commit/b4332119525eca11de28af1502f3fcaec38f7139))
+* **release:** promote finalizer lifecycle repair ([c59edf5](https://github.com/grok-insider/grok-desktop/commit/c59edf5b9584ccb57dc64f4046600dc6611d45e5))
+
 ## 0.0.1 (2026-07-16)
 
 
