@@ -8,8 +8,9 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 - Reproducible Rust daemon, Go service, guest VHDX, managed integration bundles,
   and Electron application inputs are locked.
-- Windows x64 and ARM64 MSIX packages retain the same package family identity
-  and contain the matching native binaries.
+- The initial public preview ships Windows x64 only. ARM64 remains deferred;
+  it must not be implied by release notes or evidence. A later multi-architecture
+  stable release keeps one stable package family identity across architectures.
 - Executables, service binaries, MSIX packages, update metadata, guest images,
   and integration manifests are signed by channel-scoped keys. Test keys cannot
   be trusted by a release build.
@@ -29,7 +30,8 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 ## Windows matrix
 
-- Windows 11 current and previous supported servicing releases, x64 and ARM64.
+- For `v0.0.z`, Windows 11 current and previous supported servicing releases on
+  x64. ARM64 enters this matrix only when its package is intentionally enabled.
 - Packaged-service capability approval or the chosen direct/enterprise
   distribution exception is recorded; LocalSystem service installation and
   removal are tested under elevation and MDM deployment.
@@ -63,8 +65,9 @@ artifacts. Passing unit tests is necessary but not sufficient.
   host are each terminated at every durable transition. Recovery produces one
   result, a safe retry, or `interrupted_needs_review`; never an implicit repeat
   of a non-idempotent action.
-- The exact signed x64 and ARM64 daemons exercise the real Tokio named-pipe
-  client and explicitly request `SECURITY_IDENTIFICATION` with the SQOS-present
+- Every architecture enabled for the release (x64 only for `v0.0.z`) exercises
+  the exact signed daemon with the real Tokio named-pipe client and explicitly
+  requests `SECURITY_IDENTIFICATION` with the SQOS-present
   flag. The service observes an identification token and rejects anonymous,
   impersonation, and delegation levels. The unreleased
   `SecurityImpersonation` behavior is not accepted as a compatibility mode.
@@ -100,7 +103,7 @@ artifacts. Passing unit tests is necessary but not sufficient.
   reporting use only `api.x.ai`; keys never appear in renderer snapshots or
   responses.
 - The daemon-hosted Win32 BYOK prompt is exercised from the exact signed MSIX
-  on x64 and ARM64. Tests cover package/window identity, arbitrary and stale
+  on every enabled Windows architecture (x64 only for `v0.0.z`). Tests cover package/window identity, arbitrary and stale
   HWNDs, destruction/reuse races, keyboard and screen-reader access,
   cancellation, daemon shutdown, memory-lock failure, and plaintext residue;
   renderer/preload/Electron-main telemetry must contain no entered bytes.
@@ -135,8 +138,9 @@ artifacts. Passing unit tests is necessary but not sufficient.
 ## Release evidence
 
 Stable publication is tag-only through `.github/workflows/release.yml`. Linux
-is built on a clean hosted worker; Windows x64 and ARM64 require the protected
-qualified self-hosted signing environment and pre-staged signed release inputs.
+is built on a clean hosted worker; Windows x64 requires the protected qualified
+ephemeral signing environment and source-pinned release inputs. ARM64 remains a
+fail-closed deferred target.
 The final protected job runs only after every platform build, receives the
 offline update key, generates and independently verifies target-bound update
 manifests, and creates the GitHub Release. Missing workers, inputs, public trust,

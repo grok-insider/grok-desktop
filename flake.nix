@@ -128,7 +128,7 @@
               pkgs = import nixpkgs { inherit system; };
               guestRunner = pkgs.buildGoModule {
                 pname = "grok-integration-runner";
-                version = "0.1.0";
+                version = "0.0.1";
                 src = self;
                 modRoot = "guest/runner";
                 subPackages = [

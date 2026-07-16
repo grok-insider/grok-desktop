@@ -153,6 +153,8 @@ export function createWindowsDaemonBuildEnvironment(_environment, architecture, 
     TEMP: layout.temporaryDirectory,
     TMP: layout.temporaryDirectory,
     USERPROFILE: layout.homeDirectory,
+    VCINSTALLDIR: toolchain.toolchainEnvironment.visualCppInstallRoot,
+    VSCMD_ARG_TGT_ARCH: architecture === "x64" ? "x64" : "arm64",
     WINDIR: toolchain.toolchainEnvironment.systemRoot,
     [targetLinkerVariables[architecture]]: toolchain.linkerPath,
   };
@@ -164,14 +166,23 @@ export function parseWindowsToolchainEnvironment(raw) {
     65_536,
     "GROK_WINDOWS_TOOLCHAIN_ENV_JSON",
   );
-  const expectedKeys = ["executablePaths", "includePaths", "libraryPaths", "librarySearchPaths", "systemRoot"];
+  const expectedKeys = [
+    "executablePaths",
+    "includePaths",
+    "libraryPaths",
+    "librarySearchPaths",
+    "systemRoot",
+    "visualCppInstallRoot",
+  ];
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       Object.keys(value).toSorted().join(",") !== expectedKeys.toSorted().join(",") ||
-      typeof value.systemRoot !== "string" || !validWindowsAbsolutePath(value.systemRoot)) {
+      typeof value.systemRoot !== "string" || !validWindowsAbsolutePath(value.systemRoot) ||
+      typeof value.visualCppInstallRoot !== "string" || !validWindowsAbsolutePath(value.visualCppInstallRoot)) {
     throw new Error("GROK_WINDOWS_TOOLCHAIN_ENV_JSON has an invalid schema");
   }
   return {
     systemRoot: value.systemRoot,
+    visualCppInstallRoot: value.visualCppInstallRoot,
     executablePaths: parseWindowsPathList(value.executablePaths),
     includePaths: parseWindowsPathList(value.includePaths),
     libraryPaths: parseWindowsPathList(value.libraryPaths),
@@ -272,6 +283,7 @@ function validToolchain(toolchain) {
   return typeof toolchain?.rustcPath === "string" && validWindowsAbsolutePath(toolchain.rustcPath) &&
     typeof toolchain.linkerPath === "string" && validWindowsAbsolutePath(toolchain.linkerPath) &&
     environment && validWindowsAbsolutePath(environment.systemRoot) &&
+    validWindowsAbsolutePath(environment.visualCppInstallRoot) &&
     [environment.executablePaths, environment.includePaths, environment.libraryPaths, environment.librarySearchPaths]
       .every((values) => Array.isArray(values) && values.length > 0 && values.every(validWindowsAbsolutePath));
 }
@@ -302,6 +314,7 @@ async function canonicalizeToolchainEnvironment(environment) {
   const canonicalizeDirectories = (values) => Promise.all(values.map(trustedDirectory));
   return {
     systemRoot: await trustedDirectory(environment.systemRoot),
+    visualCppInstallRoot: await trustedDirectory(environment.visualCppInstallRoot),
     executablePaths: await canonicalizeDirectories(environment.executablePaths),
     includePaths: await canonicalizeDirectories(environment.includePaths),
     libraryPaths: await canonicalizeDirectories(environment.libraryPaths),

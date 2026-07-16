@@ -18,8 +18,10 @@ import {
   parseReleaseArguments,
   parseReleaseMetadataKeys,
   readReleaseEnvironment,
+  readCoreWindowsReleaseEnvironment,
   releaseInputSigningBytes,
   renderStableAppInstaller,
+  renderPreviewAppInstaller,
   renderManifest,
   serviceGuestCatalogTrust,
   shouldAuthenticodeSignPackagedFile,
@@ -59,6 +61,8 @@ const acpNow = 1_800_000_000;
 test("normalizes versions and parses explicit release targets", () => {
   assert.equal(normalizeMsixVersion("12.34.56"), "12.34.56.65535");
   assert.equal(normalizeMsixVersion("1.2.3-beta.7", "beta"), "1.2.3.7");
+  assert.equal(normalizeMsixVersion("0.0.1", "beta"), "0.0.1.1");
+  assert.throws(() => normalizeMsixVersion("0.1.0", "beta"), /prerelease/);
   assert.throws(() => normalizeMsixVersion("1.2.3-beta.1"), /stable/);
   assert.throws(() => normalizeMsixVersion("1.70000.0"), /component limit/);
   assert.deepEqual(parseReleaseArguments(["--arch", "arm64", "--channel", "stable"]), {
@@ -103,6 +107,19 @@ test("renders stable App Installer metadata with fixed identity and update origi
   }), /architecture/);
 });
 
+test("renders preview App Installer metadata against an immutable 0.0.z tag", () => {
+  const appInstaller = renderPreviewAppInstaller({
+    architecture: "x64", packageIdentity: "GrokInsider.GrokDesktop.Preview",
+    publisher: "CN=Grok Desktop Preview", version: "0.0.1.1", releaseTag: "v0.0.1",
+  });
+  assert.match(appInstaller, /releases\/download\/v0\.0\.1\/GrokDesktop-beta-x64\.msix/);
+  assert.doesNotMatch(appInstaller, /AutomaticBackgroundTask/);
+  assert.throws(() => renderPreviewAppInstaller({
+    architecture: "x64", packageIdentity: "GrokInsider.GrokDesktop.Preview",
+    publisher: "CN=Grok Desktop Preview", version: "0.0.1.1", releaseTag: "v0.1.0",
+  }), /preview/);
+});
+
 test("creates isolated native build environments and deterministic public trust bindings", async () => {
   const serviceTrust = serviceGuestCatalogTrust(trustedReleaseKeys);
   assert.match(serviceTrust.binding, /^grok-guest-catalog-trust-v1:[a-f0-9]{64}$/);
@@ -144,6 +161,7 @@ test("creates isolated native build environments and deterministic public trust 
   };
   const toolchainEnvironment = parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
+    visualCppInstallRoot: "C:\\BuildTools\\VC",
     executablePaths: ["C:\\Rust\\bin", "C:\\BuildTools\\bin"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
@@ -168,6 +186,8 @@ test("creates isolated native build environments and deterministic public trust 
   assert.equal(daemonEnvironment.HOME, layout.homeDirectory);
   assert.equal(daemonEnvironment.PATH, "C:\\Rust\\bin;C:\\BuildTools\\bin");
   assert.equal(daemonEnvironment.RUSTC, "C:\\Rust\\bin\\rustc.exe");
+  assert.equal(daemonEnvironment.VCINSTALLDIR, "C:\\BuildTools\\VC");
+  assert.equal(daemonEnvironment.VSCMD_ARG_TGT_ARCH, "x64");
   assert.equal(
     daemonEnvironment.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER,
     "C:\\BuildTools\\bin\\link.exe",
@@ -200,6 +220,7 @@ test("rejects ambient Cargo configuration and malformed Windows toolchain contra
   ), /strict JSON/);
   assert.throws(() => parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
+    visualCppInstallRoot: "C:\\BuildTools\\VC",
     executablePaths: ["C:\\Rust\\bin", "c:\\rust\\bin"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
@@ -207,6 +228,7 @@ test("rejects ambient Cargo configuration and malformed Windows toolchain contra
   })), /unique/);
   assert.throws(() => parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
+    visualCppInstallRoot: "C:\\BuildTools\\VC",
     executablePaths: ["\\\\worker\\share\\bin"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
@@ -294,6 +316,27 @@ test("accepts only public trust and hardware or certificate-store signing policy
   }, { GROK_SIGNATURE_FILE: "C:\\release\\Grok.msix" }), {
     SystemRoot: "C:\\Windows", GROK_SIGNATURE_FILE: "C:\\release\\Grok.msix",
   });
+});
+
+test("requires official component evidence for the minimal Windows core release", () => {
+  const environment = releaseEnvironment();
+  const parsed = readCoreWindowsReleaseEnvironment(environment);
+  assert.equal(parsed.acpProvenanceEvidenceID, "xai-download-attestation-42");
+  assert.equal(parsed.acpRedistributionEvidenceID, "xai-redistribution-approval-7");
+  assert.throws(
+    () => readCoreWindowsReleaseEnvironment({
+      ...environment,
+      GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: "invalid/evidence",
+    }),
+    /evidence identifiers/,
+  );
+  assert.throws(
+    () => readCoreWindowsReleaseEnvironment({
+      ...environment,
+      GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: "",
+    }),
+    /required and bounded/,
+  );
 });
 
 test("validates signer identity and renders the packaged application manifest", async () => {

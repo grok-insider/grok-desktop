@@ -320,7 +320,7 @@ export class MockDesktopClient implements DesktopClient {
 
   async getUpdateState(): Promise<UpdateState> {
     return {
-      phase: "unsupported", currentVersion: "0.1.0", targetVersion: "", channel: "stable",
+      phase: "unsupported", currentVersion: import.meta.env.VITE_APP_VERSION, targetVersion: "", channel: "beta",
       checkedAtUnixMs: 0, reasonCode: "development_install",
     };
   }

@@ -12,6 +12,7 @@ import {
   parseReleaseArguments,
   readCoreWindowsReleaseEnvironment,
   renderManifest,
+  renderPreviewAppInstaller,
   renderStableAppInstaller,
   sha256File,
   validateCoreWindowsInputs,
@@ -54,6 +55,12 @@ async function main() {
   try {
     const sourceRoot = path.join(temporaryRoot, "source");
     await preparePackagingSource(sourceRoot, packageMetadata, environment.updateTrustedKeysJSON);
+    const windowsUpdateTrustPath = path.join(temporaryRoot, "windows-update-trust.json");
+    await writeFile(windowsUpdateTrustPath, `${JSON.stringify({
+      packageIdentity: environment.packageIdentity,
+      publisher: environment.publisher,
+      signerThumbprint: environment.signerThumbprint,
+    })}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
     await rm(outputRoot, { recursive: true, force: true });
     await mkdir(outputRoot, { recursive: true });
     const packagedDirectories = await packager({
@@ -73,6 +80,7 @@ async function main() {
       icon: path.join(desktopRoot, "release", "windows", "assets", "icon.ico"),
       extraResource: [
         path.join(sourceRoot, "update-trusted-keys.json"),
+        windowsUpdateTrustPath,
         path.join(desktopRoot, "assets", "tray"),
         path.join(inputs.canonicalRoot, "bin"),
       ],
@@ -134,6 +142,8 @@ async function main() {
         size: inputs.manifest.size,
         trustBinding: inputs.manifest.binding,
         authenticodePolicy: "preserve-vendor-signature-do-not-resign",
+        provenanceEvidenceId: environment.acpProvenanceEvidenceID,
+        redistributionEvidenceId: environment.acpRedistributionEvidenceID,
       },
       signer,
       artifact: {
@@ -156,6 +166,18 @@ async function main() {
           packageIdentity: environment.packageIdentity,
           publisher: environment.publisher,
           version: msixVersion,
+        }),
+        { encoding: "utf8", mode: 0o600, flag: "wx" },
+      );
+    } else if (/^0\.0\.[0-9]+$/.test(packageMetadata.version)) {
+      await writeFile(
+        path.join(outputRoot, "GrokDesktop-beta-x64.appinstaller"),
+        renderPreviewAppInstaller({
+          architecture: "x64",
+          packageIdentity: environment.packageIdentity,
+          publisher: environment.publisher,
+          version: msixVersion,
+          releaseTag: `v${packageMetadata.version}`,
         }),
         { encoding: "utf8", mode: 0o600, flag: "wx" },
       );
