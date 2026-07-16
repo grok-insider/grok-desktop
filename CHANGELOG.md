@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.9](https://github.com/grok-insider/grok-desktop/compare/v0.0.8...v0.0.9) (2026-07-16)
+
+
+### Features
+
+* **release:** promote unsigned Windows installer ([b7f4a27](https://github.com/grok-insider/grok-desktop/commit/b7f4a27d6e0db0670500a59894a84b5b86b10211))
+* **release:** ship unsigned Windows NSIS installer ([f2172db](https://github.com/grok-insider/grok-desktop/commit/f2172db73b8c4012a7d1277eac312193693a89fc))
+* **release:** ship unsigned Windows NSIS installer ([39db166](https://github.com/grok-insider/grok-desktop/commit/39db166c89ed88dfe98aff9887b9ba5f873d639b))
+
+
+### Bug Fixes
+
+* **updater:** validate installer after opening ([39c0256](https://github.com/grok-insider/grok-desktop/commit/39c0256dc81c377704dde394b7f2df3a17dd3778))
+
 ## [0.0.8](https://github.com/grok-insider/grok-desktop/compare/v0.0.7...v0.0.8) (2026-07-16)
 
 ### Highlights
