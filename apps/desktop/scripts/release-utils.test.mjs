@@ -45,6 +45,7 @@ import {
   createWindowsServiceBuildEnvironment,
   parseServiceBuildArguments,
 } from "./build-windows-service.mjs";
+import { electronPackagerMetadata } from "./package-windows.mjs";
 
 const releaseKeyID = "release-test-2026";
 const releaseKeys = generateKeyPairSync("ed25519");
@@ -57,6 +58,21 @@ const acpTrustRaw = `${acpKeyID}=${acpPublicRaw}`;
 const trustedAcpKeys = parseAcpCatalogTrustedKeys(acpTrustRaw);
 const signerThumbprint = "0123456789ABCDEF0123456789ABCDEF01234567";
 const acpNow = 1_800_000_000;
+
+test("provides deterministic Electron packager metadata without source-tree inference", () => {
+  assert.deepEqual(
+    electronPackagerMetadata({ devDependencies: { electron: "43.1.0" } }),
+    {
+      electronVersion: "43.1.0",
+      win32metadata: { CompanyName: "Grok Insider" },
+    },
+  );
+  assert.throws(
+    () => electronPackagerMetadata({ devDependencies: { electron: "^43.1.0" } }),
+    /pin an exact Electron version/,
+  );
+  assert.throws(() => electronPackagerMetadata({}), /pin an exact Electron version/);
+});
 
 test("normalizes versions and parses explicit release targets", () => {
   assert.equal(normalizeMsixVersion("12.34.56"), "12.34.56.65535");

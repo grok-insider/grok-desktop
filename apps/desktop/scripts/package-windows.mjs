@@ -59,6 +59,7 @@ async function main() {
       executableName: productName,
       appVersion: packageMetadata.version,
       buildVersion: msixVersion,
+      ...electronPackagerMetadata(packageMetadata),
       appCopyright: "Copyright (c) 2026 Grok Insider",
       asar: true,
       prune: true,
@@ -186,6 +187,18 @@ export async function preparePackagingSource(sourceRoot, packageMetadata, update
     dependencies: { "@bufbuild/protobuf": packageMetadata.dependencies["@bufbuild/protobuf"] },
   };
   await writeFile(path.join(sourceRoot, "package.json"), `${JSON.stringify(packagedMetadata, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+export function electronPackagerMetadata(packageMetadata) {
+  const electronVersion = packageMetadata?.devDependencies?.electron;
+  if (typeof electronVersion !== "string" ||
+      !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(electronVersion)) {
+    throw new Error("desktop release metadata must pin an exact Electron version");
+  }
+  return {
+    electronVersion,
+    win32metadata: { CompanyName: "Grok Insider" },
+  };
 }
 
 export async function assertReleaseBuildExists() {
