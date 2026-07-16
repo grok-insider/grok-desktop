@@ -26,17 +26,22 @@ Do not merge a release pull request until the protected release prerequisites
 pass. Release Please intentionally skips GitHub release creation. After the
 approved release PR merges, **Finalize approved release** revalidates the
 manifest, synchronized versions, changelog, branch, and title before pushing
-the immutable tag with the owner token. That authenticated tag event starts the
-artifact workflow; the tag workflow creates the GitHub Release only after every
-artifact and manifest is signed and verified. Exact artifact qualification then
-occurs at the protected `beta-release` promotion hold before publication.
+the immutable tag with the owner token. The finalizer then replaces Release
+Please's `autorelease: pending` label with `autorelease: tagged`; this lifecycle
+transition is required when `skip-github-release` delegates tagging to a
+separate workflow. That authenticated tag event starts the artifact workflow;
+the tag workflow creates the GitHub Release only after every artifact and
+manifest is signed and verified. Exact artifact qualification then occurs at
+the protected `beta-release` promotion hold before publication.
 
 If the finalizer fails after the release PR has merged and before it creates a
 tag, fix and promote the finalizer first. An owner may then dispatch **Finalize
 approved release** with the exact current `master` SHA and synchronized version.
 The recovery path refuses a stale or non-`master` commit and re-runs the same
 version, manifest, changelog, and tag-absence checks. Never use it to replace a
-failed artifact build or to move an existing tag.
+failed artifact build or to move an existing tag. Recovery also locates the
+single matching merged release PR, verifies that its merge commit is an
+ancestor of the tagged `master` commit, and advances the same lifecycle label.
 
 ## Manual milestones
 
