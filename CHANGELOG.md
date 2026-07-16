@@ -2,6 +2,10 @@
 
 ## [0.0.8](https://github.com/grok-insider/grok-desktop/compare/v0.0.7...v0.0.8) (2026-07-16)
 
+### Highlights
+
+- Fixed release signing to use a verified DigiCert timestamp endpoint.
+
 
 ### Bug Fixes
 

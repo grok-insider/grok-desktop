@@ -9,7 +9,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait.workspace = true
 cap-std.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.7" }
+grok-application = { path = "../grok-application", version = "0.0.8" }
 tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
