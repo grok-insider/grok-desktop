@@ -2,6 +2,11 @@
 
 ## [0.0.4](https://github.com/grok-insider/grok-desktop/compare/v0.0.3...v0.0.4) (2026-07-16)
 
+### Highlights
+
+- Fixed AppStream metadata for Linux package compatibility
+- Fixed Windows package options forwarding
+
 
 ### Bug Fixes
 
