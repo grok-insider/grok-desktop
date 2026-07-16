@@ -66,6 +66,7 @@ const mocks = vi.hoisted(() => {
     quit: vi.fn(),
     relaunch: vi.fn(),
     requestSingleInstanceLock: vi.fn(() => true),
+    setAppUserModelId: vi.fn(),
     whenReady: vi.fn(() => Promise.resolve()),
   };
   const daemon = {
@@ -278,6 +279,9 @@ describe("main process window and quit lifecycle", () => {
 async function bootMain(): Promise<void> {
   await import("./main.js");
   await vi.waitFor(() => expect(mocks.electron.Tray).toHaveBeenCalledOnce());
+  expect(mocks.app.setAppUserModelId).toHaveBeenCalledWith("com.grokinsider.grokdesktop");
+  expect(mocks.app.setAppUserModelId.mock.invocationCallOrder[0])
+    .toBeLessThan(mocks.BrowserWindow.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER);
 }
 
 function registered(events: Map<string, Listener[]>, name: string): Listener {

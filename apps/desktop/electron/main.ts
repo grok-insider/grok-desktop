@@ -38,7 +38,10 @@ import { shouldDeferAppQuit, shouldHideWindowOnClose } from "./windowClosePolicy
 import { withStartupDeadline } from "./startupDeadline.js";
 import { UpdateCoordinator, type PlatformUpdater } from "./updateCoordinator.js";
 import { resolveLinuxUpdateRunner } from "./linuxAppImageUpdater.js";
-import { loadWindowsUpdateTrust, WindowsMsixUpdateRunner } from "./windowsMsixUpdater.js";
+import {
+  installWindowsUpdateAfterDaemonStop,
+  WindowsNsisUpdateRunner,
+} from "./windowsNsisUpdater.js";
 import { loadUpdateTrust, SignedUpdateManifestAuthorizer } from "./updateManifestVerifier.js";
 import {
   applyGraphicsPolicy,
@@ -97,6 +100,7 @@ protocol.registerSchemesAsPrivileged([{
   scheme: "grok-desktop",
   privileges: { standard: true, secure: true, corsEnabled: false, supportFetchAPI: false, stream: true },
 }]);
+app.setAppUserModelId("com.grokinsider.grokdesktop");
 
 const graphicsPolicy = resolveGraphicsPolicy({
   platform: process.platform,
@@ -1030,12 +1034,38 @@ if (primaryInstance) app.whenReady().then(async () => {
           };
         }
       } else if (process.platform === "win32") {
-        const windowsTrust = await loadWindowsUpdateTrust(path.join(process.resourcesPath, "windows-update-trust.json"));
-        platformUpdater = new WindowsMsixUpdateRunner(
-          path.join(app.getPath("userData"), "updates"),
-          windowsTrust,
-          (filePath) => shell.openPath(filePath),
-        );
+        const runner = new WindowsNsisUpdateRunner(path.join(app.getPath("userData"), "updates"));
+        await runner.cleanup();
+        platformUpdater = {
+          download: (expected: Parameters<typeof runner.download>[0]) => runner.download(expected),
+          install: async () => {
+            updateCoordinator?.stop();
+            shutdownStarted = true;
+            try {
+              await installWindowsUpdateAfterDaemonStop({
+                stopDaemon: async () => {
+                  if (supervisor) await supervisor.stop();
+                },
+                install: () => runner.install(),
+                recoverAfterInstallFailure: () => {
+                  shutdownCompleted = true;
+                  app.relaunch();
+                  app.quit();
+                },
+                finishShutdown: () => {
+                  shutdownCompleted = true;
+                  app.quit();
+                },
+              });
+            } catch (error) {
+              if (!shutdownCompleted) {
+                shutdownStarted = false;
+                updateCoordinator?.start();
+              }
+              throw error;
+            }
+          },
+        };
       }
     } catch {
       updateAuthorizer = undefined;

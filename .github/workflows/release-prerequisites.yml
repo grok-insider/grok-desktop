@@ -30,9 +30,9 @@ jobs:
           test "${#UPDATE_TRUST}" -le 65536
 
   beta-windows:
-    name: Preview Windows signing inputs
+    name: Preview Windows build inputs
     runs-on: ubuntu-latest
-    environment: beta-windows-signing
+    environment: beta-windows-build
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -40,15 +40,7 @@ jobs:
           node-version: 22
       - name: Verify protected Windows inputs without exposing them
         env:
-          IDENTITY: ${{ vars.GROK_MSIX_IDENTITY }}
-          PUBLISHER: ${{ vars.GROK_MSIX_PUBLISHER }}
-          DISPLAY_NAME: ${{ vars.GROK_MSIX_PUBLISHER_DISPLAY_NAME }}
           GROK_WINDOWS_MAX_TESTED_VERSION: ${{ vars.GROK_WINDOWS_MAX_TESTED_VERSION }}
-          GROK_WINDOWS_SIGNTOOL_PATH: ${{ vars.GROK_WINDOWS_SIGNTOOL_PATH }}
-          GROK_WINDOWS_POWERSHELL_PATH: ${{ vars.GROK_WINDOWS_POWERSHELL_PATH }}
-          GROK_WINDOWS_TIMESTAMP_SERVER: ${{ vars.GROK_WINDOWS_TIMESTAMP_SERVER }}
-          GROK_WINDOWS_SIGNER_SHA1: ${{ vars.GROK_WINDOWS_SIGNER_SHA1 }}
-          GROK_WINDOWS_SIGN_ARGS_JSON: ${{ vars.GROK_WINDOWS_SIGN_ARGS_JSON }}
           GROK_WINDOWS_CARGO_PATH: ${{ vars.GROK_WINDOWS_CARGO_PATH }}
           GROK_WINDOWS_RUSTC_PATH: ${{ vars.GROK_WINDOWS_RUSTC_PATH }}
           GROK_WINDOWS_LINKER_PATH: ${{ vars.GROK_WINDOWS_LINKER_PATH }}
@@ -57,36 +49,22 @@ jobs:
           GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
           GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID }}
           GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
-          PFX: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64 }}
-          PFX_PASSWORD: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PASSWORD }}
         run: |
-          test "$IDENTITY" = "GrokInsider.GrokDesktop.Preview"
-          test "$PUBLISHER" = "CN=Grok Desktop Preview"
-          test "$DISPLAY_NAME" = "Grok Desktop Preview"
-          test -n "$PFX"
-          test -n "$PFX_PASSWORD"
+          for name in \
+            GROK_UPDATE_TRUSTED_KEYS_JSON \
+            GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID \
+            GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID
+          do
+            value="${!name:-}"
+            test -n "$value"
+            test "${#value}" -le 65536
+          done
           node --input-type=module <<'NODE'
           import path from "node:path";
           import { parseWindowsToolchainEnvironment } from "./apps/desktop/scripts/build-windows-daemon.mjs";
-          import { readCoreWindowsReleaseEnvironment } from "./apps/desktop/scripts/release-utils.mjs";
+          import { readUnsignedCoreWindowsReleaseEnvironment } from "./apps/desktop/scripts/release-utils.mjs";
 
-          const releaseEnvironment = {
-            GROK_MSIX_IDENTITY: process.env.IDENTITY,
-            GROK_MSIX_PUBLISHER: process.env.PUBLISHER,
-            GROK_MSIX_PUBLISHER_DISPLAY_NAME: process.env.DISPLAY_NAME,
-          };
-          for (const name of [
-            "GROK_WINDOWS_MAX_TESTED_VERSION",
-            "GROK_WINDOWS_SIGNTOOL_PATH",
-            "GROK_WINDOWS_POWERSHELL_PATH",
-            "GROK_WINDOWS_TIMESTAMP_SERVER",
-            "GROK_WINDOWS_SIGNER_SHA1",
-            "GROK_WINDOWS_SIGN_ARGS_JSON",
-            "GROK_UPDATE_TRUSTED_KEYS_JSON",
-            "GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID",
-            "GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID",
-          ]) releaseEnvironment[name] = process.env[name];
-          readCoreWindowsReleaseEnvironment(releaseEnvironment);
+          readUnsignedCoreWindowsReleaseEnvironment(process.env);
           for (const name of [
             "GROK_WINDOWS_CARGO_PATH",
             "GROK_WINDOWS_RUSTC_PATH",

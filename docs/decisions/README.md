@@ -72,6 +72,7 @@ when it defines an IPC or schema epoch.
 | [0031](0031-durable-official-xai-search.md) | Durable official xAI Search grants |
 | [0032](0032-explicit-dual-mode-work-execution.md) | Explicit dual-mode Work execution |
 | [0033](0033-source-pinned-official-grok-build-component.md) | Source-pinned official Grok Build component |
+| [0034](0034-unsigned-windows-core-installer.md) | Unsigned Windows core installer |
 
 ## Platform ADRs
 

@@ -38,9 +38,13 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.match(workflow, /test "\$GITHUB_REF_NAME" = "v\$version"/);
   assert.match(workflow, /appimagetool\/releases\/download\/1\.9\.1\/appimagetool-x86_64\.AppImage/);
   assert.doesNotMatch(workflow, /appimagetool\/releases\/download\/continuous/);
-  assert.match(workflow, /WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
-  assert.match(workflow, /"\*\$\{runnerSid\}:\(R\)"/);
-  assert.doesNotMatch(workflow, /"\$\{env:USERNAME\}:\(R\)"/);
+  assert.match(workflow, /windows_environment=\$\{channel\}-windows-build/);
+  assert.doesNotMatch(workflow, /windows-signing/);
+  assert.doesNotMatch(workflow, /GROK_MSIX_/);
+  assert.doesNotMatch(workflow, /\$\{\{ vars\.GROK_WINDOWS_(?:SIGNTOOL_PATH|TIMESTAMP_SERVER|SIGNER_SHA1|SIGN_ARGS_JSON) \}\}/);
+  assert.doesNotMatch(workflow, /\$\{\{ secrets\.GROK_WINDOWS_PREVIEW_CERT/);
+  assert.doesNotMatch(workflow, /Provision isolated preview signing certificate/);
+  assert.doesNotMatch(workflow, /PREVIEW_PFX|\.cer\b|\.appinstaller\b|\.msix\b/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
   assert.match(workflow, /\$packageManifest = "release\/components\/grok-build\/windows-x64\.json"/);
   assert.match(
@@ -51,6 +55,10 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.match(
     workflow,
     /pnpm --filter @grok-desktop\/desktop build:windows-daemon `\n\s+--arch x64/,
+  );
+  assert.equal(
+    workflow.match(/pnpm --filter @grok-desktop\/desktop build:windows-daemon/g)?.length,
+    1,
   );
   assert.doesNotMatch(workflow, /build:windows-daemon -- `/);
   assert.match(workflow, /if \(\$LASTEXITCODE -ne 0\) \{ throw "Windows native runtime build failed" \}/);
@@ -64,9 +72,38 @@ test("publishes binaries only from an immutable version tag", () => {
   );
   assert.doesNotMatch(workflow, /package:windows-core -- `/);
   assert.match(workflow, /if \(\$LASTEXITCODE -ne 0\) \{ throw "Windows core packaging failed" \}/);
+  assert.match(workflow, /GrokDesktop-\*-x64\.exe/);
+  assert.match(workflow, /win32:x64:exe:nsis-installer/);
+  assert.match(workflow, /--artifact-kind "\$artifact_kind"/);
+  assert.match(workflow, /path: release-downloads/);
+  assert.match(workflow, /Stage the exact release asset allowlist/);
+  assert.match(workflow, /node scripts\/stage-release-assets\.mjs release-downloads release-assets "\$channel"/);
+  assert.doesNotMatch(workflow, /release:update-manifest -- \\/);
+  assert.doesNotMatch(workflow, /release:verify-update-manifest -- \\/);
+  assert.match(workflow, /--native-package-version "\$version"/);
+  assert.match(workflow, /--platform "\$platform" --architecture "\$architecture" --channel "\$channel"/);
+  assert.match(workflow, /intentionally unsigned/);
+  assert.match(workflow, /Microsoft Defender SmartScreen warning/);
+  assert.match(workflow, /SHA256SUMS/);
+  assert.match(workflow, /GitHub artifact attestation/);
+  assert.match(workflow, /windowsCodeSigning "unsigned"/);
+  assert.match(workflow, /release-assets\/\*\.exe/);
   assert.doesNotMatch(
     workflow,
     /pnpm package:linux[^]*--acp-pinned-manifest apps\/desktop\/release\/components\/grok-build\/linux-x64\.json/,
   );
   assert.match(workflow, /gh release create "\$GITHUB_REF_NAME" release-assets\/\*/);
+});
+
+test("preflights unsigned Windows build inputs without certificate material", () => {
+  const workflow = read(".github/workflows/release-prerequisites.yml");
+  assert.match(workflow, /name: Preview Windows build inputs/);
+  assert.match(workflow, /environment: beta-windows-build/);
+  assert.match(workflow, /GROK_WINDOWS_CARGO_PATH/);
+  assert.match(workflow, /GROK_UPDATE_TRUSTED_KEYS_JSON/);
+  assert.match(workflow, /GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID/);
+  assert.match(workflow, /GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID/);
+  assert.doesNotMatch(workflow, /GROK_ACP_CATALOG_TRUSTED_KEYS/);
+  assert.doesNotMatch(workflow, /windows-signing|GROK_MSIX_|SIGNTOOL|TIMESTAMP_SERVER|SIGNER_SHA1|SIGN_ARGS_JSON/);
+  assert.doesNotMatch(workflow, /PREVIEW_CERT|PFX|\.cer\b|\.appinstaller\b|\.msix\b/);
 });

@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  assertUnsignedPortableExecutable,
+  createUnsignedCoreWindowsInstallerConfiguration,
   createSigningToolEnvironment,
   guestImageCatalogSigningBytes,
   inspectDaemonAcpCatalogTrust,
@@ -19,6 +21,7 @@ import {
   parseReleaseMetadataKeys,
   readReleaseEnvironment,
   readCoreWindowsReleaseEnvironment,
+  readUnsignedCoreWindowsReleaseEnvironment,
   releaseInputSigningBytes,
   renderStableAppInstaller,
   renderPreviewAppInstaller,
@@ -72,6 +75,77 @@ test("provides deterministic Electron packager metadata without source-tree infe
     /pin an exact Electron version/,
   );
   assert.throws(() => electronPackagerMetadata({}), /pin an exact Electron version/);
+});
+
+test("provides a deterministic unsigned per-user NSIS configuration", async () => {
+  const iconPath = path.resolve("apps/desktop/release/windows/assets/icon.ico");
+  const includePath = path.resolve("apps/desktop/release/windows/nsis-installer.nsh");
+  const outputDirectory = path.resolve("out/test-windows-nsis");
+  const configuration = createUnsignedCoreWindowsInstallerConfiguration({
+    artifactName: "GrokDesktop-beta-x64.exe",
+    electronVersion: "43.1.0",
+    iconPath,
+    includePath,
+    outputDirectory,
+  });
+  assert.equal(configuration.appId, "com.grokinsider.grokdesktop");
+  assert.equal(configuration.forceCodeSigning, false);
+  assert.deepEqual(configuration.protocols, [
+    { name: "Grok Desktop", schemes: ["grok-desktop"] },
+  ]);
+  assert.deepEqual(configuration.win.target, [{ target: "nsis", arch: ["x64"] }]);
+  assert.equal(configuration.win.requestedExecutionLevel, "asInvoker");
+  assert.equal(configuration.win.signAndEditExecutable, false);
+  assert.equal(configuration.win.signExecutable, false);
+  assert.equal(configuration.win.verifyUpdateCodeSignature, false);
+  assert.deepEqual(configuration.nsis, {
+    oneClick: true,
+    perMachine: false,
+    allowElevation: false,
+    packElevateHelper: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    deleteAppDataOnUninstall: false,
+    runAfterFinish: true,
+    artifactName: "GrokDesktop-beta-x64.exe",
+    include: includePath,
+    installerIcon: iconPath,
+    uninstallerIcon: iconPath,
+    warningsAsErrors: true,
+  });
+  assert.throws(() => createUnsignedCoreWindowsInstallerConfiguration({
+    artifactName: "GrokDesktop-BETA-x64.exe",
+    electronVersion: "43.1.0",
+    iconPath,
+    includePath,
+    outputDirectory,
+  }), /artifact name/);
+  assert.throws(() => createUnsignedCoreWindowsInstallerConfiguration({
+    artifactName: "GrokDesktop-beta-x64.exe",
+    electronVersion: "^43.1.0",
+    iconPath,
+    includePath,
+    outputDirectory,
+  }), /exact Electron version/);
+
+  const include = await readFile(new URL("../release/windows/nsis-installer.nsh", import.meta.url), "utf8");
+  assert.match(include, /WriteRegStr HKCU "Software\\Classes\\grok-desktop"/);
+  assert.match(include, /ReadRegStr \$R0 HKCU "Software\\Classes\\grok-desktop\\shell\\open\\command"/);
+  assert.match(include, /StrCmp \$R0[\s\S]*DeleteRegKey HKCU "Software\\Classes\\grok-desktop"/);
+  assert.doesNotMatch(include, /Software\\Classes\\Grok-Desktop/);
+});
+
+test("assembles the core installer only from the verified prepackaged NSIS tree", async () => {
+  const source = await readFile(new URL("./package-windows-core.mjs", import.meta.url), "utf8");
+  assert.match(source, /readUnsignedCoreWindowsReleaseEnvironment\(process\.env\)/);
+  assert.match(source, /prepackaged: appDirectory/);
+  assert.match(source, /Platform\.WINDOWS\.createTarget\("nsis", Arch\.x64\)/);
+  assert.match(source, /schemaVersion: 5/);
+  assert.match(source, /format: "nsis"/);
+  assert.match(source, /codeSigning: signing\.codeSigning/);
+  assert.match(source, /applicationId: "com\.grokinsider\.grokdesktop"/);
+  assert.match(source, /installScope: "per-user"/);
+  assert.doesNotMatch(source, /packageMSIX|signAndVerifyDirectory|signArtifact\(/);
 });
 
 test("normalizes versions and parses explicit release targets", () => {
@@ -365,6 +439,43 @@ test("requires official component evidence for the minimal Windows core release"
       GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: "",
     }),
     /required and bounded/,
+  );
+});
+
+test("requires public release evidence and rejects all unsigned-package signing inputs", () => {
+  const environment = unsignedReleaseEnvironment();
+  assert.deepEqual(readUnsignedCoreWindowsReleaseEnvironment(environment), {
+    maxTestedVersion: "10.0.26100.0",
+    updateTrustedKeysJSON: JSON.stringify({ [releaseKeyID]: releasePublicKey }),
+    acpProvenanceEvidenceID: "xai-download-attestation-42",
+    acpRedistributionEvidenceID: "xai-redistribution-approval-7",
+  });
+  for (const name of [
+    "CSC_LINK",
+    "CSC_IDENTITY_AUTO_DISCOVERY",
+    "WIN_CSC_LINK",
+    "AZURE_CLIENT_SECRET",
+    "GROK_WINDOWS_SIGNTOOL_PATH",
+    "GROK_WINDOWS_TIMESTAMP_SERVER",
+  ]) {
+    assert.throws(
+      () => readUnsignedCoreWindowsReleaseEnvironment({ ...environment, [name]: "forbidden" }),
+      /forbids ambient signing/,
+    );
+  }
+});
+
+test("recognizes an unsigned PE and rejects an Authenticode certificate table", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-unsigned-pe-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const unsigned = path.join(root, "unsigned.exe");
+  await writeFile(unsigned, portableExecutableWithCertificateTable());
+  assert.deepEqual(await assertUnsignedPortableExecutable(unsigned), { codeSigning: "unsigned" });
+  const signed = path.join(root, "signed.exe");
+  await writeFile(signed, portableExecutableWithCertificateTable(480, 32));
+  await assert.rejects(
+    assertUnsignedPortableExecutable(signed),
+    /must not contain an Authenticode certificate table/,
   );
 });
 
@@ -664,6 +775,15 @@ function releaseEnvironment() {
   };
 }
 
+function unsignedReleaseEnvironment() {
+  return {
+    GROK_WINDOWS_MAX_TESTED_VERSION: "10.0.26100.0",
+    GROK_UPDATE_TRUSTED_KEYS_JSON: JSON.stringify({ [releaseKeyID]: releasePublicKey }),
+    GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: "xai-download-attestation-42",
+    GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: "xai-redistribution-approval-7",
+  };
+}
+
 async function createReleaseStage(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-release-stage-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -812,6 +932,21 @@ function portableExecutable(machine) {
   output.writeUInt32LE(128, 0x3c);
   output.write("PE\0\0", 128, "binary");
   output.writeUInt16LE(machine, 132);
+  return output;
+}
+
+function portableExecutableWithCertificateTable(certificateOffset = 0, certificateSize = 0) {
+  const output = Buffer.alloc(512);
+  output.write("MZ", 0, "ascii");
+  output.writeUInt32LE(128, 0x3c);
+  output.write("PE\0\0", 128, "binary");
+  output.writeUInt16LE(0x14c, 132);
+  output.writeUInt16LE(224, 148);
+  const optionalHeader = 152;
+  output.writeUInt16LE(0x10b, optionalHeader);
+  output.writeUInt32LE(16, optionalHeader + 92);
+  output.writeUInt32LE(certificateOffset, optionalHeader + 128);
+  output.writeUInt32LE(certificateSize, optionalHeader + 132);
   return output;
 }
 

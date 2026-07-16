@@ -10,6 +10,7 @@ const { values } = parseArgs({
     "trust-file": { type: "string" },
     platform: { type: "string" },
     architecture: { type: "string" },
+    channel: { type: "string" },
     version: { type: "string" },
   },
   strict: true,
@@ -47,7 +48,7 @@ let envelope;
 try { envelope = JSON.parse(envelopeRaw.toString("utf8")); } catch { throw new Error("update manifest is invalid"); }
 const manifest = verifySignedUpdateManifest(envelope, keys);
 if (manifest.platform !== required("platform") || manifest.architecture !== required("architecture")
-    || manifest.version !== required("version") || manifest.channel !== "stable") {
+    || manifest.version !== required("version") || manifest.channel !== required("channel")) {
   throw new Error("update manifest does not match the release target");
 }
 process.stdout.write(`${JSON.stringify({ ok: true, version: manifest.version, platform: manifest.platform, architecture: manifest.architecture })}\n`);

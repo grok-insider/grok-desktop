@@ -127,11 +127,56 @@ describe("SignedUpdateManifestAuthorizer", () => {
     await writeFile(trust, JSON.stringify({ "stable-2026": "not-a-key" }));
     await expect(loadUpdateTrust(trust)).rejects.toThrow();
   });
+
+  it("authorizes only the explicit platform artifact kind and exact release asset", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const base = {
+      ...updateManifest(),
+      nativePackageVersion: "1.1.0",
+      platform: "win32",
+      artifact: {
+        kind: "nsis-installer",
+        url: "https://github.com/grok-insider/grok-desktop/releases/download/v1.1.0/GrokDesktop-stable-x64.exe",
+        size: 123,
+        sha256: "a".repeat(64),
+      },
+    };
+    const authorize = async (manifest: typeof base) => {
+      const envelope = {
+        manifest,
+        signature: {
+          algorithm: "ed25519",
+          keyId: "stable-2026",
+          value: sign(null, Buffer.from(`${JSON.stringify(manifest)}\n`), privateKey).toString("base64"),
+        },
+      };
+      return new SignedUpdateManifestAuthorizer({
+        platform: "win32", architecture: "x64", currentVersion: "1.0.0",
+        protocolVersion: 29, schemaVersion: 27,
+        trustedKeys: new Map([["stable-2026", publicKey]]),
+      }, async () => Buffer.from(JSON.stringify(envelope))).authorize("stable");
+    };
+    await expect(authorize(base)).resolves.toMatchObject({
+      available: true,
+      artifact: { kind: "nsis-installer" },
+    });
+    await expect(authorize({
+      ...base,
+      artifact: { ...base.artifact, kind: "appimage" },
+    })).rejects.toThrow("artifact");
+    await expect(authorize({
+      ...base,
+      artifact: {
+        ...base.artifact,
+        url: "https://github.com/grok-insider/grok-desktop/releases/download/v1.1.0/GrokDesktop-beta-x64.exe",
+      },
+    })).rejects.toThrow("target");
+  });
 });
 
 function updateManifest() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     product: "grok-desktop",
     version: "1.1.0",
     nativePackageVersion: "1.1.0",
@@ -144,6 +189,7 @@ function updateManifest() {
     rolloutPercentage: 100,
     critical: false,
     artifact: {
+      kind: "appimage",
       url: "https://github.com/grok-insider/grok-desktop/releases/download/v1.1.0/GrokDesktop-stable-x64.AppImage",
       size: 123,
       sha256: "a".repeat(64),

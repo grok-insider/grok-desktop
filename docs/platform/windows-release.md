@@ -1,11 +1,11 @@
 # Windows release pipeline
 
 Windows releases are assembled only on ephemeral, access-controlled Windows 11
-workers. The public beta/core train currently ships an x64 MSIX with Chat and
-explicitly enrolled Host Tools Work. ARM64 and the isolated-work train remain
-deferred until their native and guest inputs are qualified. All trains use the
-same package identity and publisher. The pipeline does not create development
-certificates or read PFX passwords from the repository.
+workers. The public beta/core train ships an intentionally unsigned x64 NSIS
+installer with Chat and explicitly enrolled Host Tools Work. Windows may show
+Unknown Publisher or Microsoft Defender SmartScreen warnings. ARM64 and the
+signed MSIX isolated-work train remain deferred until their native, guest,
+identity, certificate, and service inputs are qualified.
 
 ## Public core package
 
@@ -25,8 +25,8 @@ The daemon and Host Tools helper are built from the tagged source. The daemon
 contains the domain-separated SHA-256 binding of the tracked Windows x64
 manifest. The job downloads `grok.exe` only from the exact `https://x.ai/cli/`
 URL in that manifest, verifies its size and SHA-256 digest, and preserves its
-bytes through packaging and first-party signing. The vendor executable is not
-re-signed with the Grok Desktop certificate.
+bytes through packaging. The vendor executable is not re-signed or otherwise
+modified.
 
 Packaging rejects extra files, links, target mismatches, a daemon without the
 exact manifest binding, or any component byte mismatch. The release record
@@ -35,13 +35,56 @@ browser automation, and scheduled Work as deferred capabilities. This avoids
 shipping placeholder guest/service inputs or claiming isolation that the
 package does not contain.
 
-The tracked pin and package release record are published beside the MSIX as
-public provenance evidence. Source pinning is governed by ADR 0033; package,
-update-manifest, and MSIX signatures remain required.
+The tracked pin and package release record are published beside the NSIS `.exe`
+as public provenance evidence. Source pinning is governed by ADR 0033. The
+installer is unsigned, while its exact URL, size, digest, version, platform,
+architecture, and artifact kind remain authorized by the signed update
+manifest.
 
-## Qualified isolated package (deferred)
+## Active core NSIS packaging
 
-## Package contents
+The active Windows environment supplies qualified Cargo, Rust, MSVC, and cache
+paths, bounded public update trust, and the exact xAI provenance and
+redistribution evidence IDs. It supplies no
+PFX, certificate password, MSIX identity, SignTool path, signer thumbprint, or
+timestamp endpoint. Packaging rejects ambient Electron certificate variables
+instead of silently signing with runner state.
+
+Electron Packager creates and hardens the application directory before the
+pinned `electron-builder` NSIS target wraps it. The release is one-click,
+per-user, and does not request elevation. Its canonical artifact name is
+`GrokDesktop-<channel>-x64.exe`; the application ID is
+`com.grokinsider.grokdesktop`. Installation creates Start menu and desktop
+shortcuts, preserves application data on uninstall, and owns only its
+current-user `grok-desktop` protocol registration.
+
+The release job verifies that the final installer is not Authenticode-signed,
+records `codeSigning: unsigned` in the package record, publishes SHA-256
+checksums, and requests a GitHub build attestation. Release notes identify the
+expected Windows warning and link the checksum, attestation, and immutable
+source tag. Signed update metadata is still mandatory: the updater accepts only
+the canonical GitHub release URL and exact manifest-authorized `.exe`, then
+revalidates the regular file, size, and SHA-256 immediately before direct
+execution without a shell.
+
+The active release command is:
+
+```powershell
+pnpm --filter @grok-desktop/desktop package:windows-core `
+  --arch x64 --channel beta --stage $env:CORE_STAGE
+```
+
+Electron fuses, renderer sandboxing, the private `grok-desktop://app` renderer
+origin, production navigation policy, and DevTools restrictions are identical
+to the deferred package's hardening contract below.
+
+## Qualified isolated MSIX package (deferred)
+
+Everything in this section describes a future isolated/enterprise train. None
+of its MSIX identity, Authenticode, packaged-service, guest-image, elevation, or
+certificate prerequisites block the active public core NSIS release.
+
+### Package contents
 
 The full isolated train retains the following signed input contract for each
 architecture once qualification resumes:
@@ -186,7 +229,7 @@ executable flags, and manifest bindings are validated in canonical order. The
 guest still repeats its stricter handle-based bundle and signed-manifest
 verification at install and execution time.
 
-## Trusted native builds
+### Trusted native builds
 
 The release worker first builds `bin/grok-daemon.exe` with the public ACP trust
 set compiled into the binary:
@@ -262,7 +305,7 @@ binary built with a different key set, or a binary relying on runtime trust is
 rejected even when it appears in an otherwise signed input inventory. Windows
 has no environment or command-line override for catalog trust or release root.
 
-## Signing boundary
+### Deferred MSIX signing boundary
 
 The release environment supplies:
 
@@ -345,7 +388,7 @@ selected component version/path/digest, preserved-vendor-signature policy, and
 the provenance and redistribution evidence IDs so runtime rollback or expiry
 failures can be correlated without exposing key material.
 
-## Protocol activation
+### Deferred MSIX protocol activation
 
 The rendered MSIX manifest registers the lowercase `grok-desktop` URI scheme
 with the package's exact `app\Grok Desktop.exe` full-trust entry point. The
@@ -361,7 +404,7 @@ not a public deep link. The desktop activation policy must reject that host,
 unknown versions and routes, query strings, fragments, encoded paths, raw file
 paths, prompts, commands, and arbitrary URLs before renderer navigation.
 
-## Electron hardening
+### Electron hardening
 
 The packaged executable requires every known fuse to be specified. Release
 assembly disables Run-as-Node, `NODE_OPTIONS`, Node inspection, and extra
@@ -373,7 +416,7 @@ The renderer remains sandboxed and is served by the private
 `grok-desktop://app` protocol. A packaged build cannot consume
 `VITE_DEV_SERVER_URL`, and DevTools are disabled.
 
-## Packaged service caveat
+### Packaged service caveat
 
 The MSIX declares a manual LocalSystem `desktop6:Service`. Microsoft requires
 both the `packagedServices` and `localSystemServices` restricted capabilities
@@ -400,7 +443,7 @@ document is static broker readiness only. It does not enable Work or
 `guest_control`; daemon proof-of-possession and the durable privileged operation
 journal remain independent release gates.
 
-## Command
+### Deferred command
 
 After the trusted inputs and production web/Electron build exist:
 
@@ -419,7 +462,9 @@ Virtual Machine Platform qualification, and the matrix in
 
 - [Electron security checklist and custom protocol guidance](https://www.electronjs.org/docs/latest/tutorial/security)
 - [Electron fuses](https://www.electronjs.org/docs/latest/tutorial/fuses)
-- [Electron MSIX updater behavior](https://www.electronjs.org/docs/latest/api/auto-updater)
+- [electron-builder NSIS target](https://www.electron.build/nsis.html)
+- [Microsoft Defender SmartScreen](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)
+- [Electron MSIX updater behavior (deferred)](https://www.electronjs.org/docs/latest/api/auto-updater)
 - [Microsoft packaged URI activation](https://learn.microsoft.com/en-us/windows/apps/develop/launch/handle-uri-activation)
 - [Microsoft packaged service manifest](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-desktop6-service)
-- [Microsoft MSIX deployment planning](https://learn.microsoft.com/en-us/windows/msix/desktop/managing-your-msix-deployment-targetdevices)
+- [Microsoft MSIX deployment planning (deferred)](https://learn.microsoft.com/en-us/windows/msix/desktop/managing-your-msix-deployment-targetdevices)
