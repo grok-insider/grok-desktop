@@ -259,14 +259,15 @@ async function writeAll(handle: FileHandle, value: Uint8Array): Promise<void> {
 async function openVerifiedInstaller(
   expected: { filePath: string; size: number; sha256: string },
 ): Promise<FileHandle> {
-  const linkMetadata = await lstat(expected.filePath);
-  if (!linkMetadata.isFile() || linkMetadata.isSymbolicLink() || linkMetadata.size !== expected.size) {
-    throw new Error("authorized Windows update changed before installation");
-  }
   const handle = await open(expected.filePath, "r");
   try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile() || metadata.size !== expected.size
+    const [metadata, linkMetadata] = await Promise.all([
+      handle.stat(),
+      lstat(expected.filePath),
+    ]);
+    if (!linkMetadata.isFile() || linkMetadata.isSymbolicLink()
+        || !metadata.isFile() || metadata.size !== expected.size
+        || linkMetadata.size !== expected.size
         || metadata.dev !== linkMetadata.dev || metadata.ino !== linkMetadata.ino) {
       throw new Error("authorized Windows update changed before installation");
     }
