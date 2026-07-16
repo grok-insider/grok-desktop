@@ -99,3 +99,7 @@ Then confirm that the release PR is current with `master`, every required check
 is green, the protected environments contain the correct channel inputs, and
 the qualified Windows worker is online. Never create or repair a release tag
 manually outside the documented workflows.
+
+Release tool downloads must use immutable versioned release assets with a
+tracked SHA-256. Do not use rolling or `continuous` asset URLs: a byte change
+after tagging makes the release irreproducible and must fail closed.

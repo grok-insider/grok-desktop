@@ -47,7 +47,7 @@ jobs:
       name: ${{ needs.resolve.outputs.linux_environment }}
     env:
       UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
-      APPIMAGETOOL_SHA256: b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2
+      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
       APPIMAGEUPDATETOOL_SHA256: d976cdac667b03dee8cb23fb95ef74b042c406c5cbab3ff294d2b16efeaff84f
     steps:
       - uses: actions/checkout@v7
@@ -97,7 +97,7 @@ jobs:
           printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
           curl --fail --location --proto '=https' --tlsv1.2 \
             --output "$RUNNER_TEMP/appimagetool.AppImage" \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           curl --fail --location --proto '=https' --tlsv1.2 \
             --output "$RUNNER_TEMP/appimageupdatetool.AppImage" \
             https://github.com/AppImageCommunity/AppImageUpdate/releases/download/2.0.0-alpha-1-20251018/appimageupdatetool-x86_64.AppImage
