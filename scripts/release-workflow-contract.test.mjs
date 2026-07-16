@@ -21,8 +21,10 @@ test("finalizes automated and manual release PRs through the owner token", () =>
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'release-please--'\)/);
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'release-please-manual-'\)/);
   assert.match(workflow, /token: \$\{\{ secrets\.RELEASE_PLZ_TOKEN \}\}/);
-  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.merge_commit_sha \}\}/);
-  assert.match(workflow, /chore\(master\): release grok-desktop \$\{version\}/);
+  assert.match(workflow, /inputs\.source_sha \|\| github\.event\.pull_request\.merge_commit_sha/);
+  assert.match(workflow, /chore\(master\): release \$\{version\}/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch' && github\.actor == 'grok-insider'/);
+  assert.match(workflow, /git ls-remote --exit-code origin refs\/heads\/master/);
   assert.match(workflow, /git push origin "v\$\{version\}"/);
 });
 
