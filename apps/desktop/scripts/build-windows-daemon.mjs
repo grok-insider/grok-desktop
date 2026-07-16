@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  assertPortableFirstPartyWindowsExecutable,
   inspectDaemonAcpCatalogTrust,
   inspectDaemonAcpPinnedManifestBytes,
-  inspectPortableExecutable,
   parseAcpCatalogTrustedKeys,
   parseStrictBoundedJSON,
   verifyOfficialGrokPinnedManifestBytes,
@@ -20,6 +20,7 @@ const targetLinkerVariables = {
   x64: "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER",
   arm64: "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER",
 };
+const staticWindowsCrtRustFlags = ["-C", "target-feature=+crt-static"].join("\u001f");
 const forbiddenCargoHomeEntries = new Set([
   "config", "config.toml", "credentials", "credentials.toml",
 ]);
@@ -104,7 +105,7 @@ async function main() {
     const executable = path.join(
       buildLayout.targetDirectory, rustTargets[options.architecture], "release", "grok-daemon.exe",
     );
-    await inspectPortableExecutable(executable, options.architecture);
+    await assertPortableFirstPartyWindowsExecutable(executable, options.architecture);
     if (options.pinnedManifest) {
       inspectDaemonAcpPinnedManifestBytes(await readFile(executable), trust);
     } else {
@@ -113,7 +114,7 @@ async function main() {
     const hostToolsHelper = path.join(
       buildLayout.targetDirectory, rustTargets[options.architecture], "release", "grok-host-tools-mcp.exe",
     );
-    await inspectPortableExecutable(hostToolsHelper, options.architecture);
+    await assertPortableFirstPartyWindowsExecutable(hostToolsHelper, options.architecture);
     await mkdir(path.dirname(options.output), { recursive: true });
     await copyFile(executable, options.output, fsConstants.COPYFILE_EXCL);
     await copyFile(
@@ -133,6 +134,7 @@ export function createWindowsDaemonBuildEnvironment(_environment, architecture, 
   }
   return {
     CARGO_HOME: layout.cargoHome,
+    CARGO_ENCODED_RUSTFLAGS: staticWindowsCrtRustFlags,
     CARGO_INCREMENTAL: "0",
     CARGO_NET_OFFLINE: "true",
     CARGO_TARGET_DIR: layout.targetDirectory,

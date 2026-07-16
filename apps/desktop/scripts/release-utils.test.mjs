@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  assertPortableFirstPartyWindowsExecutable,
   assertUnsignedPortableExecutable,
   createUnsignedCoreWindowsInstallerConfiguration,
   createSigningToolEnvironment,
@@ -89,6 +90,7 @@ test("provides a deterministic unsigned per-user NSIS configuration", async () =
     outputDirectory,
   });
   assert.equal(configuration.appId, "com.grokinsider.grokdesktop");
+  assert.deepEqual(configuration.extraMetadata, { name: "grok-desktop" });
   assert.equal(configuration.forceCodeSigning, false);
   assert.deepEqual(configuration.protocols, [
     { name: "Grok Desktop", schemes: ["grok-desktop"] },
@@ -129,6 +131,8 @@ test("provides a deterministic unsigned per-user NSIS configuration", async () =
   }), /exact Electron version/);
 
   const include = await readFile(new URL("../release/windows/nsis-installer.nsh", import.meta.url), "utf8");
+  assert.match(include, /!if "\$\{APP_FILENAME\}" != "grok-desktop"/);
+  assert.match(include, /!if "\$\{APP_PACKAGE_NAME\}" != "grok-desktop"/);
   assert.match(include, /WriteRegStr HKCU "Software\\Classes\\grok-desktop"/);
   assert.match(include, /ReadRegStr \$R0 HKCU "Software\\Classes\\grok-desktop\\shell\\open\\command"/);
   assert.match(include, /StrCmp \$R0[\s\S]*DeleteRegKey HKCU "Software\\Classes\\grok-desktop"/);
@@ -283,7 +287,7 @@ test("creates isolated native build environments and deterministic public trust 
     "C:\\BuildTools\\bin\\link.exe",
   );
   assert.equal(daemonEnvironment.RUSTFLAGS, undefined);
-  assert.equal(daemonEnvironment.CARGO_ENCODED_RUSTFLAGS, undefined);
+  assert.equal(daemonEnvironment.CARGO_ENCODED_RUSTFLAGS, "-C\u001ftarget-feature=+crt-static");
   assert.equal(daemonEnvironment.Path, undefined);
   const pinnedEnvironment = createWindowsDaemonBuildEnvironment({}, "x64", layout, {
     binding: `grok-acp-pinned-manifest-v1:${"a".repeat(64)}`,
@@ -558,6 +562,100 @@ test("inspects PE architecture and embedded daemon/service trust", async (t) => 
   const service = path.join(root, "grok-vm-service.exe");
   await writeFile(service, trustedServiceExecutable(0x8664));
   await inspectServiceGuestCatalogTrust(service, trustedReleaseKeys);
+});
+
+test("requires first-party Windows executables to avoid VC redistributable imports", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-release-pe-runtime-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "grok-daemon.exe");
+  await writeFile(executable, portableExecutable(0x8664, [
+    "KERNEL32.dll", "api-ms-win-crt-runtime-l1-1-0.dll", "MSVCRT.dll",
+    "msvcp_win.dll", "ucrtbase.dll",
+  ]));
+  assert.deepEqual(
+    await assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    {
+      imports: [
+        "api-ms-win-crt-runtime-l1-1-0.dll", "kernel32.dll", "msvcp_win.dll",
+        "msvcrt.dll", "ucrtbase.dll",
+      ],
+    },
+  );
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "arm64"),
+    /architecture does not match/,
+  );
+
+  for (const runtime of [
+    "VCRUNTIME140.dll", "vCrUnTiMe140_1.DlL", "MSVCP140.dll", "CONCRT140.dll", "VCOMP140.dll",
+    "MSVCR120.dll", "VCCORLIB140.dll", "VCAMP140.dll", "ATL140.dll", "MFC140U.dll",
+    "MFCM140.dll", "ucrtbased.dll",
+  ]) {
+    await writeFile(executable, portableExecutable(0x8664, ["KERNEL32.dll", runtime]));
+    await assert.rejects(
+      assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+      /imports the redistributable runtime/,
+    );
+  }
+
+  await writeFile(executable, portableExecutableWithDelayImports(0x8664, ["USER32.dll"]));
+  await assertPortableFirstPartyWindowsExecutable(executable, "x64");
+  await writeFile(executable, portableExecutableWithDelayImports(0x8664, ["VCRUNTIME140_1.dll"]));
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    /imports the redistributable runtime/,
+  );
+
+  await writeFile(executable, Buffer.concat([
+    portableExecutable(0x8664, ["KERNEL32.dll"]), Buffer.from("\0VCRUNTIME140.dll\0"),
+  ]));
+  await assertPortableFirstPartyWindowsExecutable(executable, "x64");
+
+  const unmappedImport = portableExecutable(0x8664, ["KERNEL32.dll"]);
+  unmappedImport.writeUInt32LE(0x9000_0000, 152 + 120);
+  await writeFile(executable, unmappedImport);
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    /unmapped import directory RVA/,
+  );
+
+  const overlappingSections = portableExecutable(0x8664, ["KERNEL32.dll"]);
+  overlappingSections.writeUInt16LE(2, 134);
+  const secondSection = 152 + 240 + 40;
+  overlappingSections.write(".also", secondSection, "ascii");
+  overlappingSections.writeUInt32LE(512, secondSection + 8);
+  overlappingSections.writeUInt32LE(0x1000, secondSection + 12);
+  await writeFile(executable, overlappingSections);
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    /overlapping virtual section ranges/,
+  );
+
+  const unterminatedName = portableExecutable(0x8664, ["KERNEL32.dll"]);
+  const importNameRva = unterminatedName.readUInt32LE(512 + 12);
+  const importNameOffset = 512 + importNameRva - 0x1000;
+  unterminatedName.fill("A", importNameOffset);
+  await writeFile(executable, unterminatedName);
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    /unterminated import library name/,
+  );
+
+  const unterminatedImports = portableExecutable(0x8664, ["KERNEL32.dll"]);
+  unterminatedImports.writeUInt32LE(20, 152 + 124);
+  await writeFile(executable, unterminatedImports);
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    /unterminated import directory/,
+  );
+
+  const unterminatedDelayImports = portableExecutableWithDelayImports(0x8664, ["USER32.dll"]);
+  unterminatedDelayImports.writeUInt32LE(32, 152 + 112 + 13 * 8 + 4);
+  await writeFile(executable, unterminatedDelayImports);
+  await assert.rejects(
+    assertPortableFirstPartyWindowsExecutable(executable, "x64"),
+    /unterminated delay-import directory/,
+  );
 });
 
 test("independently verifies official Grok catalog trust and strict metadata", async (t) => {
@@ -926,12 +1024,58 @@ async function replaceSignedStageFile(fixture, relative, contents) {
   await writeFile(path.join(fixture.root, "release-inputs.json"), JSON.stringify(fixture.manifest));
 }
 
-function portableExecutable(machine) {
-  const output = Buffer.alloc(256);
+function portableExecutable(machine, imports = []) {
+  const output = Buffer.alloc(1024);
   output.write("MZ", 0, "ascii");
   output.writeUInt32LE(128, 0x3c);
   output.write("PE\0\0", 128, "binary");
   output.writeUInt16LE(machine, 132);
+  output.writeUInt16LE(1, 134);
+  output.writeUInt16LE(240, 148);
+  const optionalHeader = 152;
+  output.writeUInt16LE(0x20b, optionalHeader);
+  output.writeBigUInt64LE(0x1_4000_0000n, optionalHeader + 24);
+  output.writeUInt32LE(16, optionalHeader + 108);
+  const section = optionalHeader + 240;
+  output.write(".rdata", section, "ascii");
+  output.writeUInt32LE(512, section + 8);
+  output.writeUInt32LE(0x1000, section + 12);
+  output.writeUInt32LE(512, section + 16);
+  output.writeUInt32LE(512, section + 20);
+  if (imports.length > 0) {
+    const descriptorSize = (imports.length + 1) * 20;
+    let nameOffset = descriptorSize;
+    for (const [index, library] of imports.entries()) {
+      const encoded = Buffer.from(`${library}\0`, "ascii");
+      if (!/^[A-Za-z0-9_.-]{1,255}\.dll$/i.test(library) || nameOffset + encoded.length > 512) {
+        throw new Error("test PE import fixture is invalid");
+      }
+      output.writeUInt32LE(0x1000 + nameOffset, 512 + index * 20 + 12);
+      encoded.copy(output, 512 + nameOffset);
+      nameOffset += encoded.length;
+    }
+    output.writeUInt32LE(0x1000, optionalHeader + 120);
+    output.writeUInt32LE(descriptorSize, optionalHeader + 124);
+  }
+  return output;
+}
+
+function portableExecutableWithDelayImports(machine, imports) {
+  const output = portableExecutable(machine);
+  const descriptorSize = (imports.length + 1) * 32;
+  let nameOffset = descriptorSize;
+  for (const [index, library] of imports.entries()) {
+    const encoded = Buffer.from(`${library}\0`, "ascii");
+    if (!/^[A-Za-z0-9_.-]{1,255}\.dll$/i.test(library) || nameOffset + encoded.length > 512) {
+      throw new Error("test PE delay-import fixture is invalid");
+    }
+    output.writeUInt32LE(1, 512 + index * 32);
+    output.writeUInt32LE(0x1000 + nameOffset, 512 + index * 32 + 4);
+    encoded.copy(output, 512 + nameOffset);
+    nameOffset += encoded.length;
+  }
+  output.writeUInt32LE(0x1000, 152 + 112 + 13 * 8);
+  output.writeUInt32LE(descriptorSize, 152 + 112 + 13 * 8 + 4);
   return output;
 }
 
