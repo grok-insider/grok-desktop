@@ -20,7 +20,7 @@ import {
   electronPackagerMetadata,
   hardenElectronExecutable,
   preparePackagingSource,
-  readableFuseState,
+  readVerifiedFuseState,
 } from "./package-windows.mjs";
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -144,7 +144,7 @@ async function main() {
       artifact: {
         file: packageName, size: metadata.size, sha256: artifactSha256,
       },
-      fuses: await readableFuseState(executable),
+      fuses: await readVerifiedFuseState(executable),
     };
     await writeFile(
       path.join(outputRoot, "windows-package.json"),
