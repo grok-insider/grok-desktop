@@ -217,24 +217,37 @@ jobs:
             Remove-Item -LiteralPath $stage -Recurse -Force
           }
           New-Item -ItemType Directory -Force (Join-Path $stage "bin/components/grok-acp/bin") | Out-Null
-          pnpm --filter @grok-desktop/desktop build:windows-daemon -- `
+          pnpm --filter @grok-desktop/desktop build:windows-daemon `
             --arch x64 --out (Join-Path $stage "bin/grok-daemon.exe") `
             --acp-pinned-manifest $packageManifest
+          if ($LASTEXITCODE -ne 0) { throw "Windows native runtime build failed" }
+          foreach ($nativeExecutable in @("grok-daemon.exe", "grok-host-tools-mcp.exe")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $stage "bin/$nativeExecutable") -PathType Leaf)) {
+              throw "Windows native runtime output is incomplete"
+            }
+          }
           $pin = Get-Content -Raw $sourceManifest | ConvertFrom-Json
           curl.exe --fail --location --proto '=https' --tlsv1.2 `
             --output (Join-Path $stage "bin/components/grok-acp/bin/grok.exe") $pin.sourceUrl
+          if ($LASTEXITCODE -ne 0) { throw "official Grok component download failed" }
           $component = Get-Item (Join-Path $stage "bin/components/grok-acp/bin/grok.exe")
           if ($component.Length -ne $pin.size) { throw "official Grok component size mismatch" }
           if ((Get-FileHash -Algorithm SHA256 $component.FullName).Hash.ToLowerInvariant() -ne $pin.sha256) {
             throw "official Grok component digest mismatch"
           }
           Copy-Item $sourceManifest (Join-Path $stage "bin/components/grok-acp/pinned-component.json")
+          foreach ($componentFile in @("bin/components/grok-acp/bin/grok.exe", "bin/components/grok-acp/pinned-component.json")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $stage $componentFile) -PathType Leaf)) {
+              throw "Windows official component staging is incomplete"
+            }
+          }
           "CORE_STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Assemble and sign core MSIX
         shell: pwsh
         run: |
           pnpm --filter @grok-desktop/desktop package:windows-core `
             --arch x64 --channel $env:RELEASE_CHANNEL --stage $env:CORE_STAGE
+          if ($LASTEXITCODE -ne 0) { throw "Windows core packaging failed" }
       - name: Remove preview private signing material
         if: always() && needs.resolve.outputs.channel == 'beta'
         shell: pwsh
