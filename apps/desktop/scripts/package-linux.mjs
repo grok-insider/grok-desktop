@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, createPublicKey } from "node:crypto";
 import { spawn } from "node:child_process";
 import { packager } from "@electron/packager";
+import { hardenElectronExecutable, readVerifiedFuseState } from "./electron-fuse-policy.mjs";
 import {
   inspectDaemonAcpCatalogTrustBytes,
   inspectDaemonAcpPinnedManifestBytes,
@@ -185,6 +186,7 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   const bin = path.join(appDir, "usr", "bin");
   await mkdir(bin, { recursive: true, mode: 0o755 });
   await cp(appDirectory, bin, { recursive: true, dereference: false, errorOnExist: true });
+  await readVerifiedFuseState(path.join(bin, executableName));
   const applicationDirectory = path.join(appDir, "usr", "share", "applications");
   const iconDirectory = path.join(appDir, "usr", "share", "icons", "hicolor", "32x32", "apps");
   const metadataDirectory = path.join(appDir, "usr", "share", "metainfo");
@@ -232,6 +234,25 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   });
   await assertExecutableFile(appImage, "AppImage");
   return appImage;
+}
+
+async function inspectGeneratedZsync(appImage) {
+  const zsyncPath = `${appImage}.zsync`;
+  const source = await openRetainedSource(
+    zsyncPath,
+    "generated AppImage zsync metadata",
+    128 * 1024 * 1024,
+  );
+  try {
+    return {
+      path: zsyncPath,
+      filename: path.basename(zsyncPath),
+      size: Number(source.identity.size),
+      sha256: await hashRetainedSource(source),
+    };
+  } finally {
+    await source.handle.close();
+  }
 }
 
 async function stageAppImageUpdateTool(resourcesBin, options) {
@@ -754,6 +775,8 @@ async function main() {
     const appDirectory = packagedDirectories[0];
     const executable = path.join(appDirectory, executableName);
     await assertExecutableFile(executable, "packaged electron executable");
+    await hardenElectronExecutable(executable);
+    const fuses = await readVerifiedFuseState(executable);
 
     const packagedDaemon = path.join(appDirectory, "resources", "bin", "grok-daemon");
     await assertExecutableFile(packagedDaemon, "packaged daemon");
@@ -770,11 +793,12 @@ async function main() {
       mode: 0o644,
     });
 
-    await verifyLinuxPackagedLayout(appDirectory);
+    const packagedLayout = await verifyLinuxPackagedLayout(appDirectory);
     const appImage = await createLinuxAppImage(appDirectory, options.out, options, packageMetadata.version);
+    const zsync = await inspectGeneratedZsync(appImage);
 
     const record = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       product: "grok-desktop",
       platform: "linux",
       version: packageMetadata.version,
@@ -782,9 +806,16 @@ async function main() {
       appDirectory,
       executable,
       appImage,
+      fuses,
       appImageSha256: await sha256File(appImage),
+      zsync: {
+        filename: zsync.filename,
+        size: zsync.size,
+        sha256: zsync.sha256,
+      },
       updateToolSha256: await sha256File(stagedUpdateTool),
       daemonSha256: await sha256File(packagedDaemon),
+      hostToolsHelperSha256: await sha256File(packagedLayout.hostToolsHelperPath),
       daemonSource,
       acp: stagedAcp ? {
         staged: true,

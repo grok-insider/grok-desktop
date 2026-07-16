@@ -74,13 +74,28 @@ Outputs under `out/release/linux/<arch>/`:
 - `linux-service/` — optional `/usr/libexec`, systemd unit, and root-installed
   environment-file layout for `linux-vm-service`
 - `unpacked/.../grok-desktop.desktop` — includes the protocol handler
-- `linux-package.json` — layout record and daemon digest
+- `linux-package.json` — v2 layout record, daemon digest, and verified Electron fuse state
 
 Release inputs are opened without following links and retained while they are
 hashed and copied. Device/inode/size/mode are revalidated, output creation is
 exclusive, copying is bounded, and the signed catalog and executable digest are
 checked again after staging. The vendor `grok` bytes are never rewritten or
 first-party signed.
+
+Before AppImage assembly, packaging applies the shared Electron fuse policy and
+re-reads every fuse from both the packaged executable and its AppDir copy. The
+release workflow then runs `release:verify-linux-artifact` before upload: it
+hashes the final AppImage against the v2 record, extracts it without a FUSE
+mount, re-reads the embedded Electron fuse wire, and verifies the embedded
+daemon, Host Tools helper, update helper, and staged official Grok component
+against their recorded or tracked digests. It also binds the `.zsync` bytes by
+SHA-256 and checks that their bounded header names the exact AppImage length and
+SHA-1 required by the zsync format.
+`EnableEmbeddedAsarIntegrityValidation` is kept aligned with the cross-platform
+policy, but Electron currently enforces embedded ASAR integrity only on macOS
+and Windows; Linux relies on the remaining fuse restrictions plus signed update
+metadata and exact artifact verification. See the
+[Electron fuse documentation](https://www.electronjs.org/docs/latest/tutorial/fuses).
 
 ## Grok Build host authentication
 

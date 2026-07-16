@@ -117,6 +117,12 @@ jobs:
             --appimageupdatetool "$RUNNER_TEMP/appimageupdatetool.AppImage" \
             --appimageupdatetool-sha256 "$APPIMAGEUPDATETOOL_SHA256" \
             --update-trust-file "$RUNNER_TEMP/update-trusted-keys.json"
+      - name: Verify final Linux release artifact
+        run: |
+          pnpm --filter @grok-desktop/desktop release:verify-linux-artifact -- \
+            --appimage "$GITHUB_WORKSPACE/out/release/linux/x64/GrokDesktop-$RELEASE_CHANNEL-x64.AppImage" \
+            --record "$GITHUB_WORKSPACE/out/release/linux/x64/linux-package.json" \
+            --acp-pin "$GITHUB_WORKSPACE/apps/desktop/release/components/grok-build/linux-x64.json"
       - uses: actions/upload-artifact@v7
         with:
           name: release-linux-x64
