@@ -32,5 +32,7 @@ test("publishes binaries only from an immutable version tag", () => {
   const workflow = read(".github/workflows/release.yml");
   assert.match(workflow, /tags:\s*\n\s*- "v\*\.\*\.\*"/);
   assert.match(workflow, /test "\$GITHUB_REF_NAME" = "v\$version"/);
+  assert.match(workflow, /appimagetool\/releases\/download\/1\.9\.1\/appimagetool-x86_64\.AppImage/);
+  assert.doesNotMatch(workflow, /appimagetool\/releases\/download\/continuous/);
   assert.match(workflow, /gh release create "\$GITHUB_REF_NAME" release-assets\/\*/);
 });
