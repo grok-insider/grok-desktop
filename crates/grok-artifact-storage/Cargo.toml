@@ -8,8 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.1" }
-grok-domain = { path = "../grok-domain", version = "0.0.1" }
+grok-application = { path = "../grok-application", version = "0.0.2" }
+grok-domain = { path = "../grok-domain", version = "0.0.2" }
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

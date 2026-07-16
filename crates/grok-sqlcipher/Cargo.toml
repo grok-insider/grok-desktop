@@ -9,8 +9,8 @@ rust-version.workspace = true
 [dependencies]
 async-trait.workspace = true
 fs2.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.1" }
-grok-domain = { path = "../grok-domain", version = "0.0.1" }
+grok-application = { path = "../grok-application", version = "0.0.2" }
+grok-domain = { path = "../grok-domain", version = "0.0.2" }
 hex = "0.4.3"
 rusqlite = { version = "0.38.0", features = ["backup", "bundled-sqlcipher-vendored-openssl"] }
 sha2.workspace = true
@@ -26,7 +26,7 @@ rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
 futures-util.workspace = true
-grok-memory = { path = "../grok-memory", version = "0.0.1" }
+grok-memory = { path = "../grok-memory", version = "0.0.2" }
 tempfile = "3.27.0"
 
 [lints]
