@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.10](https://github.com/grok-insider/grok-desktop/compare/v0.0.9...v0.0.10) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** harden Linux Electron artifacts ([0958346](https://github.com/grok-insider/grok-desktop/commit/09583462133334b19b8b7dc3457edeeaaee64bb2))
+* **release:** harden Linux Electron artifacts ([bfc6e6c](https://github.com/grok-insider/grok-desktop/commit/bfc6e6c25ca8a1ba5bc1a416f1b8b60477cc367e))
+* **release:** harden Linux Electron artifacts ([085d511](https://github.com/grok-insider/grok-desktop/commit/085d511bf3c85f5e9193ac45b5542688ec533504))
+* **release:** open verification inputs atomically ([6473284](https://github.com/grok-insider/grok-desktop/commit/6473284bb53a872732cebec7ac1d2a3e3cca78e2))
+
 ## [0.0.9](https://github.com/grok-insider/grok-desktop/compare/v0.0.8...v0.0.9) (2026-07-16)
 
 ### Highlights
