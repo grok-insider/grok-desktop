@@ -81,6 +81,15 @@ The Windows job also requires a qualified, ephemeral runner with labels
 approval, build input, update trust, or redistribution evidence must stop the
 release before publication.
 
+Before registering that runner, remove the previous candidate's Actions
+workspace with an administrator identity and recreate the runner work root
+with ACL inheritance for the account that will run `Runner.Worker`. Reusing a
+workspace across runner identities is forbidden: packaged Electron files can
+retain a narrower ACL and make `actions/checkout` loop while trying to remove
+an inaccessible stale tree. Toolchain and explicitly documented dependency
+caches may persist outside the workspace; source trees, build outputs, runner
+diagnostics, and registration state may not.
+
 The `beta-release` environment is the promotion hold. Linux and Windows build
 artifacts remain workflow artifacts for seven days while the exact bytes are
 qualified. Approving publication signs update metadata, creates an SPDX SBOM,
@@ -99,8 +108,9 @@ pnpm check
 
 Then confirm that the release PR is current with `master`, every required check
 is green, the protected environments contain the correct channel inputs, and
-the qualified Windows worker is online. Never create or repair a release tag
-manually outside the documented workflows.
+the qualified Windows worker is online. Confirm the candidate workspace was
+recreated for the current runner service identity before registration. Never
+create or repair a release tag manually outside the documented workflows.
 
 Release tool downloads must use immutable versioned release assets with a
 tracked SHA-256. Do not use rolling or `continuous` asset URLs: a byte change

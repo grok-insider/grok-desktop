@@ -10,9 +10,13 @@ add the official ACP component and privileged broker only as one complete,
 verified input set.
 
 ```sh
+repo_root="$(git rev-parse --show-toplevel)"
+runtime="$repo_root/result-portable-linux-runtime"
 pnpm --filter @grok-desktop/desktop build
-cargo build -p grok-daemon --release   # or use target/debug
+nix build --out-link "$runtime" "$repo_root#portableLinuxRuntime"
 pnpm package:linux -- --arch x64 \
+  --daemon "$runtime/bin/grok-daemon" \
+  --host-tools-helper "$runtime/bin/grok-host-tools-mcp" \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 <lowercase-sha256> \
   --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
@@ -24,6 +28,7 @@ Optional:
 
 ```sh
 pnpm package:linux -- --arch x64 --daemon /path/to/grok-daemon --out /path/to/out \
+  --host-tools-helper /path/to/grok-host-tools-mcp \
   --appimagetool /path/to/pinned/appimagetool-x86_64.AppImage \
   --appimagetool-sha256 <lowercase-sha256> \
   --appimageupdatetool /path/to/pinned/appimageupdatetool-x86_64.AppImage \
@@ -38,6 +43,7 @@ pass all related inputs together:
 pnpm package:linux -- \
   --arch x64 \
   --daemon /path/to/trust-bound/grok-daemon \
+  --host-tools-helper /path/to/grok-host-tools-mcp \
   --acp-catalog /path/to/catalog.json \
   --acp-component /path/to/grok \
   --acp-trust-file /path/to/acp-public-keys.txt \
@@ -56,6 +62,24 @@ and the bounded Ed25519 stable-channel public trust set,
 preserves the already-verified Electron layout, and emits a stable AppImage plus
 its `.zsync` differential-update metadata. Release workers pin the tool bytes;
 the packaging command never downloads or discovers a tool at runtime.
+
+Public AppImages accept only self-contained ELF64 builds of the first-party
+`grok-daemon` and `grok-host-tools-mcp` runtimes. The flake's
+`portableLinuxRuntime` output cross-builds both executables against static musl.
+Packaging and final artifact verification independently parse their ELF
+program headers and reject `PT_INTERP`, dynamic dependency/control tags,
+including `DT_NEEDED`, `DT_RPATH`, `DT_RUNPATH`, audit, filter, auxiliary, and
+config tags, Nix-store loaders, and binaries coupled to the release worker's
+glibc. A dependency-free `PT_DYNAMIC` is accepted only on `ET_DYN` executables
+that declare `DF_1_PIE`, preserving ASLR without misclassifying a shared object
+or fixed-address executable. Rewriting an ELF interpreter or copying a
+build-host libc into the AppImage is not an accepted portability mechanism.
+
+The v0.0.10 qualification run established this as a release gate: both
+first-party Rust executables carried an unbundled `/nix/store/.../ld-linux`
+`PT_INTERP`, so they failed as soon as `/nix` was absent. Portable native
+runtime inspection is therefore required once before packaging and again from
+the extracted final AppImage; a digest match alone is insufficient.
 
 `GROK_ACP_CATALOG_TRUSTED_KEYS` and its
 `grok-acp-catalog-trust-v1:<sha256-of-raw-value>` build binding must be embedded
@@ -88,9 +112,10 @@ release workflow then runs `release:verify-linux-artifact` before upload: it
 hashes the final AppImage against the v2 record, extracts it without a FUSE
 mount, re-reads the embedded Electron fuse wire, and verifies the embedded
 daemon, Host Tools helper, update helper, and staged official Grok component
-against their recorded or tracked digests. It also binds the `.zsync` bytes by
-SHA-256 and checks that their bounded header names the exact AppImage length and
-SHA-1 required by the zsync format.
+against their recorded or tracked digests. The verifier also confirms that the
+two first-party native runtimes remain static ELF executables after extraction.
+It binds the `.zsync` bytes by SHA-256 and checks that their bounded header
+names the exact AppImage length and SHA-1 required by the zsync format.
 `EnableEmbeddedAsarIntegrityValidation` is kept aligned with the cross-platform
 policy, but Electron currently enforces embedded ASAR integrity only on macOS
 and Windows; Linux relies on the remaining fuse restrictions plus signed update

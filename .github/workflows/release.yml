@@ -69,14 +69,26 @@ jobs:
           test "${{ needs.resolve.outputs.channel }}" = stable -o "${{ needs.resolve.outputs.channel }}" = beta
           echo "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" >> "$GITHUB_ENV"
       - run: pnpm build
-      - name: Build native runtime with tracked official Grok pin
+      - name: Build portable native runtime with tracked official Grok pin
         shell: bash
         run: |
-          manifest="apps/desktop/release/components/grok-build/linux-x64.json"
-          binding="grok-acp-pinned-manifest-v1:$(sha256sum "$manifest" | cut -d' ' -f1)"
-          GROK_ACP_PINNED_MANIFEST_BINDING="$binding" \
-            nix develop --command cargo build --locked --release \
-              -p grok-daemon -p grok-host-tools-mcp
+          runtime="$RUNNER_TEMP/grok-portable-linux-runtime"
+          nix build --print-build-logs --out-link "$runtime" .#portableLinuxRuntime
+          for executable in grok-daemon grok-host-tools-mcp; do
+            test -x "$runtime/bin/$executable"
+            node --input-type=module - "$runtime/bin/$executable" "$executable" <<'NODE'
+          import { inspectPortableLinuxRuntimeFile } from "./apps/desktop/scripts/linux-native-runtime-policy.mjs";
+          const [file, label] = process.argv.slice(2);
+          await inspectPortableLinuxRuntimeFile(file, "x64", label);
+          NODE
+            if readelf --program-headers --wide "$runtime/bin/$executable" \
+                | grep -Eq '(^|[[:space:]])INTERP([[:space:]]|$)' \
+                || readelf --dynamic --wide "$runtime/bin/$executable" \
+                | grep -Eq '\((NEEDED|RPATH|RUNPATH|CONFIG|DEPAUDIT|AUDIT|AUXILIARY|FILTER)\)'; then
+              echo "$executable depends on a host loader or shared library" >&2
+              exit 1
+            fi
+          done
       - name: Acquire exact official Grok Build component
         shell: bash
         run: |
@@ -110,6 +122,8 @@ jobs:
           test -n "$release_date"
           pnpm package:linux -- --arch x64 --channel "$RELEASE_CHANNEL" \
             --release-date "$release_date" \
+            --daemon "$RUNNER_TEMP/grok-portable-linux-runtime/bin/grok-daemon" \
+            --host-tools-helper "$RUNNER_TEMP/grok-portable-linux-runtime/bin/grok-host-tools-mcp" \
             --acp-pinned-manifest release/components/grok-build/linux-x64.json \
             --acp-component "$RUNNER_TEMP/grok" \
             --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \

@@ -31,6 +31,29 @@ function sha1(contents) {
   return createHash("sha1").update(contents).digest("hex");
 }
 
+function staticElfFixture(architecture = "x64", suffix = "") {
+  const bytes = Buffer.alloc(64 + 56 + Buffer.byteLength(suffix));
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1], 0);
+  bytes.writeUInt16LE(2, 16);
+  bytes.writeUInt16LE(architecture === "x64" ? 62 : 183, 18);
+  bytes.writeUInt32LE(1, 20);
+  bytes.writeBigUInt64LE(0x40_0040n, 24);
+  bytes.writeBigUInt64LE(64n, 32);
+  bytes.writeUInt16LE(64, 52);
+  bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(1, 56);
+  bytes.writeUInt32LE(1, 64);
+  bytes.writeUInt32LE(5, 68);
+  bytes.writeBigUInt64LE(0n, 72);
+  bytes.writeBigUInt64LE(0x40_0000n, 80);
+  bytes.writeBigUInt64LE(0x40_0000n, 88);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 96);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 104);
+  bytes.writeBigUInt64LE(0x1000n, 112);
+  bytes.write(suffix, 120);
+  return bytes;
+}
+
 function hardenedFuseWire() {
   const state = [];
   for (const { option, enabled } of ELECTRON_FUSE_POLICY) {
@@ -46,8 +69,8 @@ async function createFixture(t, options = {}) {
   const zsyncPath = `${appImagePath}.zsync`;
   const recordPath = path.join(root, "linux-package.json");
   const appImageBytes = Buffer.from("fixture AppImage bytes");
-  const daemonBytes = Buffer.from("fixture daemon bytes");
-  const hostToolsHelperBytes = Buffer.from("fixture Host Tools helper bytes");
+  const daemonBytes = staticElfFixture("x64", "fixture daemon bytes");
+  const hostToolsHelperBytes = staticElfFixture("x64", "fixture Host Tools helper bytes");
   const updateToolBytes = Buffer.from("fixture update tool bytes");
   const componentBytes = Buffer.from("fixture official Grok component bytes");
   await writeFile(appImagePath, appImageBytes, { mode: 0o755 });
@@ -265,10 +288,10 @@ test("rejects an extracted Electron executable whose raw fuse wire is not harden
 
 test("rejects mismatched embedded daemon, update tool, and ACP component bytes", async (t) => {
   for (const [name, options, pattern] of [
-    ["daemon", { embeddedDaemonBytes: Buffer.from("tampered daemon") }, /embedded daemon differs/],
+    ["daemon", { embeddedDaemonBytes: staticElfFixture("x64", "tampered daemon") }, /embedded daemon differs/],
     [
       "Host Tools helper",
-      { embeddedHostToolsHelperBytes: Buffer.from("tampered Host Tools helper") },
+      { embeddedHostToolsHelperBytes: staticElfFixture("x64", "tampered Host Tools helper") },
       /embedded Host Tools helper differs/,
     ],
     ["update tool", { embeddedUpdateToolBytes: Buffer.from("tampered updater") }, /embedded update tool differs/],

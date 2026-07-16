@@ -45,6 +45,13 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.doesNotMatch(workflow, /\$\{\{ secrets\.GROK_WINDOWS_PREVIEW_CERT/);
   assert.doesNotMatch(workflow, /Provision isolated preview signing certificate/);
   assert.doesNotMatch(workflow, /PREVIEW_PFX|\.cer\b|\.appinstaller\b|\.msix\b/);
+  assert.match(workflow, /nix build --print-build-logs --out-link "\$runtime" \.#portableLinuxRuntime/);
+  assert.doesNotMatch(workflow, /nix develop --command cargo build/);
+  assert.match(workflow, /readelf --program-headers --wide/);
+  assert.match(workflow, /inspectPortableLinuxRuntimeFile/);
+  assert.match(workflow, /NEEDED\|RPATH\|RUNPATH\|CONFIG\|DEPAUDIT\|AUDIT\|AUXILIARY\|FILTER/);
+  assert.match(workflow, /--daemon "\$RUNNER_TEMP\/grok-portable-linux-runtime\/bin\/grok-daemon"/);
+  assert.match(workflow, /--host-tools-helper "\$RUNNER_TEMP\/grok-portable-linux-runtime\/bin\/grok-host-tools-mcp"/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
   assert.match(workflow, /\$packageManifest = "release\/components\/grok-build\/windows-x64\.json"/);
   assert.match(
