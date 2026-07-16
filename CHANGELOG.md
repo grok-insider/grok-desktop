@@ -2,6 +2,10 @@
 
 ## [0.0.6](https://github.com/grok-insider/grok-desktop/compare/v0.0.5...v0.0.6) (2026-07-16)
 
+### Highlights
+
+- Fixed a build failure that could occur on Windows during runtime packaging.
+
 
 ### Bug Fixes
 

@@ -10,7 +10,7 @@ description = "Fail-closed Rust client for the narrow Grok Desktop Windows VM se
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.5" }
+grok-application = { path = "../grok-application", version = "0.0.6" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
