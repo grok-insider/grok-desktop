@@ -165,8 +165,13 @@ export function readCoreWindowsReleaseEnvironment(environment) {
   if (!path.win32.isAbsolute(signToolPath)) throw new Error("GROK_WINDOWS_SIGNTOOL_PATH must be an absolute Windows path");
   if (!path.win32.isAbsolute(powershellPath)) throw new Error("GROK_WINDOWS_POWERSHELL_PATH must be an absolute Windows path");
   const timestampUrl = new URL(timestampServer);
-  if (timestampUrl.protocol !== "https:" || timestampUrl.username || timestampUrl.password) {
-    throw new Error("GROK_WINDOWS_TIMESTAMP_SERVER must be an unauthenticated HTTPS URL");
+  const approvedDigiCertRfc3161Endpoint =
+    timestampServer === "http://timestamp.digicert.com";
+  if ((timestampUrl.protocol !== "https:" && !approvedDigiCertRfc3161Endpoint) ||
+      timestampUrl.username || timestampUrl.password) {
+    throw new Error(
+      "GROK_WINDOWS_TIMESTAMP_SERVER must be unauthenticated HTTPS or the approved DigiCert RFC 3161 endpoint",
+    );
   }
   return {
     packageIdentity,

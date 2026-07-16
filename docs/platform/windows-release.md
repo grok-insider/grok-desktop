@@ -299,7 +299,12 @@ arguments are rejected. Ambient Electron signing variables such as
 `WINDOWS_CERTIFICATE_FILE`, `CSC_LINK`, and their password variants also abort
 the release. Signing and verification subprocesses receive a minimal allowlist
 of non-secret operating-system environment variables. The timestamp endpoint
-must use HTTPS.
+must use HTTPS, except for the exact Microsoft-documented DigiCert RFC 3161
+endpoint `http://timestamp.digicert.com`. That narrow exception is necessary
+because Windows SignTool rejects the HTTPS form on the qualified worker. RFC
+3161 sends a digest rather than the signed artifact or private key, and the
+returned timestamp token is cryptographically verified. Other unauthenticated
+HTTP origins, ports, paths, credentials, queries, and fragments remain rejected.
 
 `GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON` maps approved release key IDs to
 base64-encoded Ed25519 SubjectPublicKeyInfo documents. It contains public trust

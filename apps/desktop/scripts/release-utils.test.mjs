@@ -323,7 +323,20 @@ test("accepts only public trust and hardware or certificate-store signing policy
   }), /hardware-backed/);
   assert.throws(() => readReleaseEnvironment({
     ...environment, GROK_WINDOWS_TIMESTAMP_SERVER: "http://timestamp.invalid",
-  }), /HTTPS/);
+  }), /approved DigiCert RFC 3161 endpoint/);
+  assert.equal(readReleaseEnvironment({
+    ...environment, GROK_WINDOWS_TIMESTAMP_SERVER: "http://timestamp.digicert.com",
+  }).timestampServer, "http://timestamp.digicert.com");
+  for (const timestampServer of [
+    "http://timestamp.digicert.com:80",
+    "http://timestamp.digicert.com/rfc3161",
+    "http://user@timestamp.digicert.com",
+  ]) {
+    assert.throws(
+      () => readReleaseEnvironment({ ...environment, GROK_WINDOWS_TIMESTAMP_SERVER: timestampServer }),
+      /approved DigiCert RFC 3161 endpoint/,
+    );
+  }
   for (const name of ["WINDOWS_CERTIFICATE_FILE", "CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_LINK"]) {
     assert.throws(() => readReleaseEnvironment({ ...environment, [name]: "forbidden" }), /ambient/);
   }
