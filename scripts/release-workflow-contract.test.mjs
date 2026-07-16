@@ -38,5 +38,14 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.match(workflow, /test "\$GITHUB_REF_NAME" = "v\$version"/);
   assert.match(workflow, /appimagetool\/releases\/download\/1\.9\.1\/appimagetool-x86_64\.AppImage/);
   assert.doesNotMatch(workflow, /appimagetool\/releases\/download\/continuous/);
+  assert.match(workflow, /WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
+  assert.match(workflow, /"\*\$\{runnerSid\}:\(R\)"/);
+  assert.doesNotMatch(workflow, /"\$\{env:USERNAME\}:\(R\)"/);
+  assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
+  assert.match(workflow, /\$packageManifest = "release\/components\/grok-build\/windows-x64\.json"/);
+  assert.doesNotMatch(
+    workflow,
+    /pnpm package:linux[^]*--acp-pinned-manifest apps\/desktop\/release\/components\/grok-build\/linux-x64\.json/,
+  );
   assert.match(workflow, /gh release create "\$GITHUB_REF_NAME" release-assets\/\*/);
 });
