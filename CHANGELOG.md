@@ -2,6 +2,10 @@
 
 ## [0.0.11](https://github.com/grok-insider/grok-desktop/compare/v0.0.10...v0.0.11) (2026-07-16)
 
+### Highlights
+
+- Fixed portable Linux runtime now included in the release
+
 
 ### Bug Fixes
 
