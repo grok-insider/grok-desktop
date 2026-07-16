@@ -106,7 +106,10 @@ jobs:
           chmod 700 "$RUNNER_TEMP/appimagetool.AppImage" "$RUNNER_TEMP/appimageupdatetool.AppImage"
       - name: Package updateable AppImage
         run: |
+          release_date="$(git show -s --format=%cs "$GITHUB_SHA")"
+          test -n "$release_date"
           pnpm package:linux -- --arch x64 --channel "$RELEASE_CHANNEL" \
+            --release-date "$release_date" \
             --acp-pinned-manifest release/components/grok-build/linux-x64.json \
             --acp-component "$RUNNER_TEMP/grok" \
             --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \
