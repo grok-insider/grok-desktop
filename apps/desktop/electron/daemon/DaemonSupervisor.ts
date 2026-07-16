@@ -119,6 +119,8 @@ const CONVERSATION_TURN_PAGE_SIZE = 100;
 const MAX_RUN_EVENT_SUBSCRIPTIONS = 8;
 const MAX_WORKSPACE_SEARCH_RESULTS = 100;
 const DAEMON_STARTUP_NONCE_BYTES = 32;
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
+const FORCED_SHUTDOWN_CONFIRMATION_TIMEOUT_MS = 2_000;
 
 export type DaemonRunEventKind =
   | "created"
@@ -176,6 +178,7 @@ export class DaemonSupervisor {
   private child: ChildProcess | undefined;
   private protocol: DaemonProtocolClient | undefined;
   private startPromise: Promise<void> | undefined;
+  private stopPromise: Promise<void> | undefined;
   private rpcGeneration = 0;
   private unexpectedRestartTimer: NodeJS.Timeout | undefined;
   private unexpectedRestartTimes: number[] = [];
@@ -915,9 +918,14 @@ export class DaemonSupervisor {
     return mapApprovalDecisionResponse(approval, approvalId, expectedRevision, approved);
   }
 
-  async stop(): Promise<void> {
-    if (this.stopping) return;
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
+    this.stopPromise = Promise.resolve().then(() => this.stopInternal());
+    return this.stopPromise;
+  }
+
+  private async stopInternal(): Promise<void> {
     this.ready = false;
     if (this.unexpectedRestartTimer) clearTimeout(this.unexpectedRestartTimer);
     this.unexpectedRestartTimer = undefined;
@@ -933,7 +941,15 @@ export class DaemonSupervisor {
     const child = this.child;
     this.child = undefined;
     if (child && child.exitCode === null && child.signalCode === null) {
-      await stopChild(child);
+      try {
+        await stopChild(child);
+      } catch (error) {
+        if (child.exitCode === null && child.signalCode === null && !this.child) {
+          this.child = child;
+        }
+        this.setDegraded("The local daemon could not be confirmed stopped.");
+        throw error;
+      }
     }
     if (this.platform !== "win32") {
       rmSync(this.runtimePath, { recursive: true, force: true });
@@ -3330,15 +3346,66 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 function stopChild(child: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    const force = setTimeout(() => {
-      child.kill("SIGKILL");
+  return new Promise((resolve, reject) => {
+    let gracefulTimeout: NodeJS.Timeout | undefined;
+    let forcedConfirmationTimeout: NodeJS.Timeout | undefined;
+    let settled = false;
+
+    const hasExited = () => child.exitCode !== null || child.signalCode !== null;
+    const cleanup = () => {
+      if (gracefulTimeout) clearTimeout(gracefulTimeout);
+      if (forcedConfirmationTimeout) clearTimeout(forcedConfirmationTimeout);
+      child.removeListener("exit", onExit);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve();
-    }, 2_000);
-    child.once("exit", () => {
-      clearTimeout(force);
-      resolve();
-    });
-    child.kill("SIGTERM");
+    };
+    const fail = (message: string, cause?: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(message, cause === undefined ? undefined : { cause }));
+    };
+    const onExit = () => finish();
+    const forceTermination = () => {
+      if (hasExited()) {
+        finish();
+        return;
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch (error) {
+        fail("daemon force termination failed", error);
+        return;
+      }
+      if (hasExited()) {
+        finish();
+        return;
+      }
+      forcedConfirmationTimeout = setTimeout(() => {
+        if (hasExited()) finish();
+        else fail("daemon exit was not confirmed after forced termination");
+      }, FORCED_SHUTDOWN_CONFIRMATION_TIMEOUT_MS);
+    };
+
+    child.once("exit", onExit);
+    if (hasExited()) {
+      finish();
+      return;
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      forceTermination();
+      return;
+    }
+    if (hasExited()) {
+      finish();
+      return;
+    }
+    gracefulTimeout = setTimeout(forceTermination, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
   });
 }

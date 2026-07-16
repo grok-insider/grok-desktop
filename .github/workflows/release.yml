@@ -33,7 +33,7 @@ jobs:
           channel="$(jq -r .channel <<< "$policy")"
           {
             echo "channel=$channel"
-            echo "windows_environment=${channel}-windows-signing"
+            echo "windows_environment=${channel}-windows-build"
             echo "publish_environment=${channel}-release"
             if [[ "$channel" = beta ]]; then echo "linux_environment=beta-build"; else echo "linux_environment=stable-release"; fi
           } >> "$GITHUB_OUTPUT"
@@ -136,24 +136,13 @@ jobs:
     environment:
       name: ${{ needs.resolve.outputs.windows_environment }}
     env:
-      GROK_MSIX_IDENTITY: ${{ vars.GROK_MSIX_IDENTITY }}
-      GROK_MSIX_PUBLISHER: ${{ vars.GROK_MSIX_PUBLISHER }}
-      GROK_MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.GROK_MSIX_PUBLISHER_DISPLAY_NAME }}
       GROK_WINDOWS_MAX_TESTED_VERSION: ${{ vars.GROK_WINDOWS_MAX_TESTED_VERSION }}
-      GROK_WINDOWS_SIGNTOOL_PATH: ${{ vars.GROK_WINDOWS_SIGNTOOL_PATH }}
-      GROK_WINDOWS_POWERSHELL_PATH: ${{ vars.GROK_WINDOWS_POWERSHELL_PATH }}
-      GROK_WINDOWS_TIMESTAMP_SERVER: ${{ vars.GROK_WINDOWS_TIMESTAMP_SERVER }}
-      GROK_WINDOWS_SIGNER_SHA1: ${{ vars.GROK_WINDOWS_SIGNER_SHA1 }}
-      GROK_WINDOWS_SIGN_ARGS_JSON: ${{ vars.GROK_WINDOWS_SIGN_ARGS_JSON }}
       GROK_WINDOWS_CARGO_PATH: ${{ vars.GROK_WINDOWS_CARGO_PATH }}
       GROK_WINDOWS_RUSTC_PATH: ${{ vars.GROK_WINDOWS_RUSTC_PATH }}
       GROK_WINDOWS_LINKER_PATH: ${{ vars.GROK_WINDOWS_LINKER_PATH }}
       GROK_WINDOWS_CARGO_CACHE: ${{ vars.GROK_WINDOWS_CARGO_CACHE }}
       GROK_WINDOWS_TOOLCHAIN_ENV_JSON: ${{ vars.GROK_WINDOWS_TOOLCHAIN_ENV_JSON }}
-      GROK_WINDOWS_GO_PATH: ${{ vars.GROK_WINDOWS_GO_PATH }}
-      GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON: ${{ vars.GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON }}
       GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
-      GROK_ACP_CATALOG_TRUSTED_KEYS: ${{ vars.GROK_ACP_CATALOG_TRUSTED_KEYS }}
       GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID }}
       GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
     steps:
@@ -174,34 +163,23 @@ jobs:
           if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
           $version = (Get-Content package.json | ConvertFrom-Json).version
           if ($env:GROK_UPDATE_TRUSTED_KEYS_JSON.Length -gt 65536) { throw "update trust is oversized" }
-          if ("${{ needs.resolve.outputs.channel }}" -eq "beta") {
-            if ($env:GROK_MSIX_IDENTITY -ne "GrokInsider.GrokDesktop.Preview") { throw "preview package identity is invalid" }
-            if ($env:GROK_MSIX_PUBLISHER -ne "CN=Grok Desktop Preview") { throw "preview publisher is invalid" }
-            if ($env:GROK_MSIX_PUBLISHER_DISPLAY_NAME -ne "Grok Desktop Preview") { throw "preview display name is invalid" }
+          foreach ($name in @(
+            "CSC_LINK",
+            "CSC_KEY_PASSWORD",
+            "WIN_CSC_LINK",
+            "WIN_CSC_KEY_PASSWORD",
+            "WINDOWS_CERTIFICATE_FILE",
+            "WINDOWS_CERTIFICATE_PASSWORD",
+            "GROK_WINDOWS_SIGNTOOL_PATH",
+            "GROK_WINDOWS_TIMESTAMP_SERVER",
+            "GROK_WINDOWS_SIGNER_SHA1",
+            "GROK_WINDOWS_SIGN_ARGS_JSON"
+          )) {
+            if ([Environment]::GetEnvironmentVariable($name)) {
+              throw "unsigned Windows packaging rejects ambient signing input: $name"
+            }
           }
           "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Provision isolated preview signing certificate
-        if: needs.resolve.outputs.channel == 'beta'
-        shell: pwsh
-        env:
-          PREVIEW_PFX_BASE64: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64 }}
-          PREVIEW_PFX_PASSWORD: ${{ secrets.GROK_WINDOWS_PREVIEW_CERT_PASSWORD }}
-        run: |
-          if (-not $env:PREVIEW_PFX_BASE64 -or -not $env:PREVIEW_PFX_PASSWORD) { throw "preview signing secrets are unavailable" }
-          $pfx = Join-Path $env:RUNNER_TEMP "grok-preview-signing.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PREVIEW_PFX_BASE64))
-          $runnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-          if (-not $runnerSid) { throw "runner security identity is unavailable" }
-          & icacls.exe $pfx /inheritance:r /grant:r "*${runnerSid}:(R)" | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "could not restrict preview certificate permissions" }
-          $password = ConvertTo-SecureString $env:PREVIEW_PFX_PASSWORD -AsPlainText -Force
-          $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable:$false
-          if (-not $certificate -or $certificate.Thumbprint -ne $env:GROK_WINDOWS_SIGNER_SHA1) { throw "preview certificate does not match the protected thumbprint" }
-          if ($certificate.Subject -ne $env:GROK_MSIX_PUBLISHER) { throw "preview certificate subject does not match the package publisher" }
-          $cer = Join-Path $env:RUNNER_TEMP "GrokDesktop-Preview.cer"
-          Export-Certificate -Cert $certificate -FilePath $cer -Type CERT | Out-Null
-          "PREVIEW_PFX_PATH=$pfx" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PREVIEW_CERT_PATH=$cer" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: pnpm build
       - name: Build and stage source-pinned native runtime
         shell: pwsh
@@ -242,30 +220,20 @@ jobs:
             }
           }
           "CORE_STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Assemble and sign core MSIX
+      - name: Assemble unsigned core NSIS installer
         shell: pwsh
         run: |
           pnpm --filter @grok-desktop/desktop package:windows-core `
             --arch x64 --channel $env:RELEASE_CHANNEL --stage $env:CORE_STAGE
           if ($LASTEXITCODE -ne 0) { throw "Windows core packaging failed" }
-      - name: Remove preview private signing material
-        if: always() && needs.resolve.outputs.channel == 'beta'
-        shell: pwsh
-        run: |
-          if ($env:GROK_WINDOWS_SIGNER_SHA1) {
-            Remove-Item "Cert:\CurrentUser\My\$env:GROK_WINDOWS_SIGNER_SHA1" -Force -ErrorAction SilentlyContinue
-          }
-          Remove-Item (Join-Path $env:RUNNER_TEMP "grok-preview-signing.pfx") -Force -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v7
         with:
           name: release-windows-x64
           if-no-files-found: error
           retention-days: 7
           path: |
-            out/release/windows/*/x64/GrokDesktop-*-x64.msix
-            out/release/windows/*/x64/GrokDesktop-*-x64.appinstaller
+            out/release/windows/*/x64/GrokDesktop-*-x64.exe
             out/release/windows/*/x64/*.json
-            ${{ env.PREVIEW_CERT_PATH }}
             apps/desktop/release/components/grok-build/windows-x64.json
 
   publish:
@@ -296,8 +264,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*
-          path: release-assets
+          path: release-downloads
           merge-multiple: true
+      - name: Stage the exact release asset allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="${{ needs.resolve.outputs.channel }}"
+          node scripts/stage-release-assets.mjs release-downloads release-assets "$channel"
       - name: Prepare protected signing inputs
         shell: bash
         env:
@@ -324,41 +298,34 @@ jobs:
           process.stdout.write(section.slice(section.indexOf("\n") + 1).trimStart());
           NODE
           test -s release-assets/release-notes.md
-          major="${version%%.*}"
-          remainder="${version#*.}"
-          minor="${remainder%%.*}"
-          if [[ "$major" = 0 && "$minor" = 0 ]]; then
-            cert_sha="$(sha256sum release-assets/GrokDesktop-Preview.cer | cut -d' ' -f1)"
-            notes="$(mktemp)"
-            {
-              printf '> **Preview release:** this 0.0.z build is prerelease software. Windows uses a self-signed preview certificate and a separate package identity. Install \140GrokDesktop-Preview.cer\140 into the current user Trusted People store only after verifying SHA-256 \140%s\140. A future stable certificate uses a separate identity and may require uninstall/reinstall.\n\n' "$cert_sha"
-              cat release-assets/release-notes.md
-            } > "$notes"
-            mv "$notes" release-assets/release-notes.md
-          fi
+          notes="$(mktemp)"
+          {
+            printf '> **Windows installer notice:** \140GrokDesktop-%s-x64.exe\140 is intentionally unsigned. Windows may show an Unknown Publisher or Microsoft Defender SmartScreen warning. Before proceeding, verify the installer against [\140SHA256SUMS\140](https://github.com/grok-insider/grok-desktop/releases/download/%s/SHA256SUMS) and the [GitHub artifact attestation](https://github.com/grok-insider/grok-desktop/attestations) for this release. Audit the corresponding [immutable source tag](https://github.com/grok-insider/grok-desktop/tree/%s).\n\n' "${{ needs.resolve.outputs.channel }}" "$GITHUB_REF_NAME" "$GITHUB_REF_NAME"
+            cat release-assets/release-notes.md
+          } > "$notes"
+          mv "$notes" release-assets/release-notes.md
       - name: Generate and verify signed update manifests
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           policy="$(node scripts/release-policy.mjs "$version")"
           channel="$(jq -r .channel <<< "$policy")"
-          native_version="$(jq -r .nativeVersion <<< "$policy")"
-          for target in linux:x64:AppImage win32:x64:msix; do
-            IFS=: read -r platform architecture extension <<< "$target"
-            native_package_version="$native_version"
-            [[ "$platform" == linux ]] && native_package_version="$version"
+          for target in linux:x64:AppImage:appimage win32:x64:exe:nsis-installer; do
+            IFS=: read -r platform architecture extension artifact_kind <<< "$target"
             artifact="release-assets/GrokDesktop-$channel-$architecture.$extension"
             manifest="release-assets/GrokDesktop-$channel-$platform-$architecture.update.json"
-            pnpm --filter @grok-desktop/desktop release:update-manifest -- \
+            pnpm --filter @grok-desktop/desktop release:update-manifest \
               --artifact "$artifact" --architecture "$architecture" --channel "$channel" \
+              --artifact-kind "$artifact_kind" \
               --key-id "$UPDATE_KEY_ID" --out "$manifest" --platform "$platform" \
               --private-key "$RUNNER_TEMP/update-private-key.pem" --version "$version" \
-              --native-package-version "$native_package_version" \
+              --native-package-version "$version" \
               --artifact-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/$(basename "$artifact")" \
               --release-notes-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/release-notes.md"
-            pnpm --filter @grok-desktop/desktop release:verify-update-manifest -- \
+            pnpm --filter @grok-desktop/desktop release:verify-update-manifest \
               --manifest "$manifest" --trust-file "$RUNNER_TEMP/update-trusted-keys.json" \
-              --platform "$platform" --architecture "$architecture" --version "$version"
+              --platform "$platform" --architecture "$architecture" --channel "$channel" \
+              --version "$version"
           done
           rm -f "$RUNNER_TEMP/update-private-key.pem"
       - name: Generate release SBOM
@@ -374,19 +341,15 @@ jobs:
         run: |
           set -euo pipefail
           channel="${{ needs.resolve.outputs.channel }}"
-          cert_sha=""
-          if [[ -f release-assets/GrokDesktop-Preview.cer ]]; then
-            cert_sha="$(sha256sum release-assets/GrokDesktop-Preview.cer | cut -d' ' -f1)"
-          fi
           jq -n \
             --arg schema "grok.release-evidence/v1" \
             --arg version "${GITHUB_REF_NAME#v}" \
             --arg channel "$channel" \
             --arg source "$GITHUB_SHA" \
             --arg workflow "$GITHUB_RUN_ID" \
-            --arg certificateSha256 "$cert_sha" \
+            --arg windowsCodeSigning "unsigned" \
             --arg promotionEnvironment "${{ needs.resolve.outputs.publish_environment }}" \
-            '{schema:$schema,version:$version,channel:$channel,sourceRevision:$source,workflowRunId:$workflow,promotionEnvironment:$promotionEnvironment,windowsPreviewCertificateSha256:$certificateSha256}' \
+            '{schema:$schema,version:$version,channel:$channel,sourceRevision:$source,workflowRunId:$workflow,promotionEnvironment:$promotionEnvironment,windowsCodeSigning:$windowsCodeSigning}' \
             > release-assets/release-evidence.json
           checksums="$(mktemp)"
           (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs -r sha256sum) > "$checksums"
@@ -396,9 +359,7 @@ jobs:
         with:
           subject-path: |
             release-assets/*.AppImage
-            release-assets/*.msix
-            release-assets/*.appinstaller
-            release-assets/*.cer
+            release-assets/*.exe
       - name: Publish immutable tag release
         shell: bash
         env:

@@ -4,16 +4,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { packager } from "@electron/packager";
-import { packageMSIX } from "electron-windows-msix";
+import { Arch, build, Platform } from "electron-builder";
 
 import {
-  createSigningToolEnvironment,
-  normalizeMsixVersion,
+  assertUnsignedPortableExecutable,
+  createUnsignedCoreWindowsInstallerConfiguration,
   parseReleaseArguments,
-  readCoreWindowsReleaseEnvironment,
-  renderManifest,
-  renderPreviewAppInstaller,
-  renderStableAppInstaller,
+  readUnsignedCoreWindowsReleaseEnvironment,
   sha256File,
   validateCoreWindowsInputs,
   verifyPackagedCoreWindowsLayout,
@@ -24,9 +21,6 @@ import {
   hardenElectronExecutable,
   preparePackagingSource,
   readableFuseState,
-  signAndVerifyDirectory,
-  signArtifact,
-  verifySignature,
 } from "./package-windows.mjs";
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -35,33 +29,25 @@ const productName = "Grok Desktop";
 
 async function main() {
   if (process.platform !== "win32") {
-    throw new Error("Windows packages must be assembled and signed on a Windows release worker");
+    throw new Error("Windows packages must be assembled on a Windows release worker");
   }
   const releaseArguments = parseReleaseArguments(process.argv.slice(2));
   if (releaseArguments.architecture !== "x64") {
     throw new Error("the public core package currently supports Windows x64 only");
   }
-  const environment = readCoreWindowsReleaseEnvironment(process.env);
+  const environment = readUnsignedCoreWindowsReleaseEnvironment(process.env);
   const packageMetadata = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
-  const msixVersion = normalizeMsixVersion(packageMetadata.version, releaseArguments.channel);
   const stageRoot = path.resolve(releaseArguments.stage ??
     path.join(repositoryRoot, "out", "release-inputs", "windows-core", "x64"));
   const outputRoot = path.resolve(releaseArguments.out ??
     path.join(repositoryRoot, "out", "release", "windows", releaseArguments.channel, "x64"));
   const inputs = await validateCoreWindowsInputs(stageRoot, { architecture: "x64" });
   await assertReleaseBuildExists();
-  const signingEnvironment = createSigningToolEnvironment(process.env);
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "grok-desktop-core-release-"));
   try {
     const sourceRoot = path.join(temporaryRoot, "source");
     await preparePackagingSource(sourceRoot, packageMetadata, environment.updateTrustedKeysJSON);
-    const windowsUpdateTrustPath = path.join(temporaryRoot, "windows-update-trust.json");
-    await writeFile(windowsUpdateTrustPath, `${JSON.stringify({
-      packageIdentity: environment.packageIdentity,
-      publisher: environment.publisher,
-      signerThumbprint: environment.signerThumbprint,
-    })}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
     await rm(outputRoot, { recursive: true, force: true });
     await mkdir(outputRoot, { recursive: true });
     const packagedDirectories = await packager({
@@ -73,7 +59,7 @@ async function main() {
       name: productName,
       executableName: productName,
       appVersion: packageMetadata.version,
-      buildVersion: msixVersion,
+      buildVersion: packageMetadata.version,
       ...electronPackagerMetadata(packageMetadata),
       appCopyright: "Copyright (c) 2026 Grok Insider",
       asar: true,
@@ -82,7 +68,6 @@ async function main() {
       icon: path.join(desktopRoot, "release", "windows", "assets", "icon.ico"),
       extraResource: [
         path.join(sourceRoot, "update-trusted-keys.json"),
-        windowsUpdateTrustPath,
         path.join(desktopRoot, "assets", "tray"),
         path.join(inputs.canonicalRoot, "bin"),
       ],
@@ -94,49 +79,58 @@ async function main() {
     const executable = path.join(appDirectory, `${productName}.exe`);
     await verifyPackagedCoreWindowsLayout(appDirectory, inputs, "x64");
     await hardenElectronExecutable(executable);
-    await signAndVerifyDirectory(appDirectory, environment, signingEnvironment);
-    await verifyPackagedCoreWindowsLayout(
-      appDirectory, inputs, "x64", { firstPartyBinariesSigned: true },
-    );
+    await verifyPackagedCoreWindowsLayout(appDirectory, inputs, "x64");
 
-    const manifestTemplate = await readFile(
-      path.join(desktopRoot, "release", "windows", "AppxManifest.xml.template"), "utf8",
-    );
-    const appxManifest = renderManifest(manifestTemplate, {
-      PACKAGE_IDENTITY: environment.packageIdentity,
-      PUBLISHER: environment.publisher,
-      PACKAGE_VERSION: msixVersion,
-      ARCHITECTURE: "x64",
-      PUBLISHER_DISPLAY_NAME: environment.publisherDisplayName,
-      MAX_TESTED_VERSION: environment.maxTestedVersion,
+    const packageName = `GrokDesktop-${releaseArguments.channel}-x64.exe`;
+    const builderOutput = path.join(temporaryRoot, "nsis");
+    const builderConfiguration = createUnsignedCoreWindowsInstallerConfiguration({
+      artifactName: packageName,
+      electronVersion: electronPackagerMetadata(packageMetadata).electronVersion,
+      iconPath: path.join(desktopRoot, "release", "windows", "assets", "icon.ico"),
+      includePath: path.join(desktopRoot, "release", "windows", "nsis-installer.nsh"),
+      outputDirectory: builderOutput,
     });
-    const appxManifestPath = path.join(temporaryRoot, "AppxManifest.xml");
-    await writeFile(appxManifestPath, appxManifest, { encoding: "utf8", mode: 0o600 });
-    const packageName =
-      `GrokDesktop-${packageMetadata.version}-${releaseArguments.channel}-x64.msix`;
-    const { msixPackage } = await packageMSIX({
-      appDir: appDirectory,
-      appManifest: appxManifestPath,
-      packageAssets: path.join(desktopRoot, "release", "windows", "assets"),
-      outputDir: outputRoot,
-      packageName,
-      createPri: true,
-      sign: false,
-      logLevel: "warn",
+    const artifacts = await build({
+      targets: Platform.WINDOWS.createTarget("nsis", Arch.x64),
+      projectDir: desktopRoot,
+      prepackaged: appDirectory,
+      config: builderConfiguration,
+      publish: "never",
     });
-    await signArtifact(msixPackage, environment, signingEnvironment);
-    const signer = await verifySignature(msixPackage, environment, signingEnvironment);
-    const metadata = await stat(msixPackage);
+    const nsisPackage = path.join(builderOutput, packageName);
+    if (!artifacts.some((artifact) => path.resolve(artifact) === path.resolve(nsisPackage))) {
+      throw new Error("Electron Builder did not return the canonical NSIS artifact");
+    }
+    const sourceMetadata = await stat(nsisPackage);
+    if (!sourceMetadata.isFile() || sourceMetadata.size < 1) {
+      throw new Error("Electron Builder returned an invalid NSIS artifact");
+    }
+    await assertUnsignedPortableExecutable(nsisPackage);
+    const sourceSha256 = await sha256File(nsisPackage);
+    await verifyPackagedCoreWindowsLayout(appDirectory, inputs, "x64");
+    const finalPackage = path.join(outputRoot, packageName);
+    await cp(nsisPackage, finalPackage, { errorOnExist: true });
+    const metadata = await stat(finalPackage);
+    const artifactSha256 = await sha256File(finalPackage);
+    if (!metadata.isFile() || metadata.size !== sourceMetadata.size || artifactSha256 !== sourceSha256) {
+      throw new Error("copied NSIS artifact does not match the builder output");
+    }
+    const signing = await assertUnsignedPortableExecutable(finalPackage);
     const releaseRecord = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       product: "grok-desktop",
       capabilityProfile: "core-host-tools-beta",
       deferredCapabilities: ["isolated-work", "media", "browser-automation", "scheduled-work"],
       version: packageMetadata.version,
-      msixVersion,
       channel: releaseArguments.channel,
       architecture: "x64",
-      packageIdentity: environment.packageIdentity,
+      format: "nsis",
+      codeSigning: signing.codeSigning,
+      applicationId: "com.grokinsider.grokdesktop",
+      installScope: "per-user",
+      minimumWindowsVersion: "10.0.22000.0",
+      maxTestedWindowsVersion: environment.maxTestedVersion,
+      protocolSchemes: ["grok-desktop"],
       officialGrokComponent: {
         version: inputs.manifest.version,
         sourceUrl: inputs.manifest.sourceUrl,
@@ -147,43 +141,16 @@ async function main() {
         provenanceEvidenceId: environment.acpProvenanceEvidenceID,
         redistributionEvidenceId: environment.acpRedistributionEvidenceID,
       },
-      signer,
       artifact: {
-        file: path.basename(msixPackage), size: metadata.size, sha256: await sha256File(msixPackage),
+        file: packageName, size: metadata.size, sha256: artifactSha256,
       },
       fuses: await readableFuseState(executable),
     };
     await writeFile(
-      path.join(outputRoot, `${packageName}.json`), `${JSON.stringify(releaseRecord, null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
+      path.join(outputRoot, "windows-package.json"),
+      `${JSON.stringify(releaseRecord, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600, flag: "wx" },
     );
-    await cp(msixPackage, path.join(outputRoot, `GrokDesktop-${releaseArguments.channel}-x64.msix`), {
-      errorOnExist: true,
-    });
-    if (releaseArguments.channel === "stable") {
-      await writeFile(
-        path.join(outputRoot, "GrokDesktop-stable-x64.appinstaller"),
-        renderStableAppInstaller({
-          architecture: "x64",
-          packageIdentity: environment.packageIdentity,
-          publisher: environment.publisher,
-          version: msixVersion,
-        }),
-        { encoding: "utf8", mode: 0o600, flag: "wx" },
-      );
-    } else if (/^0\.0\.[0-9]+$/.test(packageMetadata.version)) {
-      await writeFile(
-        path.join(outputRoot, "GrokDesktop-beta-x64.appinstaller"),
-        renderPreviewAppInstaller({
-          architecture: "x64",
-          packageIdentity: environment.packageIdentity,
-          publisher: environment.publisher,
-          version: msixVersion,
-          releaseTag: `v${packageMetadata.version}`,
-        }),
-        { encoding: "utf8", mode: 0o600, flag: "wx" },
-      );
-    }
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

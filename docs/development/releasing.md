@@ -30,8 +30,9 @@ the immutable tag with the owner token. The finalizer then replaces Release
 Please's `autorelease: pending` label with `autorelease: tagged`; this lifecycle
 transition is required when `skip-github-release` delegates tagging to a
 separate workflow. That authenticated tag event starts the artifact workflow;
-the tag workflow creates the GitHub Release only after every artifact and
-manifest is signed and verified. Exact artifact qualification then occurs at
+the tag workflow creates the GitHub Release only after every artifact is
+verified and every update manifest is signed and verified. Exact artifact
+qualification then occurs at
 the protected `beta-release` promotion hold before publication.
 
 If the finalizer fails after the release PR has merged and before it creates a
@@ -53,45 +54,39 @@ Release Please never changes the major or minor component automatically.
 
 ## Protected environments
 
-Stable and beta use separate environment approvals and channel-scoped signing
-material:
+Stable and beta use separate environment approvals and channel-scoped update
+signing material:
 
-- `stable-windows-signing` and `stable-release`
-- `beta-windows-signing` and `beta-release`
+- `stable-windows-build` and `stable-release`
+- `beta-windows-build` and `beta-release`
 - `beta-build` for unprivileged Linux preview assembly before promotion
 
-The beta Windows package uses the separate identity
-`GrokInsider.GrokDesktop.Preview`, publisher `CN=Grok Desktop Preview`, and
-display name `Grok Desktop Preview`. Its protected environment additionally
-owns `GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64` and
-`GROK_WINDOWS_PREVIEW_CERT_PASSWORD`. Those secrets exist only during the
-certificate-import step on an ephemeral worker. The temporary PFX ACL is bound
-to the runner process's current Windows SID, not a display account name, so
-service identities such as Network Service remain valid. Packaging receives
-only the certificate-store thumbprint. The public `.cer` and its SHA-256 digest
-are release assets. Preview users explicitly install it into the current-user
-Trusted People store. A future publicly trusted stable identity is separate and
-may require uninstall/reinstall.
+The public Windows core package is an intentionally unsigned, per-user NSIS
+installer. It does not require a PFX, certificate-store identity, SignTool, or
+timestamp service. Windows can display Unknown Publisher or Microsoft Defender
+SmartScreen warnings; release notes direct users to the immutable source tag,
+`SHA256SUMS`, and GitHub artifact attestation before they bypass the warning.
+The signed update manifest remains a separate mandatory trust boundary.
 
-The Windows environment owns the documented `GROK_MSIX_*`,
-`GROK_WINDOWS_*`, `GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON`,
-`GROK_ACP_CATALOG_TRUSTED_KEYS`, `GROK_UPDATE_TRUSTED_KEYS_JSON`, and xAI
-component evidence variables. The publish environment owns
+The Windows environment owns the documented Windows Cargo/Rust/MSVC build-tool
+paths and bounded toolchain environment, `GROK_UPDATE_TRUSTED_KEYS_JSON`, and
+xAI component evidence variables. The
+publish environment owns
 `GROK_UPDATE_SIGNING_KEY_ID`, `GROK_UPDATE_TRUSTED_KEYS_JSON`, and the
 `GROK_UPDATE_SIGNING_PRIVATE_KEY_PEM` secret. Values never belong in source,
 logs, artifacts, or broad runner environments.
 
 The Windows job also requires a qualified, ephemeral runner with labels
 `self-hosted`, `windows`, and `x64`. The absence of any runner, environment
-approval, signing input, update trust, or redistribution evidence must stop the
+approval, build input, update trust, or redistribution evidence must stop the
 release before publication.
 
 The `beta-release` environment is the promotion hold. Linux and Windows build
 artifacts remain workflow artifacts for seven days while the exact bytes are
-qualified. Approving publication signs update metadata, creates SPDX SBOM,
+qualified. Approving publication signs update metadata, creates an SPDX SBOM,
 checksums, GitHub artifact attestations, release evidence, and the prerelease.
-Do not approve `v0.0.1` until Wisp/CDP Linux QA and clean-VM Windows QA refer to
-the exact workflow run and artifact hashes.
+Do not approve a candidate until Wisp/CDP Linux QA and clean-VM Windows QA refer
+to the exact workflow run and artifact hashes.
 
 ## Operator checks
 
@@ -119,3 +114,8 @@ tests pin both forms to prevent duplicated `apps/desktop/apps/desktop` paths.
 Do not add pnpm's optional `--` separator to `package:windows-core`: pnpm forwards
 it to the strict release parser as an argument. Options following the script
 name are already forwarded.
+
+The dormant isolated/enterprise Windows train retains a separately qualified
+signed-MSIX design. Its certificate, identity, privileged service, and guest
+requirements are deferred and are not prerequisites for the public core NSIS
+release.
