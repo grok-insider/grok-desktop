@@ -116,3 +116,6 @@ that package's working directory. Release workflows must pass
 `release/components/...` to desktop package scripts while retaining
 `apps/desktop/release/components/...` for root-level workflow steps; contract
 tests pin both forms to prevent duplicated `apps/desktop/apps/desktop` paths.
+Do not add pnpm's optional `--` separator to `package:windows-core`: pnpm forwards
+it to the strict release parser as an argument. Options following the script
+name are already forwarded.
