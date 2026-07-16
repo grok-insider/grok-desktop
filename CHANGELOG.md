@@ -2,6 +2,11 @@
 
 ## [0.0.9](https://github.com/grok-insider/grok-desktop/compare/v0.0.8...v0.0.9) (2026-07-16)
 
+### Highlights
+
+- Added unsigned Windows NSIS installer for download.
+- Fixed installer validation to verify integrity before installation proceeds.
+
 
 ### Features
 

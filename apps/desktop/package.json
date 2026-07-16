@@ -1,6 +1,6 @@
 {
   "name": "@grok-desktop/desktop",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": true,
   "description": "A desktop workspace for official Grok and xAI services",
   "author": "Grok Insider",
