@@ -26,6 +26,10 @@ test("finalizes automated and manual release PRs through the owner token", () =>
   assert.match(workflow, /github\.event_name == 'workflow_dispatch' && github\.actor == 'grok-insider'/);
   assert.match(workflow, /git ls-remote --exit-code origin refs\/heads\/master/);
   assert.match(workflow, /git push origin "v\$\{version\}"/);
+  assert.match(workflow, /pull-requests: write/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$merge_sha" HEAD/);
+  assert.match(workflow, /--remove-label "autorelease: pending"/);
+  assert.match(workflow, /--add-label "autorelease: tagged"/);
 });
 
 test("publishes binaries only from an immutable version tag", () => {

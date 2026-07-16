@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Require the release token
         env:
@@ -84,3 +85,45 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v${version}" -m "Grok Desktop v${version}"
           git push origin "v${version}"
+
+      - name: Mark the finalized release pull request as tagged
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          if [[ "$EVENT_NAME" = pull_request ]]; then
+            release_pr="$EVENT_PR_NUMBER"
+          else
+            candidates="$(
+              gh pr list --state merged --base master --limit 100 \
+                --json number,title,headRefName \
+                --jq ".[] | select(
+                  (.title == \"chore(master): release ${version}\" and (.headRefName | startswith(\"release-please--\"))) or
+                  (.title == \"chore(release): v${version}\" and (.headRefName | startswith(\"release-please-manual-\")))
+                ) | .number"
+            )"
+            test "$(wc -w <<<"$candidates")" -eq 1 || {
+              echo "::error::Expected exactly one merged release PR for v${version}."
+              exit 1
+            }
+            release_pr="$candidates"
+          fi
+
+          pr="$(gh pr view "$release_pr" --json baseRefName,headRefName,mergeCommit,mergedAt,title)"
+          test "$(jq -r '.baseRefName' <<<"$pr")" = master
+          test "$(jq -r '.mergedAt // empty' <<<"$pr")" != ""
+          merge_sha="$(jq -r '.mergeCommit.oid // empty' <<<"$pr")"
+          test "${#merge_sha}" -eq 40
+          git merge-base --is-ancestor "$merge_sha" HEAD
+
+          gh label create "autorelease: tagged" --force --color 4285F4 \
+            --description "Release PR has been finalized with an immutable tag"
+          labels="$(gh pr view "$release_pr" --json labels --jq '.labels[].name')"
+          edit_args=(--add-label "autorelease: tagged")
+          if grep -Fxq "autorelease: pending" <<<"$labels"; then
+            edit_args+=(--remove-label "autorelease: pending")
+          fi
+          gh pr edit "$release_pr" "${edit_args[@]}"
