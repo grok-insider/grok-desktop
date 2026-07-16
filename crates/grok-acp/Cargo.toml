@@ -13,7 +13,7 @@ base64 = "0.22.1"
 ed25519-dalek = "2.2.0"
 futures-util.workspace = true
 fs2.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.10" }
+grok-application = { path = "../grok-application", version = "0.0.11" }
 hex = "0.4.3"
 libc = "0.2.183"
 process-wrap = { version = "9.1.0", features = ["tokio1"] }
@@ -30,7 +30,7 @@ url.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-grok-windows-acl = { path = "../grok-windows-acl", version = "0.0.10" }
+grok-windows-acl = { path = "../grok-windows-acl", version = "0.0.11" }
 
 [dev-dependencies]
 tempfile = "3.27.0"

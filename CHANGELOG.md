@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.11](https://github.com/grok-insider/grok-desktop/compare/v0.0.10...v0.0.11) (2026-07-16)
+
+### Highlights
+
+- Fixed portable Linux runtime now included in the release
+
+
+### Bug Fixes
+
+* **release:** ship portable Linux runtime ([83ef7a5](https://github.com/grok-insider/grok-desktop/commit/83ef7a5780062a3c80fa9c1b9dedc5bfdd0e7896))
+* **release:** ship portable Linux runtime ([242fc0b](https://github.com/grok-insider/grok-desktop/commit/242fc0bf3480a85897b915b191899351f3c0a2df))
+
 ## [0.0.10](https://github.com/grok-insider/grok-desktop/compare/v0.0.9...v0.0.10) (2026-07-16)
 
 
