@@ -50,9 +50,20 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.match(workflow, /Windows core stage must not be a reparse point/);
   assert.match(
     workflow,
+    /pnpm --filter @grok-desktop\/desktop build:windows-daemon `\n\s+--arch x64/,
+  );
+  assert.doesNotMatch(workflow, /build:windows-daemon -- `/);
+  assert.match(workflow, /if \(\$LASTEXITCODE -ne 0\) \{ throw "Windows native runtime build failed" \}/);
+  assert.match(workflow, /@\("grok-daemon\.exe", "grok-host-tools-mcp\.exe"\)/);
+  assert.match(workflow, /Windows native runtime output is incomplete/);
+  assert.match(workflow, /official Grok component download failed/);
+  assert.match(workflow, /Windows official component staging is incomplete/);
+  assert.match(
+    workflow,
     /pnpm --filter @grok-desktop\/desktop package:windows-core `\n\s+--arch x64/,
   );
   assert.doesNotMatch(workflow, /package:windows-core -- `/);
+  assert.match(workflow, /if \(\$LASTEXITCODE -ne 0\) \{ throw "Windows core packaging failed" \}/);
   assert.doesNotMatch(
     workflow,
     /pnpm package:linux[^]*--acp-pinned-manifest apps\/desktop\/release\/components\/grok-build\/linux-x64\.json/,
