@@ -65,11 +65,13 @@ The beta Windows package uses the separate identity
 display name `Grok Desktop Preview`. Its protected environment additionally
 owns `GROK_WINDOWS_PREVIEW_CERT_PFX_BASE64` and
 `GROK_WINDOWS_PREVIEW_CERT_PASSWORD`. Those secrets exist only during the
-certificate-import step on an ephemeral worker; packaging receives only the
-certificate-store thumbprint. The public `.cer` and its SHA-256 digest are
-release assets. Preview users explicitly install it into the current-user
-Trusted People store. A future publicly trusted stable identity is separate
-and may require uninstall/reinstall.
+certificate-import step on an ephemeral worker. The temporary PFX ACL is bound
+to the runner process's current Windows SID, not a display account name, so
+service identities such as Network Service remain valid. Packaging receives
+only the certificate-store thumbprint. The public `.cer` and its SHA-256 digest
+are release assets. Preview users explicitly install it into the current-user
+Trusted People store. A future publicly trusted stable identity is separate and
+may require uninstall/reinstall.
 
 The Windows environment owns the documented `GROK_MSIX_*`,
 `GROK_WINDOWS_*`, `GROK_RELEASE_METADATA_PUBLIC_KEYS_JSON`,

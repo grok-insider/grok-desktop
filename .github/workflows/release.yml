@@ -187,7 +187,10 @@ jobs:
           if (-not $env:PREVIEW_PFX_BASE64 -or -not $env:PREVIEW_PFX_PASSWORD) { throw "preview signing secrets are unavailable" }
           $pfx = Join-Path $env:RUNNER_TEMP "grok-preview-signing.pfx"
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PREVIEW_PFX_BASE64))
-          & icacls.exe $pfx /inheritance:r /grant:r "${env:USERNAME}:(R)" | Out-Null
+          $runnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          if (-not $runnerSid) { throw "runner security identity is unavailable" }
+          & icacls.exe $pfx /inheritance:r /grant:r "*${runnerSid}:(R)" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "could not restrict preview certificate permissions" }
           $password = ConvertTo-SecureString $env:PREVIEW_PFX_PASSWORD -AsPlainText -Force
           $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable:$false
           if (-not $certificate -or $certificate.Thumbprint -ne $env:GROK_WINDOWS_SIGNER_SHA1) { throw "preview certificate does not match the protected thumbprint" }
