@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.3](https://github.com/grok-insider/grok-desktop/compare/v0.0.2...v0.0.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** bind certificate ACL to runner SID ([5230afe](https://github.com/grok-insider/grok-desktop/commit/5230afe1456fad52ec4a89796af8df435d0e0284))
+* **release:** bind certificate ACL to runner SID ([2b9609d](https://github.com/grok-insider/grok-desktop/commit/2b9609d0e0e3fe43a3f9332b7c121f3fca092e18))
+* **release:** promote artifact packaging repairs ([2e1c636](https://github.com/grok-insider/grok-desktop/commit/2e1c636873cb7d8c3bb4dea731b10e44c614bf8d))
+* **release:** resolve package-relative manifests ([dc3bba2](https://github.com/grok-insider/grok-desktop/commit/dc3bba2d250a67cca601d8726ec04ecba0c6b047))
+
 ## [0.0.2](https://github.com/grok-insider/grok-desktop/compare/v0.0.1...v0.0.2) (2026-07-16)
 
 

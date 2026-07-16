@@ -8,8 +8,8 @@ rust-version.workspace = true
 build = "build.rs"
 
 [dependencies]
-grok-application = { path = "../grok-application", version = "0.0.2" }
-grok-domain = { path = "../grok-domain", version = "0.0.2" }
+grok-application = { path = "../grok-application", version = "0.0.3" }
+grok-domain = { path = "../grok-domain", version = "0.0.3" }
 prost.workspace = true
 thiserror.workspace = true
 
