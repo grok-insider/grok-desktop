@@ -31,6 +31,13 @@ artifact workflow; the tag workflow creates the GitHub Release only after every
 artifact and manifest is signed and verified. Exact artifact qualification then
 occurs at the protected `beta-release` promotion hold before publication.
 
+If the finalizer fails after the release PR has merged and before it creates a
+tag, fix and promote the finalizer first. An owner may then dispatch **Finalize
+approved release** with the exact current `master` SHA and synchronized version.
+The recovery path refuses a stale or non-`master` commit and re-runs the same
+version, manifest, changelog, and tag-absence checks. Never use it to replace a
+failed artifact build or to move an existing tag.
+
 ## Manual milestones
 
 Repository administrators use **Manual Version Bump** for a deliberate minor
