@@ -11,6 +11,7 @@ import {
   renderLinuxVmServiceEnvironment,
   renderLinuxVmServiceUnit,
   renderLinuxDesktopEntry,
+  renderLinuxAppStreamMetadata,
   resolveLinuxDaemonBinary,
   resolveLinuxHostToolsHelper,
   stageLinuxVmServiceBundle,
@@ -38,7 +39,27 @@ test("parseLinuxPackageArguments defaults arch from host and rejects bad options
     "--appimagetool", "/tmp/tool", "--appimagetool-sha256", "a".repeat(64),
     "--appimageupdatetool", "/tmp/update-tool", "--appimageupdatetool-sha256", "b".repeat(64),
     "--update-trust-file", "/tmp/update-trust.json",
+    "--release-date", "2026-07-16",
   ]).appimageupdatetoolSha256, "b".repeat(64));
+  assert.throws(() => parseLinuxPackageArguments([
+    "--appimagetool", "/tmp/tool", "--appimagetool-sha256", "a".repeat(64),
+  ]), /release-date/);
+  assert.throws(() => parseLinuxPackageArguments(["--release-date", "2026-02-30"]), /release-date/);
+});
+
+test("renders valid release metadata from deterministic inputs", () => {
+  const metadata = renderLinuxAppStreamMetadata({ version: "0.0.4", releaseDate: "2026-07-16" });
+  assert.match(metadata, /<description>\s*<p>[^<]+<\/p>\s*<\/description>/);
+  assert.match(metadata, /<url type="homepage">https:\/\/github\.com\/grok-insider\/grok-desktop<\/url>/);
+  assert.match(metadata, /<release version="0\.0\.4" date="2026-07-16" \/>/);
+  assert.throws(
+    () => renderLinuxAppStreamMetadata({ version: "next", releaseDate: "2026-07-16" }),
+    /exact release version/,
+  );
+  assert.throws(
+    () => renderLinuxAppStreamMetadata({ version: "0.0.4", releaseDate: "2026-02-30" }),
+    /canonical release date/,
+  );
 });
 
 test("pins AppImage updates to the canonical stable GitHub release asset", () => {
