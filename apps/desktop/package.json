@@ -28,6 +28,7 @@
     "package:windows": "pnpm build && node scripts/package-windows.mjs",
     "package:windows-core": "pnpm build && node scripts/package-windows-core.mjs",
     "package:linux": "node scripts/package-linux.mjs",
+    "release:verify-linux-artifact": "node scripts/verify-linux-release-artifact.mjs",
     "release:update-manifest": "node scripts/generate-update-manifest.mjs",
     "release:verify-update-manifest": "node scripts/verify-update-manifest.mjs"
   },

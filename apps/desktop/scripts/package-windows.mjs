@@ -3,9 +3,13 @@ import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { flipFuses, FuseState, FuseV1Options, FuseVersion, getCurrentFuseWire } from "@electron/fuses";
 import { packager } from "@electron/packager";
 import { packageMSIX } from "electron-windows-msix";
+import {
+  hardenElectronExecutable,
+  readVerifiedFuseState,
+  readableFuseState,
+} from "./electron-fuse-policy.mjs";
 import {
   createSigningToolEnvironment,
   normalizeMsixVersion,
@@ -19,6 +23,8 @@ import {
   validateReleaseInputs,
   verifyPackagedNativeLayout,
 } from "./release-utils.mjs";
+
+export { hardenElectronExecutable, readVerifiedFuseState, readableFuseState };
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repositoryRoot = path.resolve(desktopRoot, "../..");
@@ -141,7 +147,7 @@ async function main() {
       },
       signer,
       artifact: { file: path.basename(msixPackage), size: msixMetadata.size, sha256: await sha256File(msixPackage) },
-      fuses: await readableFuseState(executable),
+      fuses: await readVerifiedFuseState(executable),
     };
     await writeFile(path.join(outputRoot, `${packageName}.json`), `${JSON.stringify(releaseRecord, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     if (releaseArguments.channel === "stable") {
@@ -209,42 +215,6 @@ export async function assertReleaseBuildExists() {
   for (const root of [path.join(desktopRoot, "dist"), path.join(desktopRoot, "dist-electron")]) {
     for (const file of await walkFiles(root)) if (file.endsWith(".map")) throw new Error("release output must not contain source maps");
   }
-}
-
-export async function hardenElectronExecutable(executable) {
-  await flipFuses(executable, {
-    version: FuseVersion.V1,
-    strictlyRequireAllFuses: true,
-    [FuseV1Options.RunAsNode]: false,
-    [FuseV1Options.EnableCookieEncryption]: true,
-    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-    [FuseV1Options.EnableNodeCliInspectArguments]: false,
-    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
-    [FuseV1Options.OnlyLoadAppFromAsar]: true,
-    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: false,
-    [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
-    [FuseV1Options.WasmTrapHandlers]: true,
-  });
-  const state = await getCurrentFuseWire(executable);
-  const expected = new Map([
-    [FuseV1Options.RunAsNode, FuseState.DISABLE],
-    [FuseV1Options.EnableCookieEncryption, FuseState.ENABLE],
-    [FuseV1Options.EnableNodeOptionsEnvironmentVariable, FuseState.DISABLE],
-    [FuseV1Options.EnableNodeCliInspectArguments, FuseState.DISABLE],
-    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation, FuseState.ENABLE],
-    [FuseV1Options.OnlyLoadAppFromAsar, FuseState.ENABLE],
-    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot, FuseState.DISABLE],
-    [FuseV1Options.GrantFileProtocolExtraPrivileges, FuseState.DISABLE],
-    [FuseV1Options.WasmTrapHandlers, FuseState.ENABLE],
-  ]);
-  for (const [fuse, value] of expected) if (state[fuse] !== value) throw new Error("packaged Electron fuse verification failed");
-}
-
-export async function readableFuseState(executable) {
-  const state = await getCurrentFuseWire(executable);
-  return Object.fromEntries(Object.entries(FuseV1Options)
-    .filter(([name]) => Number.isNaN(Number(name)))
-    .map(([name, index]) => [name, state[index] === FuseState.ENABLE]));
 }
 
 export async function signAndVerifyDirectory(root, environment, toolEnvironment) {

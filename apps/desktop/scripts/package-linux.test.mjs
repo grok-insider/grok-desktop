@@ -19,6 +19,48 @@ import {
   verifyLinuxPackagedLayout,
 } from "./package-linux.mjs";
 
+test("hardens and records Linux Electron fuses before AppImage assembly", async () => {
+  const source = await readFile(new URL("./package-linux.mjs", import.meta.url), "utf8");
+  const main = source.slice(source.indexOf("async function main()"));
+  const packagerIndex = main.indexOf("const packagedDirectories = await packager");
+  const hardenIndex = main.indexOf("await hardenElectronExecutable(executable)");
+  const readIndex = main.indexOf("const fuses = await readVerifiedFuseState(executable)");
+  const layoutIndex = main.indexOf(
+    "const packagedLayout = await verifyLinuxPackagedLayout(appDirectory)",
+  );
+  const appImageIndex = main.indexOf("const appImage = await createLinuxAppImage");
+  const recordIndex = main.indexOf("const record = {");
+  const recordWriteIndex = main.indexOf('path.join(options.out, "linux-package.json")');
+
+  assert.equal(
+    main.match(/await hardenElectronExecutable\(executable\)/g)?.length,
+    1,
+    "Linux packaging must harden the Electron executable exactly once",
+  );
+  assert.ok(packagerIndex >= 0 && hardenIndex > packagerIndex);
+  assert.ok(readIndex > hardenIndex, "Linux packaging must attest the hardened fuse state");
+  assert.ok(layoutIndex > readIndex, "layout verification must use the hardened app directory");
+  assert.ok(appImageIndex > layoutIndex, "fuse hardening must happen before AppImage assembly");
+  assert.ok(recordIndex > appImageIndex, "metadata must describe the assembled AppImage");
+  assert.ok(recordWriteIndex > recordIndex, "verified metadata must be persisted after assembly");
+  assert.match(main, /const record = \{[\s\S]*?\bfuses,/);
+});
+
+test("reverifies the copied Electron executable before invoking appimagetool", async () => {
+  const source = await readFile(new URL("./package-linux.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function createLinuxAppImage");
+  const end = source.indexOf("async function stageAppImageUpdateTool", start);
+  const createAppImage = source.slice(start, end);
+  const copyIndex = createAppImage.indexOf("await cp(appDirectory, bin");
+  const verifyIndex = createAppImage.indexOf(
+    "await readVerifiedFuseState(path.join(bin, executableName))",
+  );
+  const toolIndex = createAppImage.indexOf("const child = spawn(options.appimagetool");
+
+  assert.ok(copyIndex >= 0 && verifyIndex > copyIndex);
+  assert.ok(toolIndex > verifyIndex, "the copied executable must be verified before AppImage assembly");
+});
+
 test("parseLinuxPackageArguments defaults arch from host and rejects bad options", () => {
   const parsed = parseLinuxPackageArguments([]);
   assert.ok(parsed.architecture === "x64" || parsed.architecture === "arm64");
