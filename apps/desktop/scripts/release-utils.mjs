@@ -449,7 +449,9 @@ export async function validateCoreWindowsInputs(stageRoot, { architecture } = {}
   const stagedPaths = await listStageFiles(canonicalRoot);
   if (stagedPaths.length !== expectedPaths.length ||
       stagedPaths.some((candidate, index) => candidate !== expectedPaths[index])) {
-    throw new Error("core Windows staging directory contains an unexpected file or directory");
+    throw new Error(
+      `core Windows staging directory must contain exactly ${expectedPaths.length} files; found ${stagedPaths.length}`,
+    );
   }
   const files = new Map();
   for (const relativePath of expectedPaths) {

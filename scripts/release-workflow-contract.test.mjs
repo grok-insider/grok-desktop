@@ -45,6 +45,11 @@ test("publishes binaries only from an immutable version tag", () => {
   assert.match(workflow, /\$packageManifest = "release\/components\/grok-build\/windows-x64\.json"/);
   assert.match(
     workflow,
+    /Test-Path -LiteralPath \$stage[^]*Remove-Item -LiteralPath \$stage -Recurse -Force[^]*New-Item -ItemType Directory/,
+  );
+  assert.match(workflow, /Windows core stage must not be a reparse point/);
+  assert.match(
+    workflow,
     /pnpm --filter @grok-desktop\/desktop package:windows-core `\n\s+--arch x64/,
   );
   assert.doesNotMatch(workflow, /package:windows-core -- `/);
