@@ -20,6 +20,7 @@ import {
 } from "./release-utils.mjs";
 import {
   assertReleaseBuildExists,
+  electronPackagerMetadata,
   hardenElectronExecutable,
   preparePackagingSource,
   readableFuseState,
@@ -73,6 +74,7 @@ async function main() {
       executableName: productName,
       appVersion: packageMetadata.version,
       buildVersion: msixVersion,
+      ...electronPackagerMetadata(packageMetadata),
       appCopyright: "Copyright (c) 2026 Grok Insider",
       asar: true,
       prune: true,
