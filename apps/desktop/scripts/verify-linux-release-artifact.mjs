@@ -69,16 +69,18 @@ function sameIdentity(left, right) {
 }
 
 async function openRegularFile(filePath, label, maximumSize, executable = false) {
-  const initial = await lstat(filePath, { bigint: true }).catch(() => undefined);
-  if (!initial?.isFile() || initial.isSymbolicLink()
-      || initial.size < 1n || initial.size > BigInt(maximumSize)
-      || (executable && (initial.mode & 0o111n) === 0n)) {
+  let handle;
+  try {
+    handle = await open(filePath, OPEN_FLAGS);
+  } catch {
     throw new Error(`${label} is not a bounded regular${executable ? " executable" : ""} file`);
   }
-  const handle = await open(filePath, OPEN_FLAGS);
   try {
     const opened = await handle.stat({ bigint: true });
-    if (!sameIdentity(initial, opened)) throw new Error(`${label} changed before it was opened`);
+    if (!opened.isFile() || opened.size < 1n || opened.size > BigInt(maximumSize)
+        || (executable && (opened.mode & 0o111n) === 0n)) {
+      throw new Error(`${label} is not a bounded regular${executable ? " executable" : ""} file`);
+    }
     return { handle, identity: opened };
   } catch (error) {
     await handle.close();
