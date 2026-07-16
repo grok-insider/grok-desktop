@@ -86,6 +86,7 @@ const mocks = vi.hoisted(() => {
         quit: vi.fn(),
         relaunch: vi.fn(),
         requestSingleInstanceLock: vi.fn(() => true),
+        setAppUserModelId: vi.fn(),
         whenReady: vi.fn(() => Promise.resolve()),
       },
       autoUpdater: {

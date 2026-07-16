@@ -33,6 +33,9 @@ export class UpdateCoordinator {
   private readonly platformUpdater: PlatformUpdater | undefined;
   private readonly authorizer: UpdateAuthorizer | undefined;
   private channelGeneration = 0;
+  private downloadedGeneration: number | undefined;
+  private downloadQueue: Promise<void> = Promise.resolve();
+  private installStarted = false;
   private readonly previewChannelLocked: boolean;
 
   constructor(
@@ -74,6 +77,7 @@ export class UpdateCoordinator {
     if (this.previewChannelLocked) channel = "beta";
     if (channel === this.state.channel) return this.getState();
     this.channelGeneration += 1;
+    this.downloadedGeneration = undefined;
     this.state = {
       ...this.state,
       phase: this.state.phase === "unsupported" ? "unsupported" : "idle",
@@ -108,7 +112,10 @@ export class UpdateCoordinator {
     if (!this.platformUpdater || !this.authorizer || this.state.phase === "unsupported") {
       return this.getState();
     }
-    if (this.state.phase === "checking" || this.state.phase === "available") return this.getState();
+    if (this.installStarted || this.state.phase === "checking" || this.state.phase === "available") {
+      return this.getState();
+    }
+    this.downloadedGeneration = undefined;
     this.state = { ...this.state, phase: "checking", reasonCode: "" };
     const generation = this.channelGeneration;
     const platformUpdater = this.platformUpdater;
@@ -125,18 +132,7 @@ export class UpdateCoordinator {
         return;
       }
       this.state = { ...this.state, phase: "available", targetVersion: authorized.version, reasonCode: "" };
-      void platformUpdater.download(authorized.artifact).then((changed) => {
-          if (generation !== this.channelGeneration) return;
-          this.state = {
-            ...this.state,
-            phase: changed ? "downloaded" : "not_available",
-            checkedAtUnixMs: Date.now(),
-            targetVersion: changed ? authorized.version : "",
-            reasonCode: "",
-          };
-        }, () => {
-          if (generation === this.channelGeneration) this.fail();
-        });
+      this.enqueueDownload(generation, authorized, platformUpdater);
     }, () => {
       if (generation === this.channelGeneration) this.fail();
     });
@@ -146,11 +142,43 @@ export class UpdateCoordinator {
   install(): boolean {
     if (this.state.phase !== "downloaded") return false;
     if (!this.platformUpdater) return false;
-    void Promise.resolve(this.platformUpdater.install()).catch(() => this.fail());
+    if (this.installStarted || this.downloadedGeneration !== this.channelGeneration) return false;
+    this.installStarted = true;
+    try {
+      void Promise.resolve(this.platformUpdater.install()).catch(() => this.fail());
+    } catch {
+      this.fail();
+    }
     return true;
   }
 
+  private enqueueDownload(
+    generation: number,
+    authorized: AuthorizedUpdate,
+    platformUpdater: PlatformUpdater,
+  ): void {
+    const download = async () => {
+      if (generation !== this.channelGeneration || !authorized.available) return;
+      try {
+        const changed = await platformUpdater.download(authorized.artifact);
+        if (generation !== this.channelGeneration) return;
+        this.downloadedGeneration = changed ? generation : undefined;
+        this.state = {
+          ...this.state,
+          phase: changed ? "downloaded" : "not_available",
+          checkedAtUnixMs: Date.now(),
+          targetVersion: changed ? authorized.version : "",
+          reasonCode: "",
+        };
+      } catch {
+        if (generation === this.channelGeneration) this.fail();
+      }
+    };
+    this.downloadQueue = this.downloadQueue.then(download, download);
+  }
+
   private fail(): void {
+    this.downloadedGeneration = undefined;
     this.state = { ...this.state, phase: "failed", checkedAtUnixMs: Date.now(), reasonCode: "check_failed" };
   }
 }

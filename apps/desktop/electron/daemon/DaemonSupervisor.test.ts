@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1519,6 +1521,7 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
   const temporaryDirectories: string[] = [];
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
   });
@@ -1847,11 +1850,89 @@ describe.sequential("DaemonSupervisor security boundaries", () => {
   it("keeps stop terminal when a later request races application shutdown", async () => {
     const root = temporaryRoot();
     const supervisor = new DaemonSupervisor(supervisorOptions(root, false));
+    let reentrantStop: Promise<void> | undefined;
+    let stopping = false;
+    supervisor.subscribe((status) => {
+      if (stopping && status.state === "stopped") reentrantStop = supervisor.stop();
+    });
 
-    await supervisor.stop();
+    stopping = true;
+    const stop = supervisor.stop();
+    await stop;
 
+    expect(reentrantStop).toBe(stop);
     await expect(supervisor.start()).rejects.toThrow("daemon supervisor is stopping");
     expect(supervisor.getStatus()).toMatchObject({ state: "stopped" });
+  });
+
+  it("shares one terminal stop operation between concurrent callers", async () => {
+    vi.useFakeTimers();
+    const supervisor = new DaemonSupervisor(supervisorOptions(temporaryRoot(), false));
+    const controlled = controlledChildProcess();
+    const internal = supervisor as unknown as { child?: ChildProcess };
+    internal.child = controlled.child;
+
+    const first = supervisor.stop();
+    const second = supervisor.stop();
+    await Promise.resolve();
+
+    expect(second).toBe(first);
+    expect(controlled.kill).toHaveBeenCalledTimes(1);
+    expect(controlled.kill).toHaveBeenCalledWith("SIGTERM");
+    controlled.exit("SIGTERM");
+    await first;
+
+    expect(internal.child).toBeUndefined();
+    expect(supervisor.getStatus()).toMatchObject({ state: "stopped" });
+  });
+
+  it("waits for confirmed exit after forcing a hung daemon to terminate", async () => {
+    vi.useFakeTimers();
+    const supervisor = new DaemonSupervisor(supervisorOptions(temporaryRoot(), false));
+    const controlled = controlledChildProcess();
+    const internal = supervisor as unknown as { child?: ChildProcess };
+    internal.child = controlled.child;
+    let settled = false;
+
+    const stopping = supervisor.stop();
+    void stopping.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(controlled.kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+    expect(settled).toBe(false);
+
+    controlled.exit("SIGKILL");
+    await stopping;
+
+    expect(settled).toBe(true);
+    expect(internal.child).toBeUndefined();
+    expect(supervisor.getStatus()).toMatchObject({ state: "stopped" });
+  });
+
+  it("fails closed when forced termination never produces confirmed exit", async () => {
+    vi.useFakeTimers();
+    const supervisor = new DaemonSupervisor(supervisorOptions(temporaryRoot(), false));
+    const controlled = controlledChildProcess();
+    const internal = supervisor as unknown as { child?: ChildProcess };
+    internal.child = controlled.child;
+
+    const stopping = supervisor.stop();
+    const rejection = expect(stopping).rejects.toThrow(
+      "daemon exit was not confirmed after forced termination",
+    );
+    await vi.advanceTimersByTimeAsync(4_000);
+    await rejection;
+
+    expect(controlled.kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+    expect(internal.child).toBe(controlled.child);
+    expect(supervisor.getStatus()).toMatchObject({
+      state: "degraded",
+      reason: "The local daemon could not be confirmed stopped.",
+    });
+    expect(supervisor.stop()).toBe(stopping);
+    await expect(supervisor.start()).rejects.toThrow("daemon supervisor is stopping");
   });
 
   function temporaryRoot(): string {
@@ -1875,6 +1956,28 @@ function executable(file: string): string {
   writeFileSync(file, "test executable");
   chmodSync(file, 0o700);
   return file;
+}
+
+function controlledChildProcess(): {
+  child: ChildProcess;
+  kill: ReturnType<typeof vi.fn>;
+  exit: (signal: NodeJS.Signals) => void;
+} {
+  const kill = vi.fn(() => true);
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    kill,
+  }) as unknown as ChildProcess;
+  return {
+    child,
+    kill,
+    exit: (signal) => {
+      const mutable = child as unknown as { signalCode: NodeJS.Signals | null };
+      mutable.signalCode = signal;
+      child.emit("exit", null, signal);
+    },
+  };
 }
 
 function originalForkMetadata(thread: DaemonThread): DaemonConversationForkMetadata {

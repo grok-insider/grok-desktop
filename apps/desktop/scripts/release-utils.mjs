@@ -57,6 +57,21 @@ const ambientSigningSecretVariables = [
   "WIN_CSC_LINK",
 ];
 const ambientSigningSecretVariableSet = new Set(ambientSigningSecretVariables);
+const unsignedWindowsSigningVariableSet = new Set([
+  ...ambientSigningSecretVariables,
+  "AZURE_CLIENT_CERTIFICATE_PASSWORD",
+  "AZURE_CLIENT_CERTIFICATE_PATH",
+  "AZURE_CLIENT_ID",
+  "AZURE_CLIENT_SECRET",
+  "AZURE_TENANT_ID",
+  "CSC_FOR_PULL_REQUEST",
+  "CSC_IDENTITY_AUTO_DISCOVERY",
+  "CSC_NAME",
+  "GROK_WINDOWS_SIGNTOOL_PATH",
+  "GROK_WINDOWS_SIGNER_SHA1",
+  "GROK_WINDOWS_SIGN_ARGS_JSON",
+  "GROK_WINDOWS_TIMESTAMP_SERVER",
+]);
 const expectedInputLimits = new Map([
   ["bin/grok-daemon.exe", 128 * 1024 * 1024],
   ["bin/grok-host-tools-mcp.exe", 128 * 1024 * 1024],
@@ -186,6 +201,94 @@ export function readCoreWindowsReleaseEnvironment(environment) {
     updateTrustedKeysJSON,
     acpProvenanceEvidenceID,
     acpRedistributionEvidenceID,
+  };
+}
+
+export function readUnsignedCoreWindowsReleaseEnvironment(environment) {
+  rejectUnsignedWindowsSigningEnvironment(environment);
+  const maxTestedVersion = boundedEnvironment(
+    environment, "GROK_WINDOWS_MAX_TESTED_VERSION", 32,
+  );
+  const updateTrustedKeysJSON = boundedEnvironment(
+    environment, "GROK_UPDATE_TRUSTED_KEYS_JSON", 65_536,
+  );
+  const acpProvenanceEvidenceID = boundedEnvironment(
+    environment, "GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID", 128,
+  );
+  const acpRedistributionEvidenceID = boundedEnvironment(
+    environment, "GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID", 128,
+  );
+  parseReleaseMetadataKeys(updateTrustedKeysJSON);
+  if (!evidenceIDPattern.test(acpProvenanceEvidenceID) ||
+      !evidenceIDPattern.test(acpRedistributionEvidenceID)) {
+    throw new Error("official Grok component evidence identifiers are invalid");
+  }
+  const maxVersion = parseWindowsVersion(maxTestedVersion);
+  if (compareVersions(maxVersion, [10, 0, 22_000, 0]) < 0) {
+    throw new Error("the tested Windows version predates Windows 11");
+  }
+  return {
+    maxTestedVersion,
+    updateTrustedKeysJSON,
+    acpProvenanceEvidenceID,
+    acpRedistributionEvidenceID,
+  };
+}
+
+export function createUnsignedCoreWindowsInstallerConfiguration({
+  artifactName,
+  electronVersion,
+  iconPath,
+  includePath,
+  outputDirectory,
+}) {
+  if (!/^GrokDesktop-(?:stable|beta|canary)-x64\.exe$/.test(artifactName)) {
+    throw new Error("unsigned NSIS artifact name is invalid");
+  }
+  if (typeof electronVersion !== "string" ||
+      !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(electronVersion)) {
+    throw new Error("unsigned NSIS packaging requires an exact Electron version");
+  }
+  for (const [name, value] of Object.entries({ iconPath, includePath, outputDirectory })) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 4096 ||
+        value.includes("\0") || !path.isAbsolute(value)) {
+      throw new Error(`unsigned NSIS ${name} must be an absolute bounded path`);
+    }
+  }
+  return {
+    appId: "com.grokinsider.grokdesktop",
+    productName: "Grok Desktop",
+    electronVersion,
+    forceCodeSigning: false,
+    protocols: [{ name: "Grok Desktop", schemes: ["grok-desktop"] }],
+    directories: {
+      buildResources: path.dirname(iconPath),
+      output: outputDirectory,
+    },
+    win: {
+      target: [{ target: "nsis", arch: ["x64"] }],
+      icon: iconPath,
+      executableName: "Grok Desktop",
+      requestedExecutionLevel: "asInvoker",
+      signAndEditExecutable: false,
+      signExecutable: false,
+      verifyUpdateCodeSignature: false,
+    },
+    nsis: {
+      oneClick: true,
+      perMachine: false,
+      allowElevation: false,
+      packElevateHelper: false,
+      createDesktopShortcut: true,
+      createStartMenuShortcut: true,
+      deleteAppDataOnUninstall: false,
+      runAfterFinish: true,
+      artifactName,
+      include: includePath,
+      installerIcon: iconPath,
+      uninstallerIcon: iconPath,
+      warningsAsErrors: true,
+    },
   };
 }
 
@@ -571,6 +674,55 @@ export async function inspectPortableExecutable(file, architecture) {
       throw new Error("release executable has an invalid PE signature");
     }
     if (peHeader.readUInt16LE(4) !== architectureMachines[architecture]) throw new Error("release executable architecture does not match the package");
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function assertUnsignedPortableExecutable(file) {
+  const handle = await open(file, "r");
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 256 || metadata.size > 2 * 1024 * 1024 * 1024) {
+      throw new Error("unsigned release executable is not a bounded regular PE file");
+    }
+    const dosHeader = Buffer.alloc(64);
+    if ((await handle.read(dosHeader, 0, dosHeader.length, 0)).bytesRead !== dosHeader.length ||
+        dosHeader.toString("ascii", 0, 2) !== "MZ") {
+      throw new Error("unsigned release executable has an invalid DOS header");
+    }
+    const peOffset = dosHeader.readUInt32LE(0x3c);
+    if (peOffset < 64 || peOffset > Math.min(metadata.size - 24, 16 * 1024 * 1024)) {
+      throw new Error("unsigned release executable has an invalid PE offset");
+    }
+    const coffHeader = Buffer.alloc(24);
+    if ((await handle.read(coffHeader, 0, coffHeader.length, peOffset)).bytesRead !==
+        coffHeader.length || coffHeader.toString("binary", 0, 4) !== "PE\0\0") {
+      throw new Error("unsigned release executable has an invalid PE signature");
+    }
+    const optionalHeaderSize = coffHeader.readUInt16LE(20);
+    if (optionalHeaderSize < 128 || optionalHeaderSize > 4096 ||
+        peOffset + 24 + optionalHeaderSize > metadata.size) {
+      throw new Error("unsigned release executable has an invalid optional header");
+    }
+    const optionalHeader = Buffer.alloc(optionalHeaderSize);
+    if ((await handle.read(optionalHeader, 0, optionalHeaderSize, peOffset + 24)).bytesRead !==
+        optionalHeaderSize) {
+      throw new Error("unsigned release executable optional header is truncated");
+    }
+    const magic = optionalHeader.readUInt16LE(0);
+    const dataDirectoryOffset = magic === 0x10b ? 96 : magic === 0x20b ? 112 : 0;
+    const directoryCountOffset = magic === 0x10b ? 92 : magic === 0x20b ? 108 : 0;
+    if (dataDirectoryOffset === 0 || optionalHeaderSize < dataDirectoryOffset + 40 ||
+        optionalHeader.readUInt32LE(directoryCountOffset) < 5) {
+      throw new Error("unsigned release executable has an invalid data directory");
+    }
+    const certificateTableOffset = optionalHeader.readUInt32LE(dataDirectoryOffset + 32);
+    const certificateTableSize = optionalHeader.readUInt32LE(dataDirectoryOffset + 36);
+    if (certificateTableOffset !== 0 || certificateTableSize !== 0) {
+      throw new Error("Windows installer must not contain an Authenticode certificate table");
+    }
+    return { codeSigning: "unsigned" };
   } finally {
     await handle.close();
   }
@@ -1014,6 +1166,14 @@ function parseSigningArguments(raw, expectedThumbprint) {
 function rejectAmbientSigningSecrets(environment) {
   const present = Object.keys(environment).filter((name) => ambientSigningSecretVariableSet.has(name.toUpperCase()));
   if (present.length > 0) throw new Error("ambient certificate-file and password signing variables are forbidden");
+}
+
+function rejectUnsignedWindowsSigningEnvironment(environment) {
+  const present = Object.keys(environment).filter((name) =>
+    unsignedWindowsSigningVariableSet.has(name.toUpperCase()));
+  if (present.length > 0) {
+    throw new Error("unsigned Windows packaging forbids ambient signing configuration");
+  }
 }
 
 function parseWindowsVersion(value) {

@@ -2,6 +2,10 @@
   "name": "@grok-desktop/desktop",
   "version": "0.0.1",
   "private": true,
+  "description": "A desktop workspace for official Grok and xAI services",
+  "author": "Grok Insider",
+  "homepage": "https://github.com/grok-insider/grok-desktop",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "dist-electron/electron/main.js",
   "scripts": {
@@ -77,6 +81,7 @@
     "@vitejs/plugin-react": "6.0.3",
     "cross-env": "10.1.0",
     "electron": "43.1.0",
+    "electron-builder": "26.15.3",
     "electron-windows-msix": "2.0.4",
     "jsdom": "29.1.1",
     "tailwindcss": "4.3.2",

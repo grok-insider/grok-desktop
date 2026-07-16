@@ -9,7 +9,12 @@ const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export interface AuthorizedUpdate {
   available: boolean;
   version: string;
-  artifact: { url: string; size: number; sha256: string };
+  artifact: {
+    kind: "appimage" | "nsis-installer";
+    url: string;
+    size: number;
+    sha256: string;
+  };
 }
 
 export interface UpdateAuthorizer {
@@ -164,21 +169,22 @@ function validateManifest(value: unknown, target: {
     "minimumProtocolVersion", "minimumSchemaVersion", "rolloutPercentage", "critical", "artifact",
     "releaseNotesUrl",
   ], "update manifest");
-  if (manifest.schemaVersion !== 2 || manifest.product !== "grok-desktop" || manifest.channel !== target.channel
+  if (manifest.schemaVersion !== 3 || manifest.product !== "grok-desktop" || manifest.channel !== target.channel
       || manifest.platform !== target.platform || manifest.architecture !== target.architecture
       || typeof manifest.version !== "string" || !VERSION_PATTERN.test(manifest.version)
       || typeof manifest.nativePackageVersion !== "string"
-      || (target.platform === "linux" && manifest.nativePackageVersion !== manifest.version)
-      || (target.platform === "win32"
-        && !/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){3}$/.test(manifest.nativePackageVersion))) {
+      || manifest.nativePackageVersion !== manifest.version) {
     throw new Error("update manifest target is invalid");
   }
   if (!positiveInteger(manifest.publishedAt) || !positiveInteger(manifest.minimumProtocolVersion)
       || !positiveInteger(manifest.minimumSchemaVersion) || manifest.rolloutPercentage !== 100
       || typeof manifest.critical !== "boolean") throw new Error("update manifest policy is invalid");
   const artifact = objectValue(manifest.artifact, "update artifact");
-  exactKeys(artifact, ["url", "size", "sha256"], "update artifact");
-  if (typeof artifact.url !== "string" || typeof artifact.sha256 !== "string"
+  exactKeys(artifact, ["kind", "url", "size", "sha256"], "update artifact");
+  const expectedKind: AuthorizedUpdate["artifact"]["kind"] = target.platform === "linux"
+    ? "appimage"
+    : "nsis-installer";
+  if (artifact.kind !== expectedKind || typeof artifact.url !== "string" || typeof artifact.sha256 !== "string"
       || !SHA256_PATTERN.test(artifact.sha256) || !positiveInteger(artifact.size)
       || artifact.size > 8 * 1024 * 1024 * 1024) throw new Error("update artifact is invalid");
   assertReleaseUrl(artifact.url);
@@ -187,14 +193,15 @@ function validateManifest(value: unknown, target: {
   }
   const expectedArtifact = target.platform === "linux"
     ? `GrokDesktop-${target.channel}-${target.architecture}.AppImage`
-    : `GrokDesktop-${target.channel}-${target.architecture}.msix`;
-  if (new URL(artifact.url).pathname.split("/").at(-1) !== expectedArtifact) {
+    : `GrokDesktop-${target.channel}-${target.architecture}.exe`;
+  if (new URL(artifact.url).pathname
+      !== `/grok-insider/grok-desktop/releases/download/v${manifest.version}/${expectedArtifact}`) {
     throw new Error("update artifact target is invalid");
   }
   if (typeof manifest.releaseNotesUrl !== "string") throw new Error("release notes URL is invalid");
   assertReleaseUrl(manifest.releaseNotesUrl);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     product: "grok-desktop",
     version: manifest.version,
     nativePackageVersion: manifest.nativePackageVersion,
@@ -206,7 +213,12 @@ function validateManifest(value: unknown, target: {
     minimumSchemaVersion: manifest.minimumSchemaVersion,
     rolloutPercentage: 100,
     critical: manifest.critical,
-    artifact: { url: artifact.url, size: artifact.size, sha256: artifact.sha256 },
+    artifact: {
+      kind: expectedKind,
+      url: artifact.url,
+      size: artifact.size,
+      sha256: artifact.sha256,
+    },
     releaseNotesUrl: manifest.releaseNotesUrl,
   };
 }

@@ -20,6 +20,7 @@ const { values } = parseArgs({
     "release-notes-url": { type: "string" },
     rollout: { type: "string", default: "100" },
     "artifact-url": { type: "string" },
+    "artifact-kind": { type: "string" },
     version: { type: "string" },
   },
   strict: true,
@@ -44,7 +45,7 @@ const artifact = await stat(artifactPath);
 if (!artifact.isFile()) throw new Error("--artifact must be a regular file");
 const privateKey = await readFile(privateKeyPath, "utf8");
 const signed = signUpdateManifest({
-  schemaVersion: 2,
+  schemaVersion: 3,
   product: "grok-desktop",
   version: required("version"),
   nativePackageVersion: required("native-package-version"),
@@ -57,6 +58,7 @@ const signed = signUpdateManifest({
   rolloutPercentage: integer("rollout"),
   critical: values.critical,
   artifact: {
+    kind: required("artifact-kind"),
     url: required("artifact-url"),
     size: artifact.size,
     sha256: await sha256File(artifactPath),

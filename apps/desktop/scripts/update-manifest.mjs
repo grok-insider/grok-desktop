@@ -1,16 +1,16 @@
 import { createPublicKey, sign, verify } from "node:crypto";
 
-export const UPDATE_MANIFEST_SCHEMA_VERSION = 2;
+export const UPDATE_MANIFEST_SCHEMA_VERSION = 3;
 export const UPDATE_CHANNELS = new Set(["beta", "stable"]);
 export const UPDATE_PLATFORMS = new Set(["linux", "win32"]);
 export const UPDATE_ARCHITECTURES = new Set(["arm64", "x64"]);
+export const UPDATE_ARTIFACT_KINDS = new Set(["appimage", "nsis-installer"]);
 const RELEASE_ORIGIN = "https://github.com";
 const RELEASE_PATH_PREFIX = "/grok-insider/grok-desktop/releases/download/";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ED25519_SIGNATURE_PATTERN = /^[A-Za-z0-9+/]{86}==$/;
 const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-const WINDOWS_VERSION_PATTERN = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){3}$/;
 
 function exactObject(value, keys, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -60,8 +60,7 @@ export function validateUnsignedUpdateManifest(value) {
   if (!UPDATE_CHANNELS.has(value.channel)) throw new Error("update channel is unsupported");
   if (value.channel === "stable" && version.includes("-")) throw new Error("stable updates cannot be prereleases");
   if (!UPDATE_PLATFORMS.has(value.platform)) throw new Error("update platform is unsupported");
-  if ((value.platform === "linux" && nativePackageVersion !== version)
-      || (value.platform === "win32" && !WINDOWS_VERSION_PATTERN.test(nativePackageVersion))) {
+  if (nativePackageVersion !== version) {
     throw new Error("native package version is invalid");
   }
   if (!UPDATE_ARCHITECTURES.has(value.architecture)) throw new Error("update architecture is unsupported");
@@ -75,12 +74,27 @@ export function validateUnsignedUpdateManifest(value) {
     throw new Error("rollout percentage is invalid");
   }
   if (typeof value.critical !== "boolean") throw new Error("critical flag is invalid");
-  exactObject(value.artifact, ["url", "size", "sha256"], "update artifact");
+  exactObject(value.artifact, ["kind", "url", "size", "sha256"], "update artifact");
+  if (!UPDATE_ARTIFACT_KINDS.has(value.artifact.kind)) {
+    throw new Error("update artifact kind is unsupported");
+  }
+  const expectedKind = value.platform === "linux" ? "appimage" : "nsis-installer";
+  if (value.artifact.kind !== expectedKind) {
+    throw new Error("update artifact kind does not match the target platform");
+  }
   if (!Number.isSafeInteger(value.artifact.size) || value.artifact.size < 1 || value.artifact.size > 8 * 1024 * 1024 * 1024) {
     throw new Error("update artifact size is invalid");
   }
   if (typeof value.artifact.sha256 !== "string" || !SHA256_PATTERN.test(value.artifact.sha256)) {
     throw new Error("update artifact digest is invalid");
+  }
+  const artifactUrl = releaseUrl(value.artifact.url, "artifact URL");
+  const expectedArtifact = value.platform === "linux"
+    ? `GrokDesktop-${value.channel}-${value.architecture}.AppImage`
+    : `GrokDesktop-${value.channel}-${value.architecture}.exe`;
+  const expectedArtifactPath = `${RELEASE_PATH_PREFIX}v${version}/${expectedArtifact}`;
+  if (new URL(artifactUrl).pathname !== expectedArtifactPath) {
+    throw new Error("update artifact URL does not match the release target");
   }
   return {
     schemaVersion: value.schemaVersion,
@@ -96,7 +110,8 @@ export function validateUnsignedUpdateManifest(value) {
     rolloutPercentage: value.rolloutPercentage,
     critical: value.critical,
     artifact: {
-      url: releaseUrl(value.artifact.url, "artifact URL"),
+      kind: value.artifact.kind,
+      url: artifactUrl,
       size: value.artifact.size,
       sha256: value.artifact.sha256,
     },

@@ -1,7 +1,7 @@
 # Release qualification
 
 Grok Desktop does not ship reduced-quality interim editions. A channel is
-publishable only when the applicable gates below pass for the exact signed
+publishable only when the applicable gates below pass for the exact release
 artifacts. Passing unit tests is necessary but not sufficient.
 
 ## Artifact identity
@@ -11,13 +11,16 @@ artifacts. Passing unit tests is necessary but not sufficient.
 - The initial public preview ships Windows x64 only. ARM64 remains deferred;
   it must not be implied by release notes or evidence. A later multi-architecture
   stable release keeps one stable package family identity across architectures.
-- Executables, service binaries, MSIX packages, update metadata, guest images,
-  and integration manifests are signed by channel-scoped keys. Test keys cannot
-  be trusted by a release build.
-- The official Grok Build executable retains its vendor bytes and is selected by
-  the signed xAI catalog; Grok Desktop does not overwrite its Authenticode
-  signature. Provenance and explicit xAI redistribution-permission evidence are
-  approved for the exact digest. Cryptographic trust alone is not a license.
+- The active Windows core NSIS installer and Grok Desktop executables are
+  intentionally unsigned. Their exact bytes are bound by `SHA256SUMS`, GitHub
+  build attestations, the immutable source tag, and signed update metadata.
+  The deferred isolated MSIX/service/guest train retains its channel-scoped
+  signing requirements. Test keys cannot be trusted by a release build.
+- The active core release selects the official Grok Build executable through
+  the tracked source-pinned component manifest and preserves its exact vendor
+  bytes. Grok Desktop does not overwrite its Authenticode signature.
+  Provenance and explicit xAI redistribution-permission evidence are approved
+  for the exact digest. Cryptographic trust alone is not a license.
 - SBOM, checksums, provenance, symbols, license inventory, and release notes are
   generated from the release build. Credentials and signing material never
   enter the repository or artifacts.
@@ -32,9 +35,9 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 - For `v0.0.z`, Windows 11 current and previous supported servicing releases on
   x64. ARM64 enters this matrix only when its package is intentionally enabled.
-- Packaged-service capability approval or the chosen direct/enterprise
-  distribution exception is recorded; LocalSystem service installation and
-  removal are tested under elevation and MDM deployment.
+- The active NSIS package installs per-user without elevation. Packaged-service
+  capability approval, LocalSystem installation, and MDM deployment remain
+  qualification gates only for the deferred isolated MSIX train.
 - Standard user, administrator, domain user, non-ASCII profile, long profile
   path, redirected profile, and OneDrive-known-folder configurations.
 - Clean install, update across every supported schema/protocol boundary,
@@ -51,8 +54,9 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 - Renderer navigation, custom protocol, IPC sender, CSP, permissions, window
   creation, deep links, and Electron fuses pass adversarial tests.
-- The installed MSIX registers exactly one lowercase `grok-desktop` protocol
-  handler bound to `app\Grok Desktop.exe` with one quoted `%1` URI argument;
+- The installed NSIS application registers exactly one current-user lowercase
+  `grok-desktop` protocol handler bound to `Grok Desktop.exe` with one quoted
+  `%1` URI argument and removes only its owned registration on uninstall;
   cold and running-instance activation
   accept only the documented `grok-desktop://open/v1/...` grammar, while the
   private `grok-desktop://app` renderer origin and malformed inputs are ignored.
@@ -66,7 +70,7 @@ artifacts. Passing unit tests is necessary but not sufficient.
   result, a safe retry, or `interrupted_needs_review`; never an implicit repeat
   of a non-idempotent action.
 - Every architecture enabled for the release (x64 only for `v0.0.z`) exercises
-  the exact signed daemon with the real Tokio named-pipe client and explicitly
+  the exact release daemon with the real Tokio named-pipe client and explicitly
   requests `SECURITY_IDENTIFICATION` with the SQOS-present
   flag. The service observes an identification token and rejects anonymous,
   impersonation, and delegation levels. The unreleased
@@ -102,8 +106,9 @@ artifacts. Passing unit tests is necessary but not sufficient.
 - xAI BYOK setup, validation, rotation, deletion, scope/rate errors, and cost
   reporting use only `api.x.ai`; keys never appear in renderer snapshots or
   responses.
-- The daemon-hosted Win32 BYOK prompt is exercised from the exact signed MSIX
-  on every enabled Windows architecture (x64 only for `v0.0.z`). Tests cover package/window identity, arbitrary and stale
+- The daemon-hosted Win32 BYOK prompt is exercised from the exact NSIS-installed
+  build on every enabled Windows architecture (x64 only for `v0.0.z`). Tests
+  cover installer/window identity, arbitrary and stale
   HWNDs, destruction/reuse races, keyboard and screen-reader access,
   cancellation, daemon shutdown, memory-lock failure, and plaintext residue;
   renderer/preload/Electron-main telemetry must contain no entered bytes.
@@ -139,18 +144,22 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 Stable publication is tag-only through `.github/workflows/release.yml`. Linux
 is built on a clean hosted worker; Windows x64 requires the protected qualified
-ephemeral signing environment and source-pinned release inputs. ARM64 remains a
-fail-closed deferred target.
+ephemeral build environment and source-pinned release inputs. The Windows NSIS
+installer is unsigned; the protected publication job signs update metadata.
+ARM64 remains a fail-closed deferred target.
 The final protected job runs only after every platform build, receives the
 offline update key, generates and independently verifies target-bound update
 manifests, and creates the GitHub Release. Missing workers, inputs, public trust,
-signing material, or either architecture fail the workflow before publication.
+update-signing material, or either architecture fail the workflow before
+publication.
 
 The release record contains artifact hashes, workflow and source revisions,
-test matrix results, Windows App Certification Kit output, security scan and
+test matrix results, NSIS install/update/uninstall evidence, security scan and
 dependency audit results, migration fixtures, performance comparison, known
 limitations, and the person who approved promotion. Preview evidence cannot be
 reused for stable after any byte changes.
-It also records the ACP catalog sequence, expiry and signing key, selected Grok
-Build version and digest, preserved-vendor-signature policy, source provenance,
-and redistribution-permission evidence identifiers.
+It also records the pinned component manifest binding, selected Grok Build
+version, source URL, size and digest, preserved-vendor-signature policy, source
+provenance, and redistribution-permission evidence identifiers. ACP catalog
+sequence, expiry, and signing-key evidence remains a deferred isolated-train
+requirement.
