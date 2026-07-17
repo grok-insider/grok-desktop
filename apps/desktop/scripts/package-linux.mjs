@@ -5,7 +5,7 @@
  * a desktop entry + layout manifest. Does not claim Work isolation; the Linux
  * VM broker is packaged separately when present.
  */
-import { cp, lstat, mkdir, mkdtemp, open, readFile, rm, stat, symlink, writeFile, chmod } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, symlink, writeFile, chmod } from "node:fs/promises";
 import { constants as fsConstants, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +31,17 @@ const repositoryRoot = path.resolve(desktopRoot, "../..");
 const productName = "Grok Desktop";
 const executableName = "grok-desktop";
 const OPEN_CLOEXEC = fsConstants.O_CLOEXEC ?? 0;
+const MAX_BUNDLED_LIBRARY_COUNT = 256;
+const MAX_BUNDLED_LIBRARY_SIZE = 128 * 1024 * 1024;
+const hostAbiLibraries = new Set([
+  "ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1", "libanl.so.1", "libc.so.6",
+  "libdl.so.2", "libm.so.6", "libpthread.so.0", "libresolv.so.2", "librt.so.1",
+  "libutil.so.1",
+]);
+const requiredElectronLibraries = new Set([
+  "libglib-2.0.so.0", "libgobject-2.0.so.0", "libgio-2.0.so.0", "libnspr4.so",
+  "libnss3.so", "libnssutil3.so", "libsmime3.so", "libgtk-3.so.0", "libgbm.so.1",
+]);
 const linuxServiceTemplate = readFileSync(
   path.join(repositoryRoot, "native/linux-vm-service/packaging/grok-linux-vm-service.service.in"),
   "utf8",
@@ -41,6 +52,84 @@ const linuxServiceEnvironmentTemplate = readFileSync(
 );
 
 export const LINUX_PACKAGE_ARCHITECTURES = new Set(["x64", "arm64"]);
+
+export function parseLinuxSharedLibraryResolution(output) {
+  if (typeof output !== "string" || Buffer.byteLength(output) > 1024 * 1024) {
+    throw new Error("Electron shared-library resolution is invalid or oversized");
+  }
+  const libraries = new Map();
+  for (const line of output.split(/\r?\n/)) {
+    const missing = line.match(/^\s*([^\s]+)\s+=>\s+not found\s*$/);
+    if (missing) throw new Error(`Electron shared library is unavailable: ${missing[1]}`);
+    const resolved = line.match(/^\s*([^\s]+)\s+=>\s+(\/[^\s]+)\s+\(0x[0-9a-f]+\)\s*$/i);
+    if (!resolved) continue;
+    const [, name, source] = resolved;
+    if (!/^[A-Za-z0-9+_.-]{1,128}$/.test(name) || path.basename(source) === "") {
+      throw new Error("Electron shared-library resolution contains an invalid entry");
+    }
+    const previous = libraries.get(name);
+    if (previous && previous !== source) throw new Error(`Electron shared library is ambiguous: ${name}`);
+    libraries.set(name, source);
+  }
+  for (const required of requiredElectronLibraries) {
+    if (!libraries.has(required)) throw new Error(`Electron shared-library resolution is missing ${required}`);
+  }
+  if (libraries.size > MAX_BUNDLED_LIBRARY_COUNT) throw new Error("Electron shared-library closure is oversized");
+  return [...libraries.entries()]
+    .filter(([name]) => !hostAbiLibraries.has(name))
+    .map(([name, source]) => ({ name, source }))
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+async function resolveElectronSharedLibraries(executable) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn("ldd", [executable], {
+      env: { PATH: process.env.PATH ?? "", LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    let size = 0;
+    const append = (target) => (chunk) => {
+      size += chunk.length;
+      if (size > 1024 * 1024) child.kill("SIGKILL");
+      else target.push(chunk);
+    };
+    child.stdout.on("data", append(stdout));
+    child.stderr.on("data", append(stderr));
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code !== 0 || signal !== null || size > 1024 * 1024) {
+        reject(new Error(`ldd could not resolve Electron libraries: ${Buffer.concat(stderr).toString("utf8").slice(0, 512)}`));
+        return;
+      }
+      resolve(parseLinuxSharedLibraryResolution(Buffer.concat(stdout).toString("utf8")));
+    });
+  });
+}
+
+async function bundleElectronSharedLibraries(executable, destination) {
+  const libraries = await resolveElectronSharedLibraries(executable);
+  await mkdir(destination, { recursive: true, mode: 0o755 });
+  for (const library of libraries) {
+    const resolvedSource = await realpath(library.source);
+    if (!resolvedSource.startsWith("/lib/") && !resolvedSource.startsWith("/usr/lib/")) {
+      throw new Error(`Electron shared library resolves outside system library roots: ${library.name}`);
+    }
+    const source = await openRetainedSource(
+      resolvedSource,
+      `Electron shared library ${library.name}`,
+      MAX_BUNDLED_LIBRARY_SIZE,
+      false,
+    );
+    try {
+      await copyRetainedSource(source, path.join(destination, library.name), 0o644);
+    } finally {
+      await source.handle.close();
+    }
+  }
+  return libraries.map(({ name }) => name);
+}
 
 export function parseLinuxPackageArguments(argv) {
   const values = {};
@@ -191,6 +280,10 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   await mkdir(bin, { recursive: true, mode: 0o755 });
   await cp(appDirectory, bin, { recursive: true, dereference: false, errorOnExist: true });
   await readVerifiedFuseState(path.join(bin, executableName));
+  await bundleElectronSharedLibraries(
+    path.join(bin, executableName),
+    path.join(appDir, "usr", "lib"),
+  );
   const applicationDirectory = path.join(appDir, "usr", "share", "applications");
   const iconDirectory = path.join(appDir, "usr", "share", "icons", "hicolor", "32x32", "apps");
   const metadataDirectory = path.join(appDir, "usr", "share", "metainfo");
@@ -214,7 +307,7 @@ async function createLinuxAppImage(appDirectory, out, options, version) {
   );
   await writeFile(
     path.join(appDir, "AppRun"),
-    '#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$HERE/usr/bin/grok-desktop" "$@"\n',
+    '#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$HERE/usr/bin/grok-desktop" "$@"\n',
     { encoding: "utf8", mode: 0o755, flag: "wx" },
   );
   await symlink("usr/share/applications/grok-desktop.desktop", path.join(appDir, "grok-desktop.desktop"));

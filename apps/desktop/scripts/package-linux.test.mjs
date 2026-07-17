@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   linuxDaemonCandidates,
   linuxAppImageUpdateInformation,
+  parseLinuxSharedLibraryResolution,
   parseLinuxPackageArguments,
   renderLinuxVmServiceEnvironment,
   renderLinuxVmServiceUnit,
@@ -63,6 +64,31 @@ test("reverifies the copied Electron executable before invoking appimagetool", a
 
   assert.ok(copyIndex >= 0 && verifyIndex > copyIndex);
   assert.ok(toolIndex > verifyIndex, "the copied executable must be verified before AppImage assembly");
+  assert.match(createAppImage, /bundleElectronSharedLibraries/);
+  assert.match(createAppImage, /LD_LIBRARY_PATH/);
+});
+
+test("bundles the bounded Electron closure while retaining the host glibc ABI", () => {
+  const required = [
+    "libglib-2.0.so.0", "libgobject-2.0.so.0", "libgio-2.0.so.0", "libnspr4.so",
+    "libnss3.so", "libnssutil3.so", "libsmime3.so", "libgtk-3.so.0", "libgbm.so.1",
+  ];
+  const output = [
+    "\tlinux-vdso.so.1 (0x00007fff)",
+    ...required.map((name, index) => `\t${name} => /usr/lib/x86_64-linux-gnu/${name} (0x${index + 1000})`),
+    "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x2000)",
+    "\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x3000)",
+  ].join("\n");
+  const libraries = parseLinuxSharedLibraryResolution(output);
+  assert.deepEqual(libraries.map(({ name }) => name).toSorted(), required.toSorted());
+  assert.throws(
+    () => parseLinuxSharedLibraryResolution(output.replace("libnspr4.so => /usr/lib/x86_64-linux-gnu/libnspr4.so", "libnspr4.so => not found")),
+    /libnspr4\.so/,
+  );
+  assert.throws(
+    () => parseLinuxSharedLibraryResolution(output.replace(/\n\tlibnspr4\.so[^\n]+/, "")),
+    /missing libnspr4\.so/,
+  );
 });
 
 test("parseLinuxPackageArguments defaults arch from host and rejects bad options", () => {
