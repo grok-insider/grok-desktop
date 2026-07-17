@@ -6,6 +6,14 @@ on:
     branches: [master]
   workflow_dispatch:
     inputs:
+      release_pr:
+        description: Exact merged release PR number for recovery
+        required: true
+        type: string
+      qualification_run_id:
+        description: Exact protected qualification workflow run
+        required: true
+        type: string
       source_sha:
         description: Exact current master commit to tag after a failed finalizer
         required: true
@@ -16,20 +24,22 @@ on:
         type: string
 
 permissions:
+  actions: read
+  checks: read
   contents: read
+  pull-requests: read
 
 jobs:
   tag:
-    name: Tag approved release
+    name: Tag qualified release
     if: >
       github.repository_owner == 'grok-insider' &&
-      ((github.event_name == 'pull_request'
-        && github.event.pull_request.merged == true
-        && (startsWith(github.event.pull_request.head.ref, 'release-please--')
-            || startsWith(github.event.pull_request.head.ref, 'release-please-manual-')))
+      ((github.event_name == 'pull_request' && github.event.pull_request.merged == true)
        || (github.event_name == 'workflow_dispatch' && github.actor == 'grok-insider'))
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      checks: read
       contents: write
       pull-requests: write
     steps:
@@ -38,16 +48,74 @@ jobs:
           RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: test -n "$RELEASE_PLZ_TOKEN"
 
+      - id: release
+        name: Resolve merged PR and exact qualification run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          REQUESTED_PR: ${{ inputs.release_pr }}
+          REQUESTED_QUALIFICATION_RUN: ${{ inputs.qualification_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" = pull_request ]]; then pr="$EVENT_PR"; else pr="$REQUESTED_PR"; fi
+          case "$pr" in ''|*[!0-9]*) exit 1;; esac
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" > release-pr.json
+          test "$(jq -r '.merged // false' release-pr.json)" = true
+          test "$(jq -r '.base.ref' release-pr.json)" = master
+          head_ref="$(jq -r '.head.ref' release-pr.json)"
+          case "$head_ref" in
+            release-please--branches--master--components--grok-desktop|release-please-manual-v*) ;;
+            *) echo "::error::Unapproved release head."; exit 1;;
+          esac
+          head_sha="$(jq -r '.head.sha' release-pr.json)"
+          merge_sha="$(jq -r '.merge_commit_sha' release-pr.json)"
+          check="$(
+            gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?check_name=release-candidate%2Fv1&filter=latest" \
+              --jq '[.check_runs[] | select(.name == "release-candidate/v1" and .app.slug == "github-actions")] | sort_by(.id) | last // empty'
+          )"
+          test -n "$check"
+          test "$(jq -r .status <<< "$check")" = completed
+          test "$(jq -r .conclusion <<< "$check")" = success
+          details="$(jq -r '.details_url // empty' <<< "$check")"
+          qualification_run="${details##*/}"
+          case "$qualification_run" in ''|*[!0-9]*) exit 1;; esac
+          if [[ "$EVENT_NAME" = workflow_dispatch ]]; then test "$qualification_run" = "$REQUESTED_QUALIFICATION_RUN"; fi
+          {
+            echo "pr=$pr"
+            echo "head_ref=$head_ref"
+            echo "head_sha=$head_sha"
+            echo "merge_sha=$merge_sha"
+            echo "qualification_run=$qualification_run"
+            echo "title=$(jq -r .title release-pr.json)"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || steps.release.outputs.merge_sha }}
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - name: Verify and create the immutable tag
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.release.outputs.qualification_run }}
+          name: release-qualification
+          path: qualification
+
+      - name: Verify qualification before creating the immutable tag
+        shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REF: ${{ steps.release.outputs.head_ref }}
+          HEAD_SHA: ${{ steps.release.outputs.head_sha }}
+          MERGE_SHA: ${{ steps.release.outputs.merge_sha }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+          QUALIFICATION_RUN: ${{ steps.release.outputs.qualification_run }}
+          RELEASE_TITLE: ${{ steps.release.outputs.title }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
           REQUESTED_VERSION: ${{ inputs.version }}
@@ -57,73 +125,55 @@ jobs:
           node scripts/sync-release-version.mjs "$version" --check
           test "$(jq -r '.["."]' .release-please-manifest.json)" = "$version"
           grep -Eq "^## \\[$version\\]|^## $version([[:space:]]|$)" CHANGELOG.md
+          if [[ "$HEAD_REF" = release-please--branches--master--components--grok-desktop ]]; then
+            expected_title="chore(master): release ${version}"
+          else
+            expected_title="chore(release): v${version}"
+          fi
+          test "$RELEASE_TITLE" = "$expected_title"
+          test "$(git rev-parse HEAD)" = "$MERGE_SHA"
           if [[ "$EVENT_NAME" = workflow_dispatch ]]; then
             test "$REQUESTED_VERSION" = "$version"
-            test "${#REQUESTED_SOURCE_SHA}" -eq 40
-            case "$REQUESTED_SOURCE_SHA" in *[!0-9a-f]*) exit 1;; esac
-            test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE_SHA"
-            test "$(git ls-remote --exit-code origin refs/heads/master | cut -f1)" = "$REQUESTED_SOURCE_SHA"
-          else
-            case "$HEAD_REF" in
-              release-please--*)
-                test "$PR_TITLE" = "chore(master): release ${version}"
-                ;;
-              release-please-manual-*)
-                test "$PR_TITLE" = "chore(release): v${version}"
-                ;;
-              *)
-                echo "::error::Unapproved release head."
-                exit 1
-                ;;
-            esac
+            test "$REQUESTED_SOURCE_SHA" = "$MERGE_SHA"
+            test "$(git ls-remote --exit-code origin refs/heads/master | cut -f1)" = "$MERGE_SHA"
           fi
-          if git rev-parse "v${version}" >/dev/null 2>&1; then
-            echo "::error::Tag v${version} already exists."
-            exit 1
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${version}" -m "Grok Desktop v${version}"
-          git push origin "v${version}"
-
-      - name: Mark the finalized release pull request as tagged
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./package.json").version')"
-          if [[ "$EVENT_NAME" = pull_request ]]; then
-            release_pr="$EVENT_PR_NUMBER"
-          else
-            candidates="$(
-              gh pr list --state merged --base master --limit 100 \
-                --json number,title,headRefName \
-                --jq ".[] | select(
-                  (.title == \"chore(master): release ${version}\" and (.headRefName | startswith(\"release-please--\"))) or
-                  (.title == \"chore(release): v${version}\" and (.headRefName | startswith(\"release-please-manual-\")))
-                ) | .number"
-            )"
-            test "$(wc -w <<<"$candidates")" -eq 1 || {
-              echo "::error::Expected exactly one merged release PR for v${version}."
+          git fetch --no-tags origin "pull/$RELEASE_PR/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          head_tree="$(git rev-parse "$HEAD_SHA^{tree}")"
+          merge_tree="$(git rev-parse "HEAD^{tree}")"
+          test "$head_tree" = "$merge_tree"
+          node scripts/release-candidate.mjs verify-qualification \
+            --qualification qualification/release-qualification.json \
+            --version "$version" --source-sha "$HEAD_SHA" --tree-sha "$head_tree"
+          test "$(jq -r '.qualification.workflowRunId' qualification/release-qualification.json)" = "$QUALIFICATION_RUN"
+          candidate_run="$(jq -r '.candidate.workflowRunId' qualification/release-qualification.json)"
+          git fetch --force --tags origin
+          if git rev-parse "v${version}^{commit}" >/dev/null 2>&1; then
+            test "$(git rev-parse "v${version}^{commit}")" = "$MERGE_SHA" || {
+              echo "::error::Tag v${version} exists at another commit."
               exit 1
             }
-            release_pr="$candidates"
+            echo "Tag v${version} already exists at the qualified commit; continuing idempotently."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "v${version}" -m "Grok Desktop v${version}
+
+          Qualification-Run: ${QUALIFICATION_RUN}
+          Candidate-Run: ${candidate_run}"
+            git push origin "v${version}"
           fi
 
-          pr="$(gh pr view "$release_pr" --json baseRefName,headRefName,mergeCommit,mergedAt,title)"
-          test "$(jq -r '.baseRefName' <<<"$pr")" = master
-          test "$(jq -r '.mergedAt // empty' <<<"$pr")" != ""
-          merge_sha="$(jq -r '.mergeCommit.oid // empty' <<<"$pr")"
-          test "${#merge_sha}" -eq 40
-          git merge-base --is-ancestor "$merge_sha" HEAD
-
+      - name: Mark the finalized release pull request as tagged
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          set -euo pipefail
           gh label create "autorelease: tagged" --force --color 4285F4 \
             --description "Release PR has been finalized with an immutable tag"
-          labels="$(gh pr view "$release_pr" --json labels --jq '.labels[].name')"
+          labels="$(gh pr view "$RELEASE_PR" --json labels --jq '.labels[].name')"
           edit_args=(--add-label "autorelease: tagged")
-          if grep -Fxq "autorelease: pending" <<<"$labels"; then
-            edit_args+=(--remove-label "autorelease: pending")
-          fi
-          gh pr edit "$release_pr" "${edit_args[@]}"
+          if grep -Fxq "autorelease: pending" <<< "$labels"; then edit_args+=(--remove-label "autorelease: pending"); fi
+          gh pr edit "$RELEASE_PR" "${edit_args[@]}"

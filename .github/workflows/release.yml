@@ -4,274 +4,131 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact existing immutable tag for transient promotion recovery
+        required: true
+        type: string
+      qualification_run_id:
+        description: Exact qualification run bound by the annotated tag
+        required: true
+        type: string
 
 concurrency:
   group: public-release
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   resolve:
-    name: Resolve release contract
+    name: Resolve qualified release contract
+    if: github.event_name == 'push' || github.actor == 'grok-insider'
     runs-on: ubuntu-latest
     outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
       channel: ${{ steps.release.outputs.channel }}
-      windows_environment: ${{ steps.release.outputs.windows_environment }}
       publish_environment: ${{ steps.release.outputs.publish_environment }}
-      linux_environment: ${{ steps.release.outputs.linux_environment }}
+      qualification_run: ${{ steps.release.outputs.qualification_run }}
+      candidate_run: ${{ steps.release.outputs.candidate_run }}
+      linux_artifact_id: ${{ steps.release.outputs.linux_artifact_id }}
+      windows_artifact_id: ${{ steps.release.outputs.windows_artifact_id }}
     steps:
       - uses: actions/checkout@v7
-      - id: release
-        name: Verify tag, source version, and channel
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: annotation
+        name: Resolve tag annotation
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          REQUESTED_QUALIFICATION_RUN: ${{ inputs.qualification_run_id }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" = workflow_dispatch ]]; then tag="$REQUESTED_TAG"; else tag="$GITHUB_REF_NAME"; fi
+          case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) exit 1;; esac
+          test "$(git cat-file -t "refs/tags/$tag")" = tag
+          test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse HEAD)"
+          qualification_run="$(git for-each-ref --format='%(contents)' "refs/tags/$tag" | sed -n 's/^Qualification-Run: \([1-9][0-9]*\)$/\1/p')"
+          test -n "$qualification_run"
+          if [[ "$EVENT_NAME" = workflow_dispatch ]]; then test "$qualification_run" = "$REQUESTED_QUALIFICATION_RUN"; fi
+          {
+            echo "tag=$tag"
+            echo "qualification_run=$qualification_run"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.annotation.outputs.qualification_run }}
+          name: release-qualification
+          path: qualification
+      - id: release
+        name: Verify qualification, tag tree, version, and artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.annotation.outputs.tag }}
+          QUALIFICATION_RUN: ${{ steps.annotation.outputs.qualification_run }}
+        run: |
+          set -euo pipefail
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN")"
+          test "$(jq -r .conclusion <<< "$run")" = success
+          test "$(jq -r .event <<< "$run")" = workflow_dispatch
+          test "$(jq -r .head_branch <<< "$run")" = master
+          test "$(jq -r .path <<< "$run")" = .github/workflows/qualify-release-candidate.yml
           version="$(node -p 'require("./package.json").version')"
-          test "$GITHUB_REF_NAME" = "v$version"
+          test "$TAG" = "v$version"
+          node scripts/sync-release-version.mjs "$version" --check
+          tree_sha="$(git rev-parse 'HEAD^{tree}')"
+          source_sha="$(jq -r '.candidate.sourceSha' qualification/release-qualification.json)"
+          node scripts/release-candidate.mjs verify-qualification \
+            --qualification qualification/release-qualification.json \
+            --version "$version" --source-sha "$source_sha" --tree-sha "$tree_sha"
+          test "$(jq -r '.qualification.workflowRunId' qualification/release-qualification.json)" = "$QUALIFICATION_RUN"
           policy="$(node scripts/release-policy.mjs "$version")"
           channel="$(jq -r .channel <<< "$policy")"
           {
+            echo "tag=$TAG"
+            echo "version=$version"
             echo "channel=$channel"
-            echo "windows_environment=${channel}-windows-build"
             echo "publish_environment=${channel}-release"
-            if [[ "$channel" = beta ]]; then echo "linux_environment=beta-build"; else echo "linux_environment=stable-release"; fi
+            echo "qualification_run=$QUALIFICATION_RUN"
+            echo "candidate_run=$(jq -r '.candidate.workflowRunId' qualification/release-qualification.json)"
+            echo "linux_artifact_id=$(jq -r '.candidate.artifacts[] | select(.platform == "linux") | .id' qualification/release-qualification.json)"
+            echo "windows_artifact_id=$(jq -r '.candidate.artifacts[] | select(.platform == "windows") | .id' qualification/release-qualification.json)"
           } >> "$GITHUB_OUTPUT"
 
-  linux:
-    name: Build Linux x64
-    needs: resolve
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment:
-      name: ${{ needs.resolve.outputs.linux_environment }}
-    env:
-      UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
-      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
-      APPIMAGEUPDATETOOL_SHA256: d976cdac667b03dee8cb23fb95ef74b042c406c5cbab3ff294d2b16efeaff84f
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10.33.2
-          run_install: false
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-      - uses: cachix/install-nix-action@v31
-      - run: pnpm install --frozen-lockfile
-      - name: Verify tag matches package version
-        shell: bash
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          test "$GITHUB_REF_NAME" = "v$version"
-          test "${{ needs.resolve.outputs.channel }}" = stable -o "${{ needs.resolve.outputs.channel }}" = beta
-          echo "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" >> "$GITHUB_ENV"
-      - run: pnpm build
-      - name: Build portable native runtime with tracked official Grok pin
-        shell: bash
-        run: |
-          runtime="$RUNNER_TEMP/grok-portable-linux-runtime"
-          nix build --print-build-logs --out-link "$runtime" .#portableLinuxRuntime
-          for executable in grok-daemon grok-host-tools-mcp; do
-            test -x "$runtime/bin/$executable"
-            node --input-type=module - "$runtime/bin/$executable" "$executable" <<'NODE'
-          import { inspectPortableLinuxRuntimeFile } from "./apps/desktop/scripts/linux-native-runtime-policy.mjs";
-          const [file, label] = process.argv.slice(2);
-          await inspectPortableLinuxRuntimeFile(file, "x64", label);
-          NODE
-            if readelf --program-headers --wide "$runtime/bin/$executable" \
-                | grep -Eq '(^|[[:space:]])INTERP([[:space:]]|$)' \
-                || readelf --dynamic --wide "$runtime/bin/$executable" \
-                | grep -Eq '\((NEEDED|RPATH|RUNPATH|CONFIG|DEPAUDIT|AUDIT|AUXILIARY|FILTER)\)'; then
-              echo "$executable depends on a host loader or shared library" >&2
-              exit 1
-            fi
-          done
-      - name: Acquire exact official Grok Build component
-        shell: bash
-        run: |
-          manifest="apps/desktop/release/components/grok-build/linux-x64.json"
-          source_url="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).sourceUrl' "$manifest")"
-          expected_sha="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).sha256' "$manifest")"
-          expected_size="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).size' "$manifest")"
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$RUNNER_TEMP/grok" "$source_url"
-          test "$(stat --format=%s "$RUNNER_TEMP/grok")" = "$expected_size"
-          echo "$expected_sha  $RUNNER_TEMP/grok" | sha256sum --check --strict
-          chmod 700 "$RUNNER_TEMP/grok"
-      - name: Acquire pinned AppImage tools
-        shell: bash
-        run: |
-          test -n "$UPDATE_TRUST_JSON"
-          install -m 600 /dev/null "$RUNNER_TEMP/update-trusted-keys.json"
-          printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$RUNNER_TEMP/appimagetool.AppImage" \
-            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$RUNNER_TEMP/appimageupdatetool.AppImage" \
-            https://github.com/AppImageCommunity/AppImageUpdate/releases/download/2.0.0-alpha-1-20251018/appimageupdatetool-x86_64.AppImage
-          echo "$APPIMAGETOOL_SHA256  $RUNNER_TEMP/appimagetool.AppImage" | sha256sum --check --strict
-          echo "$APPIMAGEUPDATETOOL_SHA256  $RUNNER_TEMP/appimageupdatetool.AppImage" | sha256sum --check --strict
-          chmod 700 "$RUNNER_TEMP/appimagetool.AppImage" "$RUNNER_TEMP/appimageupdatetool.AppImage"
-      - name: Package updateable AppImage
-        run: |
-          release_date="$(git show -s --format=%cs "$GITHUB_SHA")"
-          test -n "$release_date"
-          pnpm package:linux -- --arch x64 --channel "$RELEASE_CHANNEL" \
-            --release-date "$release_date" \
-            --daemon "$RUNNER_TEMP/grok-portable-linux-runtime/bin/grok-daemon" \
-            --host-tools-helper "$RUNNER_TEMP/grok-portable-linux-runtime/bin/grok-host-tools-mcp" \
-            --acp-pinned-manifest release/components/grok-build/linux-x64.json \
-            --acp-component "$RUNNER_TEMP/grok" \
-            --appimagetool "$RUNNER_TEMP/appimagetool.AppImage" \
-            --appimagetool-sha256 "$APPIMAGETOOL_SHA256" \
-            --appimageupdatetool "$RUNNER_TEMP/appimageupdatetool.AppImage" \
-            --appimageupdatetool-sha256 "$APPIMAGEUPDATETOOL_SHA256" \
-            --update-trust-file "$RUNNER_TEMP/update-trusted-keys.json"
-      - name: Verify final Linux release artifact
-        run: |
-          pnpm --filter @grok-desktop/desktop release:verify-linux-artifact -- \
-            --appimage "$GITHUB_WORKSPACE/out/release/linux/x64/GrokDesktop-$RELEASE_CHANNEL-x64.AppImage" \
-            --record "$GITHUB_WORKSPACE/out/release/linux/x64/linux-package.json" \
-            --acp-pin "$GITHUB_WORKSPACE/apps/desktop/release/components/grok-build/linux-x64.json"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-linux-x64
-          if-no-files-found: error
-          retention-days: 7
-          path: |
-            out/release/linux/x64/GrokDesktop-*-x64.AppImage
-            out/release/linux/x64/GrokDesktop-*-x64.AppImage.zsync
-            out/release/linux/x64/linux-package.json
-            apps/desktop/release/components/grok-build/linux-x64.json
-
-  windows:
-    name: Build Windows x64 core
-    needs: resolve
-    runs-on: [self-hosted, windows, x64]
-    timeout-minutes: 90
-    environment:
-      name: ${{ needs.resolve.outputs.windows_environment }}
-    env:
-      GROK_WINDOWS_MAX_TESTED_VERSION: ${{ vars.GROK_WINDOWS_MAX_TESTED_VERSION }}
-      GROK_WINDOWS_CARGO_PATH: ${{ vars.GROK_WINDOWS_CARGO_PATH }}
-      GROK_WINDOWS_RUSTC_PATH: ${{ vars.GROK_WINDOWS_RUSTC_PATH }}
-      GROK_WINDOWS_LINKER_PATH: ${{ vars.GROK_WINDOWS_LINKER_PATH }}
-      GROK_WINDOWS_CARGO_CACHE: ${{ vars.GROK_WINDOWS_CARGO_CACHE }}
-      GROK_WINDOWS_TOOLCHAIN_ENV_JSON: ${{ vars.GROK_WINDOWS_TOOLCHAIN_ENV_JSON }}
-      GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
-      GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID }}
-      GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10.33.2
-          run_install: false
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Verify qualified worker inputs
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_REF_NAME -ne "v$((Get-Content package.json | ConvertFrom-Json).version)") { throw "tag/version mismatch" }
-          if (-not $env:GROK_UPDATE_TRUSTED_KEYS_JSON) { throw "update trust is unavailable" }
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          if ($env:GROK_UPDATE_TRUSTED_KEYS_JSON.Length -gt 65536) { throw "update trust is oversized" }
-          foreach ($name in @(
-            "CSC_LINK",
-            "CSC_KEY_PASSWORD",
-            "WIN_CSC_LINK",
-            "WIN_CSC_KEY_PASSWORD",
-            "WINDOWS_CERTIFICATE_FILE",
-            "WINDOWS_CERTIFICATE_PASSWORD",
-            "GROK_WINDOWS_SIGNTOOL_PATH",
-            "GROK_WINDOWS_TIMESTAMP_SERVER",
-            "GROK_WINDOWS_SIGNER_SHA1",
-            "GROK_WINDOWS_SIGN_ARGS_JSON"
-          )) {
-            if ([Environment]::GetEnvironmentVariable($name)) {
-              throw "unsigned Windows packaging rejects ambient signing input: $name"
-            }
-          }
-          "RELEASE_CHANNEL=${{ needs.resolve.outputs.channel }}" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - run: pnpm build
-      - name: Build and stage source-pinned native runtime
-        shell: pwsh
-        run: |
-          $sourceManifest = "apps/desktop/release/components/grok-build/windows-x64.json"
-          $packageManifest = "release/components/grok-build/windows-x64.json"
-          $stage = Join-Path $env:RUNNER_TEMP "grok-windows-core-stage"
-          if (Test-Path -LiteralPath $stage) {
-            $stageItem = Get-Item -LiteralPath $stage -Force
-            if (($stageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-              throw "Windows core stage must not be a reparse point"
-            }
-            Remove-Item -LiteralPath $stage -Recurse -Force
-          }
-          New-Item -ItemType Directory -Force (Join-Path $stage "bin/components/grok-acp/bin") | Out-Null
-          pnpm --filter @grok-desktop/desktop build:windows-daemon `
-            --arch x64 --out (Join-Path $stage "bin/grok-daemon.exe") `
-            --acp-pinned-manifest $packageManifest
-          if ($LASTEXITCODE -ne 0) { throw "Windows native runtime build failed" }
-          foreach ($nativeExecutable in @("grok-daemon.exe", "grok-host-tools-mcp.exe")) {
-            if (-not (Test-Path -LiteralPath (Join-Path $stage "bin/$nativeExecutable") -PathType Leaf)) {
-              throw "Windows native runtime output is incomplete"
-            }
-          }
-          $pin = Get-Content -Raw $sourceManifest | ConvertFrom-Json
-          curl.exe --fail --location --proto '=https' --tlsv1.2 `
-            --output (Join-Path $stage "bin/components/grok-acp/bin/grok.exe") $pin.sourceUrl
-          if ($LASTEXITCODE -ne 0) { throw "official Grok component download failed" }
-          $component = Get-Item (Join-Path $stage "bin/components/grok-acp/bin/grok.exe")
-          if ($component.Length -ne $pin.size) { throw "official Grok component size mismatch" }
-          if ((Get-FileHash -Algorithm SHA256 $component.FullName).Hash.ToLowerInvariant() -ne $pin.sha256) {
-            throw "official Grok component digest mismatch"
-          }
-          Copy-Item $sourceManifest (Join-Path $stage "bin/components/grok-acp/pinned-component.json")
-          foreach ($componentFile in @("bin/components/grok-acp/bin/grok.exe", "bin/components/grok-acp/pinned-component.json")) {
-            if (-not (Test-Path -LiteralPath (Join-Path $stage $componentFile) -PathType Leaf)) {
-              throw "Windows official component staging is incomplete"
-            }
-          }
-          "CORE_STAGE=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Assemble unsigned core NSIS installer
-        shell: pwsh
-        run: |
-          pnpm --filter @grok-desktop/desktop package:windows-core `
-            --arch x64 --channel $env:RELEASE_CHANNEL --stage $env:CORE_STAGE
-          if ($LASTEXITCODE -ne 0) { throw "Windows core packaging failed" }
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-windows-x64
-          if-no-files-found: error
-          retention-days: 7
-          path: |
-            out/release/windows/*/x64/GrokDesktop-*-x64.exe
-            out/release/windows/*/x64/*.json
-            apps/desktop/release/components/grok-build/windows-x64.json
-
   publish:
-    name: Sign metadata and publish
-    needs: [resolve, linux, windows]
+    name: Promote exact artifacts, sign metadata, and publish
+    needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment:
       name: ${{ needs.resolve.outputs.publish_environment }}
     permissions:
+      actions: read
       contents: write
       id-token: write
       attestations: write
     env:
+      RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
+      RELEASE_CHANNEL: ${{ needs.resolve.outputs.channel }}
       UPDATE_KEY_ID: ${{ vars.GROK_UPDATE_SIGNING_KEY_ID }}
       UPDATE_TRUST_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           version: 10.33.2
@@ -283,20 +140,43 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
-          pattern: release-*
-          path: release-downloads
-          merge-multiple: true
-      - name: Stage the exact release asset allowlist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.resolve.outputs.qualification_run }}
+          name: release-qualification
+          path: qualification
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.resolve.outputs.candidate_run }}
+          artifact-ids: ${{ needs.resolve.outputs.linux_artifact_id }}
+          path: candidate-downloads/linux
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.resolve.outputs.candidate_run }}
+          artifact-ids: ${{ needs.resolve.outputs.windows_artifact_id }}
+          path: candidate-downloads/windows
+      - name: Verify and stage the exact qualified asset allowlist
         shell: bash
         run: |
           set -euo pipefail
-          channel="${{ needs.resolve.outputs.channel }}"
-          node scripts/stage-release-assets.mjs release-downloads release-assets "$channel"
-      - name: Prepare protected signing inputs
+          jq '.candidate' qualification/release-qualification.json > release-candidate.json
+          node scripts/release-candidate.mjs verify-record \
+            --record release-candidate.json --downloads candidate-downloads
+          mkdir release-downloads
+          cp -a candidate-downloads/linux/. release-downloads/
+          cp -a candidate-downloads/windows/. release-downloads/
+          node scripts/stage-release-assets.mjs release-downloads release-assets "$RELEASE_CHANNEL"
+          cp qualification/release-qualification.json release-assets/release-qualification.json
+      - name: Prepare protected signing inputs and release notes
         shell: bash
         env:
           UPDATE_PRIVATE_KEY: ${{ secrets.GROK_UPDATE_SIGNING_PRIVATE_KEY_PEM }}
         run: |
+          set -euo pipefail
           test -n "$UPDATE_KEY_ID"
           test -n "$UPDATE_TRUST_JSON"
           test -n "$UPDATE_PRIVATE_KEY"
@@ -304,9 +184,7 @@ jobs:
           install -m 600 /dev/null "$RUNNER_TEMP/update-trusted-keys.json"
           printf '%s\n' "$UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/update-private-key.pem"
           printf '%s\n' "$UPDATE_TRUST_JSON" > "$RUNNER_TEMP/update-trusted-keys.json"
-          version="${GITHUB_REF_NAME#v}"
-          # shellcheck disable=SC2016
-          RELEASE_VERSION="$version" node <<'NODE' > release-assets/release-notes.md
+          node <<'NODE' > release-assets/release-notes.md
           const fs = require("node:fs");
           const version = process.env.RELEASE_VERSION;
           const sections = fs.readFileSync("CHANGELOG.md", "utf8").split(/^## /m).slice(1);
@@ -320,32 +198,29 @@ jobs:
           test -s release-assets/release-notes.md
           notes="$(mktemp)"
           {
-            printf '> **Windows installer notice:** \140GrokDesktop-%s-x64.exe\140 is intentionally unsigned. Windows may show an Unknown Publisher or Microsoft Defender SmartScreen warning. Before proceeding, verify the installer against [\140SHA256SUMS\140](https://github.com/grok-insider/grok-desktop/releases/download/%s/SHA256SUMS) and the [GitHub artifact attestation](https://github.com/grok-insider/grok-desktop/attestations) for this release. Audit the corresponding [immutable source tag](https://github.com/grok-insider/grok-desktop/tree/%s).\n\n' "${{ needs.resolve.outputs.channel }}" "$GITHUB_REF_NAME" "$GITHUB_REF_NAME"
+            printf '> **Windows installer notice:** \140GrokDesktop-%s-x64.exe\140 is intentionally unsigned. Windows may show an Unknown Publisher or Microsoft Defender SmartScreen warning. Before proceeding, verify the installer against [\140SHA256SUMS\140](https://github.com/grok-insider/grok-desktop/releases/download/%s/SHA256SUMS) and the [GitHub artifact attestation](https://github.com/grok-insider/grok-desktop/attestations) for this release. Audit the corresponding [immutable source tag](https://github.com/grok-insider/grok-desktop/tree/%s).\n\n' "$RELEASE_CHANNEL" "$RELEASE_TAG" "$RELEASE_TAG"
             cat release-assets/release-notes.md
           } > "$notes"
           mv "$notes" release-assets/release-notes.md
       - name: Generate and verify signed update manifests
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          policy="$(node scripts/release-policy.mjs "$version")"
-          channel="$(jq -r .channel <<< "$policy")"
+          set -euo pipefail
           for target in linux:x64:AppImage:appimage win32:x64:exe:nsis-installer; do
             IFS=: read -r platform architecture extension artifact_kind <<< "$target"
-            artifact="release-assets/GrokDesktop-$channel-$architecture.$extension"
-            manifest="release-assets/GrokDesktop-$channel-$platform-$architecture.update.json"
+            artifact="release-assets/GrokDesktop-$RELEASE_CHANNEL-$architecture.$extension"
+            manifest="release-assets/GrokDesktop-$RELEASE_CHANNEL-$platform-$architecture.update.json"
             pnpm --filter @grok-desktop/desktop release:update-manifest \
-              --artifact "$artifact" --architecture "$architecture" --channel "$channel" \
-              --artifact-kind "$artifact_kind" \
-              --key-id "$UPDATE_KEY_ID" --out "$manifest" --platform "$platform" \
-              --private-key "$RUNNER_TEMP/update-private-key.pem" --version "$version" \
-              --native-package-version "$version" \
-              --artifact-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/$(basename "$artifact")" \
-              --release-notes-url "https://github.com/grok-insider/grok-desktop/releases/download/$GITHUB_REF_NAME/release-notes.md"
+              --artifact "$artifact" --architecture "$architecture" --channel "$RELEASE_CHANNEL" \
+              --artifact-kind "$artifact_kind" --key-id "$UPDATE_KEY_ID" --out "$manifest" \
+              --platform "$platform" --private-key "$RUNNER_TEMP/update-private-key.pem" \
+              --version "$RELEASE_VERSION" --native-package-version "$RELEASE_VERSION" \
+              --artifact-url "https://github.com/grok-insider/grok-desktop/releases/download/$RELEASE_TAG/$(basename "$artifact")" \
+              --release-notes-url "https://github.com/grok-insider/grok-desktop/releases/download/$RELEASE_TAG/release-notes.md"
             pnpm --filter @grok-desktop/desktop release:verify-update-manifest \
               --manifest "$manifest" --trust-file "$RUNNER_TEMP/update-trusted-keys.json" \
-              --platform "$platform" --architecture "$architecture" --channel "$channel" \
-              --version "$version"
+              --platform "$platform" --architecture "$architecture" --channel "$RELEASE_CHANNEL" \
+              --version "$RELEASE_VERSION"
           done
           rm -f "$RUNNER_TEMP/update-private-key.pem"
       - name: Generate release SBOM
@@ -360,16 +235,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          channel="${{ needs.resolve.outputs.channel }}"
           jq -n \
-            --arg schema "grok.release-evidence/v1" \
-            --arg version "${GITHUB_REF_NAME#v}" \
-            --arg channel "$channel" \
-            --arg source "$GITHUB_SHA" \
-            --arg workflow "$GITHUB_RUN_ID" \
+            --arg schema "grok.release-evidence/v1" --arg version "$RELEASE_VERSION" \
+            --arg channel "$RELEASE_CHANNEL" --arg source "$GITHUB_SHA" \
+            --arg workflow "$GITHUB_RUN_ID" --arg workflowAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg candidateRun "${{ needs.resolve.outputs.candidate_run }}" \
+            --arg qualificationRun "${{ needs.resolve.outputs.qualification_run }}" \
             --arg windowsCodeSigning "unsigned" \
             --arg promotionEnvironment "${{ needs.resolve.outputs.publish_environment }}" \
-            '{schema:$schema,version:$version,channel:$channel,sourceRevision:$source,workflowRunId:$workflow,promotionEnvironment:$promotionEnvironment,windowsCodeSigning:$windowsCodeSigning}' \
+            '{schema:$schema,version:$version,channel:$channel,sourceRevision:$source,workflowRunId:$workflow,workflowRunAttempt:$workflowAttempt,candidateRunId:$candidateRun,qualificationRunId:$qualificationRun,promotionEnvironment:$promotionEnvironment,windowsCodeSigning:$windowsCodeSigning}' \
             > release-assets/release-evidence.json
           checksums="$(mktemp)"
           (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs -r sha256sum) > "$checksums"
@@ -385,13 +259,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(git tag --points-at HEAD)" = "$GITHUB_REF_NAME"
-          release_flags=()
-          version="${GITHUB_REF_NAME#v}"
-          policy="$(node scripts/release-policy.mjs "$version")"
-          if [[ "$(jq -r .prerelease <<< "$policy")" = true ]]; then
-            release_flags+=(--prerelease)
+          set -euo pipefail
+          test "$(git tag --points-at HEAD)" = "$RELEASE_TAG"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists; refusing to replace public assets."
+            exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --repo grok-insider/grok-desktop --title "Grok Desktop $GITHUB_REF_NAME" \
+          release_flags=()
+          policy="$(node scripts/release-policy.mjs "$RELEASE_VERSION")"
+          if [[ "$(jq -r .prerelease <<< "$policy")" = true ]]; then release_flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --title "Grok Desktop $RELEASE_TAG" \
             --notes-file release-assets/release-notes.md --verify-tag "${release_flags[@]}"

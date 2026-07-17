@@ -5,6 +5,7 @@ on:
     branches: [master]
 
 permissions:
+  checks: read
   contents: read
 
 jobs:
@@ -14,11 +15,33 @@ jobs:
     steps:
       - name: Verify the pull request head
         env:
+          GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
           case "$HEAD_REF" in
-            dev|release-please--*|release-please-manual-*)
-              echo "OK: '$HEAD_REF' is an approved master promotion head."
+            dev)
+              echo "OK: dev is the protected integration promotion head."
+              ;;
+            release-please--branches--master--components--grok-desktop|release-please-manual-v*)
+              check="$(
+                gh api -H 'Accept: application/vnd.github+json' \
+                  "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=release-candidate%2Fv1&filter=latest" \
+                  --jq '[.check_runs[] | select(.name == "release-candidate/v1" and .app.slug == "github-actions")] | sort_by(.id) | last // empty'
+              )"
+              test -n "$check" || {
+                echo "::error::Release PR requires an exact release-candidate/v1 check."
+                exit 1
+              }
+              test "$(jq -r .status <<< "$check")" = completed
+              test "$(jq -r .conclusion <<< "$check")" = success
+              details="$(jq -r '.details_url // empty' <<< "$check")"
+              case "$details" in
+                "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/"[1-9]*) ;;
+                *) echo "::error::Release qualification check has an invalid workflow binding."; exit 1;;
+              esac
+              echo "OK: '$HEAD_REF' has protected exact-candidate qualification."
               ;;
             *)
               echo "::error::PRs into master must come from dev or an approved release-please branch (got '$HEAD_REF')."
