@@ -23,26 +23,28 @@ optional: without it, the deterministic
 Release Please notes remain unchanged.
 
 Do not merge a release pull request until the protected release prerequisites
-pass. Release Please intentionally skips GitHub release creation. After the
-approved release PR merges, **Finalize approved release** revalidates the
-manifest, synchronized versions, changelog, branch, and title before pushing
-the immutable tag with the owner token. The finalizer then replaces Release
-Please's `autorelease: pending` label with `autorelease: tagged`; this lifecycle
-transition is required when `skip-github-release` delegates tagging to a
-separate workflow. That authenticated tag event starts the artifact workflow;
-the tag workflow creates the GitHub Release only after every artifact is
-verified and every update manifest is signed and verified. Exact artifact
-qualification then occurs at
-the protected `beta-release` promotion hold before publication.
+and `release-candidate/v1` check pass. Release Please intentionally skips GitHub
+release creation. **Release candidate** validates the exact same-repository,
+up-to-date Release Please head and permits only generated changelog/version
+changes before invoking the production Linux and Windows build workflow.
+**Qualify release candidate** binds clean-machine QA to the exact source tree,
+workflow attempt, Actions artifact IDs, archive digests, and payload hashes.
 
-If the finalizer fails after the release PR has merged and before it creates a
-tag, fix and promote the finalizer first. An owner may then dispatch **Finalize
-approved release** with the exact current `master` SHA and synchronized version.
-The recovery path refuses a stale or non-`master` commit and re-runs the same
-version, manifest, changelog, and tag-absence checks. Never use it to replace a
-failed artifact build or to move an existing tag. Recovery also locates the
-single matching merged release PR, verifies that its merge commit is an
-ancestor of the tagged `master` commit, and advances the same lifecycle label.
+After the qualified release PR merges, **Finalize approved release** downloads
+and independently validates that protected qualification record and proves the
+merged tree equals the tested tree before pushing the immutable tag. The
+finalizer then replaces Release Please's `autorelease: pending` label with
+`autorelease: tagged`. The tag workflow downloads and promotes those exact
+qualified artifacts without rebuilding them; `beta-release` remains the final
+metadata-signing and publication hold.
+
+If finalization fails, an owner may dispatch **Finalize approved release** with
+the exact merged release PR, qualification run, current `master` SHA, and
+synchronized version. Recovery accepts an existing tag only when it already
+points at that exact qualified commit, allowing a failed lifecycle-label step
+to finish without moving or replacing the tag. A transient publication failure
+may similarly redispatch **Public release** with the existing tag and its bound
+qualification run; it promotes the same artifact IDs and cannot rebuild.
 
 ## Manual milestones
 
@@ -60,6 +62,7 @@ signing material:
 - `stable-windows-build` and `stable-release`
 - `beta-windows-build` and `beta-release`
 - `beta-build` for unprivileged Linux preview assembly before promotion
+- `beta-candidate` for secret-free owner approval of exact QA evidence
 
 The public Windows core package is an intentionally unsigned, per-user NSIS
 installer. It does not require a PFX, certificate-store identity, SignTool, or
@@ -90,12 +93,19 @@ an inaccessible stale tree. Toolchain and explicitly documented dependency
 caches may persist outside the workspace; source trees, build outputs, runner
 diagnostics, and registration state may not.
 
-The `beta-release` environment is the promotion hold. Linux and Windows build
-artifacts remain workflow artifacts for seven days while the exact bytes are
-qualified. Approving publication signs update metadata, creates an SPDX SBOM,
-checksums, GitHub artifact attestations, release evidence, and the prerelease.
-Do not approve a candidate until Wisp/CDP Linux QA and clean-VM Windows QA refer
-to the exact workflow run and artifact hashes.
+Linux and Windows candidate artifacts remain workflow artifacts for 30 days;
+the qualification record remains for 90 days and is copied into the public
+release. The `beta-release` environment is the final promotion hold. Approving
+publication signs update metadata, creates an SPDX SBOM, checksums, GitHub
+artifact attestations, release evidence, and the prerelease. Do not qualify a
+candidate until Wisp/CDP Linux QA and clean-VM Windows QA refer to the exact
+workflow run, attempt, artifact IDs, and payload hashes.
+
+Windows Wisp/VM integration is deferred for the initial preview. Windows
+release QA uses a fresh libvirt overlay, QGA guest execution, and an in-guest
+loopback CDP probe. This exception does not permit skipping artifact identity,
+runtime portability, install/start/IPC, deep-link, repair, or uninstall checks.
+Linux native QA continues in Wisp's hidden compositor.
 
 ## Operator checks
 

@@ -1,0 +1,157 @@
+name: Qualify release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Exact Release candidate workflow run ID
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Exact candidate run attempt
+        required: true
+        type: string
+      candidate_record_artifact_id:
+        description: Exact release-candidate-record artifact ID
+        required: true
+        type: string
+      qa_json:
+        description: Bounded grok.release-qa/v1 JSON from exact Linux and Windows QA
+        required: true
+        type: string
+
+concurrency:
+  group: qualify-release-candidate-${{ inputs.candidate_run_id }}-${{ inputs.candidate_run_attempt }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  checks: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  qualify:
+    name: Approve exact release candidate
+    if: github.repository == 'grok-insider/grok-desktop' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: beta-candidate
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate bounded inputs
+        id: inputs
+        shell: bash
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RECORD_ID: ${{ inputs.candidate_record_artifact_id }}
+          QA_JSON: ${{ inputs.qa_json }}
+        run: |
+          set -euo pipefail
+          for value in "$CANDIDATE_RUN_ID" "$CANDIDATE_RUN_ATTEMPT" "$CANDIDATE_RECORD_ID"; do
+            case "$value" in ''|*[!0-9]*) exit 1;; esac
+          done
+          test "${#QA_JSON}" -le 65535
+          printf '%s\n' "$QA_JSON" > release-qa.json
+          jq -e '.schema == "grok.release-qa/v1"' release-qa.json >/dev/null
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          artifact-ids: ${{ inputs.candidate_record_artifact_id }}
+          path: candidate-record
+      - name: Resolve candidate artifact IDs
+        id: candidate
+        shell: bash
+        env:
+          EXPECTED_RUN: ${{ inputs.candidate_run_id }}
+          EXPECTED_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+        run: |
+          set -euo pipefail
+          record="candidate-record/release-candidate.json"
+          test "$(jq -r .workflowRunId "$record")" = "$EXPECTED_RUN"
+          test "$(jq -r .workflowRunAttempt "$record")" = "$EXPECTED_ATTEMPT"
+          {
+            echo "linux_id=$(jq -r '.artifacts[] | select(.platform == "linux") | .id' "$record")"
+            echo "windows_id=$(jq -r '.artifacts[] | select(.platform == "windows") | .id' "$record")"
+            echo "source_sha=$(jq -r .sourceSha "$record")"
+            echo "tree_sha=$(jq -r .treeSha "$record")"
+            echo "version=$(jq -r .version "$record")"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          artifact-ids: ${{ steps.candidate.outputs.linux_id }}
+          path: candidate-downloads/linux
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          artifact-ids: ${{ steps.candidate.outputs.windows_id }}
+          path: candidate-downloads/windows
+      - name: Revalidate exact artifacts and create qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-candidate.mjs verify-record \
+            --record candidate-record/release-candidate.json \
+            --downloads candidate-downloads
+          node scripts/release-candidate.mjs qualify \
+            --record candidate-record/release-candidate.json --qa release-qa.json \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --actor "$GITHUB_ACTOR" --out release-qualification.json
+      - id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-qualification
+          path: release-qualification.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish exact-head qualification check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg name "release-candidate/v1" --arg head_sha "$SOURCE_SHA" \
+            --arg details_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg summary "Qualified candidate run ${{ inputs.candidate_run_id }} attempt ${{ inputs.candidate_run_attempt }}; record artifact ${{ steps.upload.outputs.artifact-id }}" \
+            '{name:$name,head_sha:$head_sha,status:"completed",conclusion:"success",details_url:$details_url,output:{title:"Exact release candidate qualified",summary:$summary}}' \
+            > check-run.json
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" --input check-run.json >/dev/null
+      - name: Rerun required master guard for the exact head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          run_id="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/guard-master.yml/runs?event=pull_request&per_page=100" \
+              --jq ".workflow_runs[] | select(.head_sha == \"$SOURCE_SHA\" and .status == \"completed\") | .id" \
+              | head -n 1
+          )"
+          test -n "$run_id"
+          gh run rerun "$run_id" --repo "$GITHUB_REPOSITORY"
+      - name: Report qualification identity
+        shell: bash
+        run: |
+          {
+            echo "## Release candidate qualified"
+            echo
+            echo "- Source: \`${{ steps.candidate.outputs.source_sha }}\`"
+            echo "- Tree: \`${{ steps.candidate.outputs.tree_sha }}\`"
+            echo "- Version: \`${{ steps.candidate.outputs.version }}\`"
+            echo "- Candidate run: \`${{ inputs.candidate_run_id }}\` attempt \`${{ inputs.candidate_run_attempt }}\`"
+            echo "- Qualification run: \`$GITHUB_RUN_ID\` attempt \`$GITHUB_RUN_ATTEMPT\`"
+            echo "- Qualification artifact: \`${{ steps.upload.outputs.artifact-id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
