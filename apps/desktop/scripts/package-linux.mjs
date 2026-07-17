@@ -110,9 +110,15 @@ async function resolveElectronSharedLibraries(executable) {
 
 async function bundleElectronSharedLibraries(executable, destination) {
   const libraries = await resolveElectronSharedLibraries(executable);
+  const packagedElectronRoot = await realpath(path.dirname(executable));
   await mkdir(destination, { recursive: true, mode: 0o755 });
+  const bundled = [];
   for (const library of libraries) {
     const resolvedSource = await realpath(library.source);
+    const packagedRelative = path.relative(packagedElectronRoot, resolvedSource);
+    if (packagedRelative !== "" && !packagedRelative.startsWith(`..${path.sep}`) && !path.isAbsolute(packagedRelative)) {
+      continue;
+    }
     if (!resolvedSource.startsWith("/lib/") && !resolvedSource.startsWith("/usr/lib/")) {
       throw new Error(`Electron shared library resolves outside system library roots: ${library.name}`);
     }
@@ -127,8 +133,9 @@ async function bundleElectronSharedLibraries(executable, destination) {
     } finally {
       await source.handle.close();
     }
+    bundled.push(library.name);
   }
-  return libraries.map(({ name }) => name);
+  return bundled;
 }
 
 export function parseLinuxPackageArguments(argv) {

@@ -66,6 +66,8 @@ test("reverifies the copied Electron executable before invoking appimagetool", a
   assert.ok(toolIndex > verifyIndex, "the copied executable must be verified before AppImage assembly");
   assert.match(createAppImage, /bundleElectronSharedLibraries/);
   assert.match(createAppImage, /LD_LIBRARY_PATH/);
+  assert.match(source, /path\.relative\(packagedElectronRoot, resolvedSource\)/);
+  assert.match(source, /packagedRelative\.startsWith\(`\.\.\$\{path\.sep\}`\)/);
 });
 
 test("bundles the bounded Electron closure while retaining the host glibc ABI", () => {
