@@ -96,8 +96,16 @@ export async function validateGeneratedTree(baseRoot, candidateRoot, version, ch
     readFile(path.join(baseRoot, "CHANGELOG.md"), "utf8"),
     readFile(path.join(candidateRoot, "CHANGELOG.md"), "utf8"),
   ]);
-  if (!candidateChangelog.endsWith(baseChangelog)) throw new Error("release changelog rewrites existing history");
-  const addition = candidateChangelog.slice(0, -baseChangelog.length);
+  const changelogHeader = "# Changelog\n\n";
+  if (!baseChangelog.startsWith(changelogHeader) || !candidateChangelog.startsWith(changelogHeader)) {
+    throw new Error("release changelog header is not canonical");
+  }
+  const baseHistory = baseChangelog.slice(changelogHeader.length);
+  const candidateHistory = candidateChangelog.slice(changelogHeader.length);
+  if (baseHistory.length === 0 || !candidateHistory.endsWith(baseHistory)) {
+    throw new Error("release changelog rewrites existing history");
+  }
+  const addition = candidateHistory.slice(0, -baseHistory.length);
   if (Buffer.byteLength(addition) < 1 || Buffer.byteLength(addition) > 64 * 1024) {
     throw new Error("release changelog addition is empty or oversized");
   }
