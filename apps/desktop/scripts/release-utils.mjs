@@ -258,6 +258,7 @@ export function createUnsignedCoreWindowsInstallerConfiguration({
   return {
     appId: "com.grokinsider.grokdesktop",
     productName: "Grok Desktop",
+    extraMetadata: { name: "grok-desktop" },
     electronVersion,
     forceCodeSigning: false,
     protocols: [{ name: "Grok Desktop", schemes: ["grok-desktop"] }],
@@ -519,8 +520,10 @@ export async function validateReleaseInputs(stageRoot, expected) {
   if (!guestRecord || guestRecord.sha256 !== manifest.guest.sha256 || guestRecord.size !== manifest.guest.size) {
     throw new Error("signed guest metadata does not match the release inventory");
   }
-  await inspectPortableExecutable(verified.get("bin/grok-daemon.exe"), architecture);
-  await inspectPortableExecutable(verified.get("bin/grok-host-tools-mcp.exe"), architecture);
+  await assertPortableFirstPartyWindowsExecutable(verified.get("bin/grok-daemon.exe"), architecture);
+  await assertPortableFirstPartyWindowsExecutable(
+    verified.get("bin/grok-host-tools-mcp.exe"), architecture,
+  );
   await inspectDaemonAcpCatalogTrust(verified.get("bin/grok-daemon.exe"), acpCatalogTrust);
   await inspectPortableExecutable(verified.get("service/grok-vm-service.exe"), architecture);
   await inspectServiceGuestCatalogTrust(verified.get("service/grok-vm-service.exe"), releaseMetadataKeys);
@@ -574,8 +577,10 @@ export async function validateCoreWindowsInputs(stageRoot, { architecture } = {}
       await sha256File(files.get(acpComponentStagePath)) !== manifest.sha256) {
     throw new Error("pinned ACP manifest does not match the staged Windows component");
   }
-  await inspectPortableExecutable(files.get("bin/grok-daemon.exe"), architecture);
-  await inspectPortableExecutable(files.get("bin/grok-host-tools-mcp.exe"), architecture);
+  await assertPortableFirstPartyWindowsExecutable(files.get("bin/grok-daemon.exe"), architecture);
+  await assertPortableFirstPartyWindowsExecutable(
+    files.get("bin/grok-host-tools-mcp.exe"), architecture,
+  );
   await inspectPortableExecutable(files.get(acpComponentStagePath), architecture);
   inspectDaemonAcpPinnedManifestBytes(await readFile(files.get("bin/grok-daemon.exe")), manifest);
   return { canonicalRoot, files, manifest };
@@ -677,6 +682,217 @@ export async function inspectPortableExecutable(file, architecture) {
   } finally {
     await handle.close();
   }
+}
+
+function peRvaToFileRange(sections, rva, size, fileSize, label) {
+  if (!Number.isSafeInteger(rva) || rva <= 0 || !Number.isSafeInteger(size) || size < 1) {
+    throw new Error(`first-party Windows executable has an invalid ${label} range`);
+  }
+  for (const section of sections) {
+    const extent = Math.max(section.virtualSize, section.rawSize);
+    if (rva < section.virtualAddress || rva >= section.virtualAddress + extent) continue;
+    const delta = rva - section.virtualAddress;
+    if (delta + size > section.rawSize) {
+      throw new Error(`first-party Windows executable has an unmapped ${label} range`);
+    }
+    const offset = section.rawOffset + delta;
+    if (offset + size > fileSize) {
+      throw new Error(`first-party Windows executable has an out-of-bounds ${label} range`);
+    }
+    return { offset, end: section.rawOffset + section.rawSize };
+  }
+  throw new Error(`first-party Windows executable has an unmapped ${label} RVA`);
+}
+
+function readPeImportName(contents, sections, rva, label) {
+  const range = peRvaToFileRange(sections, rva, 1, contents.length, label);
+  const maximumEnd = Math.min(range.end, range.offset + 257);
+  const relativeEnd = contents.subarray(range.offset, maximumEnd).indexOf(0);
+  if (relativeEnd < 1) {
+    throw new Error(`first-party Windows executable has an unterminated ${label}`);
+  }
+  const end = range.offset + relativeEnd;
+  const name = contents.toString("ascii", range.offset, end);
+  if (!/^[A-Za-z0-9_.-]{1,255}\.dll$/i.test(name)) {
+    throw new Error(`first-party Windows executable has an invalid ${label}`);
+  }
+  return name;
+}
+
+function readPeImportDirectory(contents, sections, rva, size, descriptorSize, nameOffset, label) {
+  if (rva === 0 && size === 0) return [];
+  if (rva === 0 || size < descriptorSize || size > 1024 * 1024) {
+    throw new Error(`first-party Windows executable has an invalid ${label} directory`);
+  }
+  const directory = peRvaToFileRange(sections, rva, size, contents.length, `${label} directory`);
+  const imports = [];
+  const maximumDescriptors = Math.min(Math.floor(size / descriptorSize), 4096);
+  for (let index = 0; index < maximumDescriptors; index += 1) {
+    const offset = directory.offset + index * descriptorSize;
+    const descriptor = contents.subarray(offset, offset + descriptorSize);
+    if (descriptor.every((value) => value === 0)) return imports;
+    const nameRva = descriptor.readUInt32LE(nameOffset);
+    if (nameRva === 0) {
+      throw new Error(`first-party Windows executable has an invalid ${label} descriptor`);
+    }
+    imports.push(readPeImportName(contents, sections, nameRva, `${label} library name`));
+  }
+  throw new Error(`first-party Windows executable has an unterminated ${label} directory`);
+}
+
+function inspectPeImportedLibraries(contents, architecture) {
+  if (!Buffer.isBuffer(contents) || contents.length < 256 || contents.toString("ascii", 0, 2) !== "MZ") {
+    throw new Error("first-party Windows executable has an invalid PE image");
+  }
+  const peOffset = contents.readUInt32LE(0x3c);
+  if (peOffset < 64 || peOffset + 24 > contents.length ||
+      contents.toString("binary", peOffset, peOffset + 4) !== "PE\0\0") {
+    throw new Error("first-party Windows executable has an invalid PE header");
+  }
+  if (contents.readUInt16LE(peOffset + 4) !== architectureMachines[architecture]) {
+    throw new Error("first-party Windows executable architecture does not match the package");
+  }
+  const sectionCount = contents.readUInt16LE(peOffset + 6);
+  const optionalHeaderSize = contents.readUInt16LE(peOffset + 20);
+  const optionalOffset = peOffset + 24;
+  if (sectionCount < 1 || sectionCount > 96 || optionalHeaderSize < 112 ||
+      optionalHeaderSize > 4096 || optionalOffset + optionalHeaderSize > contents.length) {
+    throw new Error("first-party Windows executable has an invalid PE layout");
+  }
+  const magic = contents.readUInt16LE(optionalOffset);
+  const dataDirectoryOffset = magic === 0x10b ? 96 : magic === 0x20b ? 112 : 0;
+  const directoryCountOffset = magic === 0x10b ? 92 : magic === 0x20b ? 108 : 0;
+  if (dataDirectoryOffset === 0 || optionalHeaderSize < dataDirectoryOffset + 16) {
+    throw new Error("first-party Windows executable has an invalid optional header");
+  }
+  const directoryCount = contents.readUInt32LE(optionalOffset + directoryCountOffset);
+  if (directoryCount < 2 || directoryCount > 64 ||
+      optionalHeaderSize < dataDirectoryOffset + directoryCount * 8) {
+    throw new Error("first-party Windows executable has an invalid data directory count");
+  }
+  const sectionTableOffset = optionalOffset + optionalHeaderSize;
+  if (sectionTableOffset + sectionCount * 40 > contents.length) {
+    throw new Error("first-party Windows executable has a truncated section table");
+  }
+  const sections = [];
+  for (let index = 0; index < sectionCount; index += 1) {
+    const offset = sectionTableOffset + index * 40;
+    const virtualSize = contents.readUInt32LE(offset + 8);
+    const virtualAddress = contents.readUInt32LE(offset + 12);
+    const rawSize = contents.readUInt32LE(offset + 16);
+    const rawOffset = contents.readUInt32LE(offset + 20);
+    if (rawSize > 0 && (rawOffset < sectionTableOffset + sectionCount * 40 ||
+        rawOffset + rawSize > contents.length)) {
+      throw new Error("first-party Windows executable has an invalid section range");
+    }
+    const virtualExtent = Math.max(virtualSize, rawSize);
+    if (virtualExtent < 1 || virtualAddress < 1 || virtualAddress + virtualExtent > 0x1_0000_0000) {
+      throw new Error("first-party Windows executable has an invalid virtual section range");
+    }
+    const section = { virtualSize, virtualAddress, rawSize, rawOffset };
+    for (const existing of sections) {
+      const existingVirtualEnd = existing.virtualAddress + Math.max(existing.virtualSize, existing.rawSize);
+      if (virtualAddress < existingVirtualEnd && existing.virtualAddress < virtualAddress + virtualExtent) {
+        throw new Error("first-party Windows executable has overlapping virtual section ranges");
+      }
+      if (rawSize > 0 && existing.rawSize > 0 && rawOffset < existing.rawOffset + existing.rawSize &&
+          existing.rawOffset < rawOffset + rawSize) {
+        throw new Error("first-party Windows executable has overlapping raw section ranges");
+      }
+    }
+    sections.push(section);
+  }
+  const importDirectoryOffset = optionalOffset + dataDirectoryOffset + 8;
+  const imports = readPeImportDirectory(
+    contents,
+    sections,
+    contents.readUInt32LE(importDirectoryOffset),
+    contents.readUInt32LE(importDirectoryOffset + 4),
+    20,
+    12,
+    "import",
+  );
+  if (directoryCount > 13) {
+    const delayDirectoryOffset = optionalOffset + dataDirectoryOffset + 13 * 8;
+    const delayRva = contents.readUInt32LE(delayDirectoryOffset);
+    const delaySize = contents.readUInt32LE(delayDirectoryOffset + 4);
+    if (delayRva !== 0 || delaySize !== 0) {
+      if (delayRva === 0 || delaySize < 32 || delaySize > 1024 * 1024) {
+        throw new Error("first-party Windows executable has an invalid delay-import directory");
+      }
+      const delayDirectory = peRvaToFileRange(
+        sections, delayRva, delaySize, contents.length, "delay-import directory",
+      );
+      const maximumDescriptors = Math.min(Math.floor(delaySize / 32), 4096);
+      let terminated = false;
+      for (let index = 0; index < maximumDescriptors; index += 1) {
+        const offset = delayDirectory.offset + index * 32;
+        const descriptor = contents.subarray(offset, offset + 32);
+        if (descriptor.every((value) => value === 0)) {
+          terminated = true;
+          break;
+        }
+        if (descriptor.readUInt32LE(0) !== 1 || descriptor.readUInt32LE(4) === 0) {
+          throw new Error("first-party Windows executable has an unsupported delay-import descriptor");
+        }
+        imports.push(readPeImportName(
+          contents, sections, descriptor.readUInt32LE(4), "delay-import library name",
+        ));
+      }
+      if (!terminated) {
+        throw new Error("first-party Windows executable has an unterminated delay-import directory");
+      }
+    }
+  }
+  return [...new Set(imports.map((name) => name.toLowerCase()))].toSorted();
+}
+
+function isDynamicVisualCppRuntime(name) {
+  return /^(?:vcruntime|msvcp|concrt|vcomp)\d+[a-z0-9_.-]*\.dll$/.test(name) ||
+    /^(?:msvcr|vccorlib|vcamp|atl|mfc|mfcm)\d+[a-z0-9_.-]*\.dll$/.test(name) ||
+    name === "ucrtbased.dll";
+}
+
+async function readBoundedFileSnapshot(file, maximumSize, label) {
+  const handle = await open(file, "r");
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || before.size < 256n || before.size > BigInt(maximumSize)) {
+      throw new Error(`${label} is not a bounded regular file`);
+    }
+    const size = Number(before.size);
+    const contents = Buffer.allocUnsafe(size);
+    let offset = 0;
+    while (offset < size) {
+      const { bytesRead } = await handle.read(contents, offset, Math.min(1024 * 1024, size - offset), offset);
+      if (bytesRead === 0) throw new Error(`${label} changed while it was being read`);
+      offset += bytesRead;
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, size)).bytesRead !== 0) {
+      throw new Error(`${label} grew while it was being read`);
+    }
+    const after = await handle.stat({ bigint: true });
+    for (const field of ["dev", "ino", "size", "mtimeNs", "ctimeNs"]) {
+      if (before[field] !== after[field]) throw new Error(`${label} changed while it was being read`);
+    }
+    return contents;
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function assertPortableFirstPartyWindowsExecutable(file, architecture) {
+  const contents = await readBoundedFileSnapshot(
+    file, 128 * 1024 * 1024, "first-party Windows executable",
+  );
+  const imports = inspectPeImportedLibraries(contents, architecture);
+  const dynamicRuntime = imports.find(isDynamicVisualCppRuntime);
+  if (dynamicRuntime) {
+    throw new Error(
+      `first-party Windows executable imports the redistributable runtime ${dynamicRuntime}`,
+    );
+  }
+  return { imports };
 }
 
 export async function assertUnsignedPortableExecutable(file) {
@@ -875,8 +1091,10 @@ export async function verifyPackagedNativeLayout(
       throw new Error("packaged native component bytes differ from verified release inputs");
     }
   }
-  await inspectPortableExecutable(path.join(resourcesRoot, "bin", "grok-daemon.exe"), architecture);
-  await inspectPortableExecutable(
+  await assertPortableFirstPartyWindowsExecutable(
+    path.join(resourcesRoot, "bin", "grok-daemon.exe"), architecture,
+  );
+  await assertPortableFirstPartyWindowsExecutable(
     path.join(resourcesRoot, "bin", "grok-host-tools-mcp.exe"), architecture,
   );
   await inspectDaemonAcpCatalogTrust(
@@ -927,8 +1145,8 @@ export async function verifyPackagedCoreWindowsLayout(
   const daemon = path.join(resourcesRoot, "bin", "grok-daemon.exe");
   const helper = path.join(resourcesRoot, "bin", "grok-host-tools-mcp.exe");
   const component = path.join(resourcesRoot, ...acpComponentStagePath.split("/"));
-  await inspectPortableExecutable(daemon, architecture);
-  await inspectPortableExecutable(helper, architecture);
+  await assertPortableFirstPartyWindowsExecutable(daemon, architecture);
+  await assertPortableFirstPartyWindowsExecutable(helper, architecture);
   await inspectPortableExecutable(component, architecture);
   inspectDaemonAcpPinnedManifestBytes(await readFile(daemon), inputs.manifest);
   return {

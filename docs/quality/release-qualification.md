@@ -142,10 +142,13 @@ artifacts. Passing unit tests is necessary but not sufficient.
 
 ## Release evidence
 
-Stable publication is tag-only through `.github/workflows/release.yml`. Linux
-is built on a clean hosted worker; Windows x64 requires the protected qualified
-ephemeral build environment and source-pinned release inputs. The Windows NSIS
-installer is unsigned; the protected publication job signs update metadata.
+Publication is tag-only through `.github/workflows/release.yml`, but production
+artifacts are built and qualified before the immutable tag is created. Linux is
+built on a clean hosted worker; Windows x64 requires the protected qualified
+ephemeral build environment and source-pinned release inputs. The finalizer
+proves the merged tree equals the qualified tree, and the tag workflow promotes
+the same artifact IDs without rebuilding. The Windows NSIS installer is
+unsigned; the protected publication job signs update metadata.
 ARM64 remains a fail-closed deferred target.
 The final protected job runs only after every platform build, receives the
 offline update key, generates and independently verifies target-bound update
@@ -163,3 +166,9 @@ version, source URL, size and digest, preserved-vendor-signature policy, source
 provenance, and redistribution-permission evidence identifiers. ACP catalog
 sequence, expiry, and signing-key evidence remains a deferred isolated-train
 requirement.
+
+For the initial Windows preview, clean-VM automation uses libvirt/QGA and an
+in-guest loopback CDP probe. Windows Wisp computer-use integration is deferred;
+Linux Wisp/CDP evidence remains mandatory. The Windows exception is recorded in
+the qualification artifact and does not relax the functional or security
+checks for the exact installer.

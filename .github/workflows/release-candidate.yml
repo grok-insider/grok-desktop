@@ -1,0 +1,171 @@
+name: Release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_pr:
+        description: Exact open Release Please PR number
+        required: true
+        type: string
+      head_sha:
+        description: Exact lowercase Release Please head SHA
+        required: true
+        type: string
+      version:
+        description: Exact candidate version
+        required: true
+        type: string
+
+concurrency:
+  group: release-candidate-${{ inputs.head_sha }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate frozen Release Please source
+    if: github.repository == 'grok-insider/grok-desktop' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.contract.outputs.base_sha }}
+      source_sha: ${{ steps.contract.outputs.source_sha }}
+      tree_sha: ${{ steps.contract.outputs.tree_sha }}
+      version: ${{ steps.contract.outputs.version }}
+      channel: ${{ steps.contract.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - id: contract
+        name: Prove canonical generated-only candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_PR" in ''|*[!0-9]*) exit 1;; esac
+          test "${#HEAD_SHA}" -eq 40
+          case "$HEAD_SHA" in *[!0-9a-f]*) exit 1;; esac
+          case "$VERSION" in 0|*[!0-9.]*) exit 1;; esac
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR" > "$RUNNER_TEMP/release-pr.json"
+          base_sha="$(jq -r '.base.sha // empty' "$RUNNER_TEMP/release-pr.json")"
+          test "$base_sha" = "$GITHUB_SHA"
+          git fetch --no-tags origin "$HEAD_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          git diff --name-only "$base_sha" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+          git worktree add --detach "$RUNNER_TEMP/release-base" "$base_sha"
+          git worktree add --detach "$RUNNER_TEMP/release-candidate" "$HEAD_SHA"
+          node scripts/release-candidate.mjs validate-pr \
+            --pr "$RUNNER_TEMP/release-pr.json" \
+            --changed-paths "$RUNNER_TEMP/changed-paths.txt" \
+            --repository "$GITHUB_REPOSITORY" \
+            --base-sha "$base_sha" --head-sha "$HEAD_SHA" --version "$VERSION" \
+            --base-root "$RUNNER_TEMP/release-base" \
+            --candidate-root "$RUNNER_TEMP/release-candidate"
+          tree_sha="$(git rev-parse "$HEAD_SHA^{tree}")"
+          channel="$(node scripts/release-policy.mjs "$VERSION" | jq -r .channel)"
+          {
+            echo "base_sha=$base_sha"
+            echo "source_sha=$HEAD_SHA"
+            echo "tree_sha=$tree_sha"
+            echo "version=$VERSION"
+            echo "channel=$channel"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build production candidate
+    needs: validate
+    uses: ./.github/workflows/release-build.yml
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      version: ${{ needs.validate.outputs.version }}
+      channel: ${{ needs.validate.outputs.channel }}
+      linux_environment: beta-build
+      windows_environment: beta-windows-build
+
+  record:
+    name: Bind candidate artifact identities
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.base_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.linux_artifact_id }}
+          path: candidate-downloads/linux
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.windows_artifact_id }}
+          path: candidate-downloads/windows
+      - name: Create canonical candidate record
+        id: record
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.validate.outputs.base_sha }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          TREE_SHA: ${{ needs.validate.outputs.tree_sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          CHANNEL: ${{ needs.validate.outputs.channel }}
+          LINUX_ID: ${{ needs.build.outputs.linux_artifact_id }}
+          LINUX_DIGEST: ${{ needs.build.outputs.linux_artifact_digest }}
+          WINDOWS_ID: ${{ needs.build.outputs.windows_artifact_id }}
+          WINDOWS_DIGEST: ${{ needs.build.outputs.windows_artifact_digest }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --paginate --slurp | jq '{artifacts: map(.artifacts[]) | unique_by(.id)}' \
+            > artifacts-api.json
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" --arg version "$VERSION" --arg channel "$CHANNEL" \
+            --arg baseSha "$BASE_SHA" --arg sourceSha "$SOURCE_SHA" --arg treeSha "$TREE_SHA" \
+            --argjson workflowRunId "$GITHUB_RUN_ID" --argjson workflowRunAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson linuxId "$LINUX_ID" --arg linuxDigest "$LINUX_DIGEST" \
+            --argjson windowsId "$WINDOWS_ID" --arg windowsDigest "$WINDOWS_DIGEST" \
+            '{repository:$repository,version:$version,channel:$channel,baseSha:$baseSha,sourceSha:$sourceSha,treeSha:$treeSha,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt,artifacts:[{platform:"linux",id:$linuxId,name:"release-linux-x64",archiveDigest:$linuxDigest},{platform:"windows",id:$windowsId,name:"release-windows-x64",archiveDigest:$windowsDigest}]}' \
+            > candidate-input.json
+          node scripts/release-candidate.mjs create-record \
+            --input candidate-input.json --downloads candidate-downloads \
+            --artifacts-api artifacts-api.json --out release-candidate.json
+      - id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate-record
+          path: release-candidate.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Report immutable candidate identity
+        shell: bash
+        run: |
+          {
+            echo "## Release candidate ready for external qualification"
+            echo
+            echo "- Source: \`${{ needs.validate.outputs.source_sha }}\`"
+            echo "- Tree: \`${{ needs.validate.outputs.tree_sha }}\`"
+            echo "- Candidate run: \`$GITHUB_RUN_ID\` attempt \`$GITHUB_RUN_ATTEMPT\`"
+            echo "- Candidate record artifact: \`${{ steps.upload.outputs.artifact-id }}\`"
+            echo "- Linux artifact: \`${{ needs.build.outputs.linux_artifact_id }}\`"
+            echo "- Windows artifact: \`${{ needs.build.outputs.windows_artifact_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
