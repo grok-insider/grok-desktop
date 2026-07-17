@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { lstat, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -330,9 +330,14 @@ function positiveInteger(value, label) {
 }
 
 async function readBoundedJson(file, maximum = MAX_RECORD_BYTES) {
-  const metadata = await stat(file);
-  if (!metadata.isFile() || metadata.size < 2 || metadata.size > maximum) throw new Error("JSON input is empty or oversized");
-  return JSON.parse(await readFile(file, "utf8"));
+  const handle = await open(file, "r");
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 2 || metadata.size > maximum) throw new Error("JSON input is empty or oversized");
+    return JSON.parse(await handle.readFile({ encoding: "utf8" }));
+  } finally {
+    await handle.close();
+  }
 }
 
 function escapeRegExp(value) {
