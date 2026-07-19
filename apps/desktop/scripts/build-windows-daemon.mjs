@@ -132,6 +132,12 @@ export function createWindowsDaemonBuildEnvironment(_environment, architecture, 
       !trust?.binding || (!trust.raw && !trust.sourceUrl) || !validToolchain(toolchain)) {
     throw new Error("Windows daemon build configuration is invalid");
   }
+  // nmake (OpenSSL vendor build) requires COMSPEC; without it U1056 aborts.
+  const commandProcessor = path.win32.join(
+    toolchain.toolchainEnvironment.systemRoot,
+    "System32",
+    "cmd.exe",
+  );
   return {
     CARGO_HOME: layout.cargoHome,
     CARGO_ENCODED_RUSTFLAGS: staticWindowsCrtRustFlags,
@@ -139,6 +145,7 @@ export function createWindowsDaemonBuildEnvironment(_environment, architecture, 
     CARGO_NET_OFFLINE: "true",
     CARGO_TARGET_DIR: layout.targetDirectory,
     CARGO_TERM_COLOR: "never",
+    COMSPEC: commandProcessor,
     ...(trust.raw ? {
       GROK_ACP_CATALOG_TRUSTED_KEYS: trust.raw,
       GROK_ACP_CATALOG_TRUST_BINDING: trust.binding,
@@ -149,6 +156,7 @@ export function createWindowsDaemonBuildEnvironment(_environment, architecture, 
     LIBPATH: toolchain.toolchainEnvironment.librarySearchPaths.join(path.win32.delimiter),
     LOCALAPPDATA: path.join(layout.homeDirectory, "AppData", "Local"),
     PATH: toolchain.toolchainEnvironment.executablePaths.join(path.win32.delimiter),
+    PATHEXT: ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC",
     RUSTC: toolchain.rustcPath,
     RUST_BACKTRACE: "0",
     SystemRoot: toolchain.toolchainEnvironment.systemRoot,
