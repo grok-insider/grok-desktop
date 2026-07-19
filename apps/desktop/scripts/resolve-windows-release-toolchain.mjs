@@ -192,7 +192,7 @@ export function selectNewestMsvcVersion(versions) {
       throw new Error("MSVC toolset version is invalid");
     }
   }
-  return [...versions].sort(compareDottedVersions).at(-1);
+  return versions.toSorted(compareDottedVersions).at(-1);
 }
 
 export function selectNewestWindowsSdkVersion(versions) {
@@ -204,7 +204,7 @@ export function selectNewestWindowsSdkVersion(versions) {
       throw new Error("Windows SDK version is invalid");
     }
   }
-  return [...versions].sort(compareDottedVersions).at(-1);
+  return versions.toSorted(compareDottedVersions).at(-1);
 }
 
 export function formatGithubEnvAssignments(resolved) {
