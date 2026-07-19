@@ -3,6 +3,33 @@
 - Status: engineering packaging path (not distribution-qualified)
 - Related: [linux-ga.md](../quality/linux-ga.md), platform ADRs 0004–0007
 
+## NixOS / Cachix
+
+Release candidate Linux builds push the exact `portableLinuxRuntime` store path
+to the `grok-insider` Cachix binary cache and publish
+`out/release/linux/x64/nix-portable-runtime.json` beside the AppImage. A clean
+NixOS client can realize that path without rebuilding:
+
+```sh
+# Prefer the project cache, then cache.nixos.org
+export NIX_CONFIG="extra-substituters = https://grok-insider.cachix.org
+extra-trusted-public-keys = grok-insider.cachix.org-1:ZxLVOxJ1CjdY3vQl1I99qCtwNZwIU4+/QwqSvntB/5w="
+store_path="$(jq -r .storePath nix-portable-runtime.json)"
+nix-store --realise "$store_path"  # or: nix build --store auto "$store_path"
+```
+
+Against a tagged source, the same attribute is:
+
+```sh
+nix build "github:grok-insider/grok-desktop/<tag>#portableLinuxRuntime" \
+  --option extra-substituters https://grok-insider.cachix.org \
+  --option extra-trusted-public-keys 'grok-insider.cachix.org-1:ZxLVOxJ1CjdY3vQl1I99qCtwNZwIU4+/QwqSvntB/5w=' \
+  --option max-jobs 0
+```
+
+`--option max-jobs 0` forces substitution-only for that evaluation when the
+cache holds the path; a miss fails closed instead of compiling locally.
+
 ## Package entry
 
 The Limited Mode package still accepts only the daemon. A product package may
