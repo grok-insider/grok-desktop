@@ -47,6 +47,7 @@ test("builds production artifacts only in the pre-tag reusable workflow", () => 
   assert.match(workflow, /inspectPortableLinuxRuntimeFile/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
   assert.match(workflow, /name: Build Windows x64 core[\s\S]*runs-on: windows-latest/);
+  assert.match(workflow, /rustup default stable/);
   assert.match(workflow, /resolve-windows-release-toolchain\.mjs --arch x64/);
   assert.match(workflow, /pnpm --filter @grok-desktop\/desktop build:windows-daemon `\n\s+--arch x64/);
   assert.match(workflow, /pnpm --filter @grok-desktop\/desktop package:windows-core `\n\s+--arch x64/);
