@@ -400,7 +400,7 @@ async function canonicalizeExistingToolchainEnvironment(environment, allowNonWin
  * rustup proxy in ~/.cargo/bin. Isolated CARGO_HOME used for fetch must not
  * break rustup's default-toolchain resolution.
  */
-async function resolveRustupTool(name, allowNonWindows) {
+async function resolveRustupTool(name, _allowNonWindows) {
   try {
     const rustup = await whichExecutable(process.platform === "win32" ? "rustup.exe" : "rustup");
     const stdout = await runCapture(rustup, ["which", name]);
