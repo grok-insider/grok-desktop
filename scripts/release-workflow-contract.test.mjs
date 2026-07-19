@@ -41,9 +41,12 @@ test("builds production artifacts only in the pre-tag reusable workflow", () => 
   assert.match(workflow, /nix build --print-build-logs --out-link "\$runtime" \.#portableLinuxRuntime/);
   assert.match(workflow, /inspectPortableLinuxRuntimeFile/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
+  assert.match(workflow, /name: Build Windows x64 core[\s\S]*runs-on: windows-latest/);
+  assert.match(workflow, /resolve-windows-release-toolchain\.mjs --arch x64/);
   assert.match(workflow, /pnpm --filter @grok-desktop\/desktop build:windows-daemon `\n\s+--arch x64/);
   assert.match(workflow, /pnpm --filter @grok-desktop\/desktop package:windows-core `\n\s+--arch x64/);
   assert.match(workflow, /unsigned Windows packaging rejects ambient signing input/);
+  assert.doesNotMatch(workflow, /runs-on: \[self-hosted, windows, x64\]/);
   assert.doesNotMatch(workflow, /GROK_MSIX_|PREVIEW_PFX|\.appinstaller\b|\.msix\b/);
 });
 
@@ -82,10 +85,14 @@ test("preflights unsigned Windows build inputs without certificate material", ()
   const workflow = read(".github/workflows/release-prerequisites.yml");
   assert.match(workflow, /name: Preview Windows build inputs/);
   assert.match(workflow, /environment: beta-windows-build/);
-  assert.match(workflow, /GROK_WINDOWS_CARGO_PATH/);
+  assert.match(workflow, /GROK_WINDOWS_MAX_TESTED_VERSION/);
   assert.match(workflow, /GROK_UPDATE_TRUSTED_KEYS_JSON/);
   assert.match(workflow, /GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID/);
   assert.match(workflow, /GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID/);
+  assert.match(workflow, /name: Preview hosted Windows toolchain/);
+  assert.match(workflow, /runs-on: windows-latest/);
+  assert.match(workflow, /resolve-windows-release-toolchain\.mjs --arch x64 --skip-cargo-hydration/);
+  assert.doesNotMatch(workflow, /GROK_WINDOWS_CARGO_PATH|GROK_WINDOWS_RUSTC_PATH|GROK_WINDOWS_LINKER_PATH|GROK_WINDOWS_CARGO_CACHE|GROK_WINDOWS_TOOLCHAIN_ENV_JSON/);
   assert.doesNotMatch(workflow, /GROK_ACP_CATALOG_TRUSTED_KEYS/);
   assert.doesNotMatch(workflow, /windows-signing|GROK_MSIX_|SIGNTOOL|TIMESTAMP_SERVER|SIGNER_SHA1|SIGN_ARGS_JSON/);
   assert.doesNotMatch(workflow, /PREVIEW_CERT|PFX|\.cer\b|\.appinstaller\b|\.msix\b/);
