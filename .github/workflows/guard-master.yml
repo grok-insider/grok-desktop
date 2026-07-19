@@ -25,17 +25,24 @@ jobs:
               echo "OK: dev is the protected integration promotion head."
               ;;
             release-please--branches--master--components--grok-desktop|release-please-manual-v*)
-              check="$(
-                gh api -H 'Accept: application/vnd.github+json' \
-                  "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=release-candidate%2Fv1&filter=latest" \
-                  --jq '[.check_runs[] | select(.name == "release-candidate/v1" and .app.slug == "github-actions")] | sort_by(.id) | last // empty'
-              )"
-              test -n "$check" || {
+              # Check-run publication can lag briefly after qualification; retry.
+              check=""
+              for _ in 1 2 3 4 5 6 7 8 9 10; do
+                check="$(
+                  gh api -H 'Accept: application/vnd.github+json' \
+                    "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+                    --jq '[.check_runs[] | select(.name == "release-candidate/v1" and ((.app.slug // "") == "github-actions") and .status == "completed" and .conclusion == "success")] | sort_by(.id) | last // empty' \
+                  || true
+                )"
+                if [ -n "$check" ] && [ "$check" != "null" ]; then
+                  break
+                fi
+                sleep 3
+              done
+              if [ -z "$check" ] || [ "$check" = "null" ]; then
                 echo "::error::Release PR requires an exact release-candidate/v1 check."
                 exit 1
-              }
-              test "$(jq -r .status <<< "$check")" = completed
-              test "$(jq -r .conclusion <<< "$check")" = success
+              fi
               # Prefer external_id (qualification workflow run). details_url may be
               # rewritten by GitHub to /runs/<check-run-id>.
               external_id="$(jq -r '.external_id // empty' <<< "$check")"
