@@ -121,11 +121,15 @@ jobs:
           SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
         run: |
           set -euo pipefail
+          # external_id is the durable qualification workflow run id. GitHub may
+          # rewrite details_url to /runs/<check-run-id>, so consumers must not
+          # parse the workflow run id solely from details_url.
           jq -n \
             --arg name "release-candidate/v1" --arg head_sha "$SOURCE_SHA" \
             --arg details_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg summary "Qualified candidate run ${{ inputs.candidate_run_id }} attempt ${{ inputs.candidate_run_attempt }}; record artifact ${{ steps.upload.outputs.artifact-id }}" \
-            '{name:$name,head_sha:$head_sha,status:"completed",conclusion:"success",details_url:$details_url,output:{title:"Exact release candidate qualified",summary:$summary}}' \
+            --arg external_id "$GITHUB_RUN_ID" \
+            --arg summary "qualification_workflow_run=$GITHUB_RUN_ID; candidate_run=${{ inputs.candidate_run_id }}; candidate_attempt=${{ inputs.candidate_run_attempt }}; record_artifact=${{ steps.upload.outputs.artifact-id }}" \
+            '{name:$name,head_sha:$head_sha,status:"completed",conclusion:"success",details_url:$details_url,external_id:$external_id,output:{title:"Exact release candidate qualified",summary:$summary}}' \
             > check-run.json
           gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" --input check-run.json >/dev/null
       - name: Rerun required master guard for the exact head
