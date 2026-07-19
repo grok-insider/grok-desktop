@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.0.12](https://github.com/grok-insider/grok-desktop/compare/v0.0.11...v0.0.12) (2026-07-19)
+
+
+### Features
+
+* **release:** package Windows core on GitHub-hosted runners ([8b61a83](https://github.com/grok-insider/grok-desktop/commit/8b61a8345331217a20028f2251e663d37084f686))
+* **release:** package Windows core on GitHub-hosted runners ([87fd71e](https://github.com/grok-insider/grok-desktop/commit/87fd71efede9b6d5f929651d1ec641de80612d8f))
+* **release:** push portableLinuxRuntime to Cachix ([7cc0ea8](https://github.com/grok-insider/grok-desktop/commit/7cc0ea86ecda04a60932509d86f31c72ed835226))
+* **release:** push portableLinuxRuntime to Cachix ([29db5db](https://github.com/grok-insider/grok-desktop/commit/29db5dbf2f8ee8dd8e898f9316d41997642781e1))
+* **release:** qualify artifacts before tagging ([63b16bf](https://github.com/grok-insider/grok-desktop/commit/63b16bf1d659bca45dd00a28d04f5c964ef736bc))
+* **release:** qualify artifacts before tagging ([75b40ae](https://github.com/grok-insider/grok-desktop/commit/75b40ae13e7068347ed5d84c77b2abca5b170df1))
+
+
+### Bug Fixes
+
+* **release:** accept canonical changelog insertion ([fade9f2](https://github.com/grok-insider/grok-desktop/commit/fade9f24177507b0d184582e73b7134def67f35f))
+* **release:** accept canonical changelog insertion ([36ecf7e](https://github.com/grok-insider/grok-desktop/commit/36ecf7efd865b4bf3aa0dede3e4310723d63e873))
+* **release:** accept release PRs whose head contains master ([578e81f](https://github.com/grok-insider/grok-desktop/commit/578e81f5b98547515cd1f17e7aa4c0a7b97d6683))
+* **release:** accept release PRs whose head contains master ([a22fff5](https://github.com/grok-insider/grok-desktop/commit/a22fff5dc276b46893a663105aae430444b70c11))
+* **release:** bind qualification check via external_id ([fd0511d](https://github.com/grok-insider/grok-desktop/commit/fd0511d33a68d41c7b760afa1af296516b29f3ae))
+* **release:** bind qualification check via external_id ([de0fa01](https://github.com/grok-insider/grok-desktop/commit/de0fa0130f6418e4a28a00dbd328f1e54412eb7a))
+* **release:** bundle Electron AppImage libraries ([b9146b0](https://github.com/grok-insider/grok-desktop/commit/b9146b00ece45c058f9ff5fa0e5c9fda492c3c4a))
+* **release:** bundle Electron AppImage libraries ([9512fa7](https://github.com/grok-insider/grok-desktop/commit/9512fa73aae78d855c5b75972041f8142511738f))
+* **release:** install default stable Rust on hosted Windows ([4f842a0](https://github.com/grok-insider/grok-desktop/commit/4f842a0093629376fce2e0f4349d062961ef5ad1))
+* **release:** install default stable Rust on hosted Windows ([de9b9c4](https://github.com/grok-insider/grok-desktop/commit/de9b9c41e0bfd59e4f060b20a6a310ae7785f9a7))
+* **release:** install Strawberry Perl for hosted Windows OpenSSL ([f4143ee](https://github.com/grok-insider/grok-desktop/commit/f4143ee30c94f6cf82e3e263cf52076129b71e4c))
+* **release:** install Strawberry Perl for hosted Windows OpenSSL ([b4d3a66](https://github.com/grok-insider/grok-desktop/commit/b4d3a66f4fff176a5ab51352b9a69004438826f1))
+* **release:** make Windows installer portable ([f58cd2e](https://github.com/grok-insider/grok-desktop/commit/f58cd2ebcc4ec81b1489156d295c3795ac6d2eb5))
+* **release:** make Windows installer portable ([5cce0a8](https://github.com/grok-insider/grok-desktop/commit/5cce0a89b24c2661495d36b791de6c888a0d6e89))
+* **release:** promote candidate validator fix ([126ab5a](https://github.com/grok-insider/grok-desktop/commit/126ab5a48dcb44f77ccc69a2e79e691e43819933))
+* **release:** read evidence through stable handles ([9166888](https://github.com/grok-insider/grok-desktop/commit/9166888da6fc79d65a14803dcacda16019b3e539))
+* **release:** resolve toolchain cargo via rustup which ([ae807ba](https://github.com/grok-insider/grok-desktop/commit/ae807ba00bf8c98d5a7097342aed0b68210d5ab7))
+* **release:** resolve toolchain cargo via rustup which ([657fb33](https://github.com/grok-insider/grok-desktop/commit/657fb33e5cb0a3e71648e3f89e7ec931b9387237))
+* **release:** retain Electron bundled libraries ([c259f1a](https://github.com/grok-insider/grok-desktop/commit/c259f1ad320e59ba0172246c1be17e7222bd3d03))
+* **release:** retain Electron bundled libraries ([d839601](https://github.com/grok-insider/grok-desktop/commit/d8396018a9830a7bc66c9060e4794ef585d43338))
+* **release:** retry release-candidate check discovery in guard ([f36827c](https://github.com/grok-insider/grok-desktop/commit/f36827c23c3069660339c9e453dfa6b5ec6dd3e6))
+* **release:** retry release-candidate check discovery in guard ([995f41d](https://github.com/grok-insider/grok-desktop/commit/995f41ddac885f45f8da81181a3f996248f7df19))
+* **release:** set COMSPEC for isolated Windows OpenSSL nmake ([f00b45d](https://github.com/grok-insider/grok-desktop/commit/f00b45d3fb2015bf5e9465399e9638084f051064))
+* **release:** set COMSPEC for isolated Windows OpenSSL nmake ([d70d563](https://github.com/grok-insider/grok-desktop/commit/d70d5630bc56ee3a0e6303eca26825d19f91a12e))
+* **release:** silence unused allowNonWindows in rustup resolver ([74cb7ed](https://github.com/grok-insider/grok-desktop/commit/74cb7edabcf8a766b3586a5d4ef4aee101d1fa51))
+* **release:** use Array.toSorted for toolchain version selection ([a50f498](https://github.com/grok-insider/grok-desktop/commit/a50f4980493502df15c1292d4c9bdde3224525eb))
+
 ## [0.0.11](https://github.com/grok-insider/grok-desktop/compare/v0.0.10...v0.0.11) (2026-07-16)
 
 ### Highlights
