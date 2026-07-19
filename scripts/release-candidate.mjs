@@ -42,7 +42,9 @@ export function validateReleasePr(pr, expected) {
   assertSha(headSha, "head SHA");
   assertVersion(version);
   if (pr.state !== "open" || pr.draft === true) throw new Error("release pull request must be open and ready");
-  if (pr.base?.ref !== "master" || pr.base?.sha !== baseSha) throw new Error("release pull request base is stale");
+  // GitHub's pr.base.sha can lag the tip of master after promotions; the
+  // workflow proves current master is an ancestor of the release head via git.
+  if (pr.base?.ref !== "master") throw new Error("release pull request base is stale");
   if (pr.head?.sha !== headSha) throw new Error("release pull request head is not canonical");
   if (pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository) {
     throw new Error("release pull request must remain in the canonical repository");

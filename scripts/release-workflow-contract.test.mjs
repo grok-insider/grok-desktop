@@ -63,6 +63,7 @@ test("candidate and qualification workflows bind exact protected evidence", () =
   assert.match(candidate, /uses: \.\/\.github\/workflows\/release-build\.yml/);
   assert.match(candidate, /secrets: inherit/);
   assert.match(candidate, /release-candidate\.mjs validate-pr/);
+  assert.match(candidate, /git merge-base --is-ancestor "\$base_sha" "\$HEAD_SHA"/);
   assert.match(candidate, /artifact-ids: \$\{\{ needs\.build\.outputs\.linux_artifact_id \}\}/);
   assert.doesNotMatch(candidate, /contents: write|beta-release|gh release create|git tag/);
   assert.match(qualification, /name: beta-candidate/);
