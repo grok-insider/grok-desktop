@@ -49,6 +49,55 @@ test("builds a complete MSVC toolchain layout for x64", () => {
   assert.ok(layout.toolchainEnvironment.libraryPaths.some((entry) => entry.includes("\\um\\x64")));
 });
 
+test("materialize path can include an explicit perl directory for OpenSSL vendor builds", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-toolchain-perl-"));
+  try {
+    const vs = path.join(root, "VS");
+    const msvcBin = path.join(vs, "VC", "Tools", "MSVC", "14.44.35207", "bin", "Hostx64", "x64");
+    const sdk = path.join(root, "Kits", "10");
+    const sdkVersion = "10.0.26100.0";
+    const perlBin = path.join(root, "Strawberry", "perl", "bin");
+    for (const directory of [
+      msvcBin,
+      path.join(vs, "VC", "Tools", "MSVC", "14.44.35207", "include"),
+      path.join(vs, "VC", "Tools", "MSVC", "14.44.35207", "lib", "x64"),
+      path.join(sdk, "Include", sdkVersion, "ucrt"),
+      path.join(sdk, "Include", sdkVersion, "um"),
+      path.join(sdk, "Include", sdkVersion, "shared"),
+      path.join(sdk, "Lib", sdkVersion, "ucrt", "x64"),
+      path.join(sdk, "Lib", sdkVersion, "um", "x64"),
+      path.join(root, "bin"),
+      perlBin,
+    ]) {
+      await mkdir(directory, { recursive: true });
+    }
+    await writeFile(path.join(msvcBin, "link.exe"), "");
+    await writeFile(path.join(root, "bin", "cargo.exe"), "");
+    await writeFile(path.join(root, "bin", "rustc.exe"), "");
+    await writeFile(path.join(perlBin, "perl.exe"), "");
+
+    const { resolveWindowsReleaseToolchain } = await import("./resolve-windows-release-toolchain.mjs");
+    const resolved = await resolveWindowsReleaseToolchain({
+      allowNonWindows: true,
+      skipCargoHydration: true,
+      architecture: "x64",
+      cargoPath: path.join(root, "bin", "cargo.exe"),
+      rustcPath: path.join(root, "bin", "rustc.exe"),
+      visualStudioRoot: vs,
+      msvcVersion: "14.44.35207",
+      windowsSdkRoot: sdk,
+      windowsSdkVersion: sdkVersion,
+      systemRoot: root,
+      temporaryRoot: path.join(root, "tmp"),
+      cargoCache: path.join(root, "cargo-cache"),
+      perlDirectory: perlBin,
+    });
+    assert.equal(resolved.toolchainEnvironment.executablePaths[0], perlBin);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("formats GITHUB_ENV assignments with a JSON heredoc", () => {
   const text = formatGithubEnvAssignments({
     cargoPath: "C:\\Rust\\bin\\cargo.exe",
