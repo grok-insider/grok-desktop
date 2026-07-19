@@ -71,27 +71,21 @@ SmartScreen warnings; release notes direct users to the immutable source tag,
 `SHA256SUMS`, and GitHub artifact attestation before they bypass the warning.
 The signed update manifest remains a separate mandatory trust boundary.
 
-The Windows environment owns the documented Windows Cargo/Rust/MSVC build-tool
-paths and bounded toolchain environment, `GROK_UPDATE_TRUSTED_KEYS_JSON`, and
-xAI component evidence variables. The
-publish environment owns
+The Windows build environment owns `GROK_WINDOWS_MAX_TESTED_VERSION`,
+`GROK_UPDATE_TRUSTED_KEYS_JSON`, and xAI component evidence variables. Toolchain
+paths are discovered on the GitHub-hosted image at job time rather than stored
+as durable environment secrets. The publish environment owns
 `GROK_UPDATE_SIGNING_KEY_ID`, `GROK_UPDATE_TRUSTED_KEYS_JSON`, and the
 `GROK_UPDATE_SIGNING_PRIVATE_KEY_PEM` secret. Values never belong in source,
 logs, artifacts, or broad runner environments.
 
-The Windows job also requires a qualified, ephemeral runner with labels
-`self-hosted`, `windows`, and `x64`. The absence of any runner, environment
-approval, build input, update trust, or redistribution evidence must stop the
-release before publication.
-
-Before registering that runner, remove the previous candidate's Actions
-workspace with an administrator identity and recreate the runner work root
-with ACL inheritance for the account that will run `Runner.Worker`. Reusing a
-workspace across runner identities is forbidden: packaged Electron files can
-retain a narrower ACL and make `actions/checkout` loop while trying to remove
-an inaccessible stale tree. Toolchain and explicitly documented dependency
-caches may persist outside the workspace; source trees, build outputs, runner
-diagnostics, and registration state may not.
+The Windows packaging job runs on GitHub-hosted `windows-latest`. It discovers
+MSVC and Rust on the image, hydrates an isolated Cargo registry cache with
+`cargo fetch --locked`, then builds the daemon offline with static CRT and
+assembles the unsigned NSIS installer. Self-hosted runners are not required for
+public core packaging. Missing environment approval, update trust, xAI evidence
+identifiers, or a failed hosted toolchain discovery must stop the release
+before publication.
 
 Linux and Windows candidate artifacts remain workflow artifacts for 30 days;
 the qualification record remains for 90 days and is copied into the public
@@ -117,10 +111,9 @@ pnpm check
 ```
 
 Then confirm that the release PR is current with `master`, every required check
-is green, the protected environments contain the correct channel inputs, and
-the qualified Windows worker is online. Confirm the candidate workspace was
-recreated for the current runner service identity before registration. Never
-create or repair a release tag manually outside the documented workflows.
+is green, and the protected environments contain the correct channel inputs
+(update trust, xAI evidence, max tested Windows version). Never create or repair
+a release tag manually outside the documented workflows.
 
 Release tool downloads must use immutable versioned release assets with a
 tracked SHA-256. Do not use rolling or `continuous` asset URLs: a byte change

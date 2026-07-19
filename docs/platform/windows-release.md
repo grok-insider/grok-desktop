@@ -1,22 +1,21 @@
 # Windows release pipeline
 
-Windows releases are assembled only on ephemeral, access-controlled Windows 11
-workers. The public beta/core train ships an intentionally unsigned x64 NSIS
+Windows public-core releases are assembled on GitHub-hosted `windows-latest`
+runners. The public beta/core train ships an intentionally unsigned x64 NSIS
 installer with Chat and explicitly enrolled Host Tools Work. Windows may show
 Unknown Publisher or Microsoft Defender SmartScreen warnings. ARM64 and the
 signed MSIX isolated-work train remain deferred until their native, guest,
 identity, certificate, and service inputs are qualified.
 
-Each candidate starts with a new ephemeral GitHub runner registration and a
-fresh runner workspace owned by the service identity. An administrator removes
-the previous workspace before registration and verifies that the new work root
-inherits access for `Runner.Worker`; stale source or package output must never
-cross runner identities. Qualified toolchains and bounded dependency caches
-live outside the work root and are the only persistent build inputs.
+Each packaging job discovers MSVC via `vswhere`, installs the Rust MSVC target,
+hydrates a temporary trusted Cargo registry cache with `cargo fetch --locked`,
+and then builds the daemon offline under the existing isolated toolchain
+contract (`+crt-static`, fail-closed PE import checks). Self-hosted runners are
+not required for this package family.
 
 ## Public core package
 
-The public core job constructs its release input tree on the trusted worker:
+The public core job constructs its release input tree on the hosted worker:
 
 ```text
 windows-core/x64/
@@ -246,17 +245,18 @@ pnpm build:windows-daemon -- --arch x64 --out release-inputs/windows/x64/bin/gro
 pnpm build:windows-daemon -- --arch arm64 --out release-inputs/windows/arm64/bin/grok-daemon.exe
 ```
 
-The command requires absolute, regular-file `GROK_WINDOWS_CARGO_PATH`,
-`GROK_WINDOWS_RUSTC_PATH`, and `GROK_WINDOWS_LINKER_PATH` values, plus a
-pre-provisioned `GROK_WINDOWS_CARGO_CACHE` directory containing registry cache
-data only. Only regular `registry/index` data and `registry/cache` crate
-archives are copied into an ephemeral `CARGO_HOME`; pre-extracted
-`registry/src` content is never trusted. Cargo configuration, credentials,
-symlinks, and special files are rejected. The build is both `--locked` and
-`--offline`, so the qualified worker must hydrate this cache before entering
-the release boundary.
+Hosted packaging runs
+`apps/desktop/scripts/resolve-windows-release-toolchain.mjs`, which exports
+absolute `GROK_WINDOWS_CARGO_PATH`, `GROK_WINDOWS_RUSTC_PATH`,
+`GROK_WINDOWS_LINKER_PATH`, a temporary `GROK_WINDOWS_CARGO_CACHE` directory
+containing registry cache data only, and `GROK_WINDOWS_TOOLCHAIN_ENV_JSON`.
+Only regular `registry/index` data and `registry/cache` crate archives are
+copied into an ephemeral `CARGO_HOME`; pre-extracted `registry/src` content is
+never trusted. Cargo configuration, credentials, symlinks, and special files
+are rejected. The build is both `--locked` and `--offline` after the resolver
+has hydrated the cache with `cargo fetch --locked`.
 
-`GROK_WINDOWS_TOOLCHAIN_ENV_JSON` supplies the qualified MSVC environment as a
+`GROK_WINDOWS_TOOLCHAIN_ENV_JSON` supplies the MSVC environment as a
 strict JSON object with exactly these fields:
 
 ```json

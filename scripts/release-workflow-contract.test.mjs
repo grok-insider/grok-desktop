@@ -38,12 +38,20 @@ test("builds production artifacts only in the pre-tag reusable workflow", () => 
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /ref: \$\{\{ inputs\.source_sha \}\}/);
   assert.match(workflow, /retention-days: 30/g);
+  assert.match(workflow, /CACHIX_AUTH_TOKEN:/);
+  assert.match(workflow, /cachix\/cachix-action@v16/);
+  assert.match(workflow, /name: grok-insider/);
+  assert.match(workflow, /cachix push grok-insider "\$store_path"/);
+  assert.match(workflow, /nix-portable-runtime\.json/);
   assert.match(workflow, /nix build --print-build-logs --out-link "\$runtime" \.#portableLinuxRuntime/);
   assert.match(workflow, /inspectPortableLinuxRuntimeFile/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
+  assert.match(workflow, /name: Build Windows x64 core[\s\S]*runs-on: windows-latest/);
+  assert.match(workflow, /resolve-windows-release-toolchain\.mjs --arch x64/);
   assert.match(workflow, /pnpm --filter @grok-desktop\/desktop build:windows-daemon `\n\s+--arch x64/);
   assert.match(workflow, /pnpm --filter @grok-desktop\/desktop package:windows-core `\n\s+--arch x64/);
   assert.match(workflow, /unsigned Windows packaging rejects ambient signing input/);
+  assert.doesNotMatch(workflow, /runs-on: \[self-hosted, windows, x64\]/);
   assert.doesNotMatch(workflow, /GROK_MSIX_|PREVIEW_PFX|\.appinstaller\b|\.msix\b/);
 });
 
@@ -52,6 +60,7 @@ test("candidate and qualification workflows bind exact protected evidence", () =
   const qualification = read(".github/workflows/qualify-release-candidate.yml");
   assert.match(candidate, /github\.ref == 'refs\/heads\/master'/);
   assert.match(candidate, /uses: \.\/\.github\/workflows\/release-build\.yml/);
+  assert.match(candidate, /secrets: inherit/);
   assert.match(candidate, /release-candidate\.mjs validate-pr/);
   assert.match(candidate, /artifact-ids: \$\{\{ needs\.build\.outputs\.linux_artifact_id \}\}/);
   assert.doesNotMatch(candidate, /contents: write|beta-release|gh release create|git tag/);
@@ -82,10 +91,14 @@ test("preflights unsigned Windows build inputs without certificate material", ()
   const workflow = read(".github/workflows/release-prerequisites.yml");
   assert.match(workflow, /name: Preview Windows build inputs/);
   assert.match(workflow, /environment: beta-windows-build/);
-  assert.match(workflow, /GROK_WINDOWS_CARGO_PATH/);
+  assert.match(workflow, /GROK_WINDOWS_MAX_TESTED_VERSION/);
   assert.match(workflow, /GROK_UPDATE_TRUSTED_KEYS_JSON/);
   assert.match(workflow, /GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID/);
   assert.match(workflow, /GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID/);
+  assert.match(workflow, /name: Preview hosted Windows toolchain/);
+  assert.match(workflow, /runs-on: windows-latest/);
+  assert.match(workflow, /resolve-windows-release-toolchain\.mjs --arch x64 --skip-cargo-hydration/);
+  assert.doesNotMatch(workflow, /GROK_WINDOWS_CARGO_PATH|GROK_WINDOWS_RUSTC_PATH|GROK_WINDOWS_LINKER_PATH|GROK_WINDOWS_CARGO_CACHE|GROK_WINDOWS_TOOLCHAIN_ENV_JSON/);
   assert.doesNotMatch(workflow, /GROK_ACP_CATALOG_TRUSTED_KEYS/);
   assert.doesNotMatch(workflow, /windows-signing|GROK_MSIX_|SIGNTOOL|TIMESTAMP_SERVER|SIGNER_SHA1|SIGN_ARGS_JSON/);
   assert.doesNotMatch(workflow, /PREVIEW_CERT|PFX|\.cer\b|\.appinstaller\b|\.msix\b/);

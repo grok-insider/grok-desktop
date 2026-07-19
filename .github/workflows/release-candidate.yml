@@ -92,6 +92,7 @@ jobs:
     name: Build production candidate
     needs: validate
     uses: ./.github/workflows/release-build.yml
+    secrets: inherit
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       version: ${{ needs.validate.outputs.version }}
