@@ -72,8 +72,11 @@ jobs:
       - name: Install Rust toolchain for Windows MSVC release builds
         shell: pwsh
         run: |
-          rustup show
+          rustup toolchain install stable --profile minimal -c rustc,cargo
+          rustup default stable
           rustup target add x86_64-pc-windows-msvc
+          cargo --version
+          rustc --version
       - name: Discover hosted MSVC and Rust tools without packaging
         shell: pwsh
         run: |
