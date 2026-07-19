@@ -38,6 +38,11 @@ test("builds production artifacts only in the pre-tag reusable workflow", () => 
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /ref: \$\{\{ inputs\.source_sha \}\}/);
   assert.match(workflow, /retention-days: 30/g);
+  assert.match(workflow, /CACHIX_AUTH_TOKEN:/);
+  assert.match(workflow, /cachix\/cachix-action@v16/);
+  assert.match(workflow, /name: grok-insider/);
+  assert.match(workflow, /cachix push grok-insider "\$store_path"/);
+  assert.match(workflow, /nix-portable-runtime\.json/);
   assert.match(workflow, /nix build --print-build-logs --out-link "\$runtime" \.#portableLinuxRuntime/);
   assert.match(workflow, /inspectPortableLinuxRuntimeFile/);
   assert.match(workflow, /--acp-pinned-manifest release\/components\/grok-build\/linux-x64\.json/);
@@ -55,6 +60,7 @@ test("candidate and qualification workflows bind exact protected evidence", () =
   const qualification = read(".github/workflows/qualify-release-candidate.yml");
   assert.match(candidate, /github\.ref == 'refs\/heads\/master'/);
   assert.match(candidate, /uses: \.\/\.github\/workflows\/release-build\.yml/);
+  assert.match(candidate, /secrets: inherit/);
   assert.match(candidate, /release-candidate\.mjs validate-pr/);
   assert.match(candidate, /artifact-ids: \$\{\{ needs\.build\.outputs\.linux_artifact_id \}\}/);
   assert.doesNotMatch(candidate, /contents: write|beta-release|gh release create|git tag/);
