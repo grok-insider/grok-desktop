@@ -262,7 +262,12 @@ strict JSON object with exactly these fields:
 ```json
 {
   "systemRoot": "C:\\Windows",
-  "executablePaths": ["C:\\Rust\\bin", "C:\\BuildTools\\bin"],
+  "visualCppInstallRoot": "C:\\BuildTools\\VC",
+  "executablePaths": [
+    "C:\\Strawberry\\perl\\bin",
+    "C:\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64",
+    "C:\\Windows\\System32"
+  ],
   "includePaths": ["C:\\BuildTools\\include"],
   "libraryPaths": ["C:\\BuildTools\\lib"],
   "librarySearchPaths": ["C:\\BuildTools\\libpath"]
@@ -270,10 +275,13 @@ strict JSON object with exactly these fields:
 ```
 
 Every entry must be a unique absolute local path to a regular directory; UNC
-paths and inherited search paths are rejected. Cargo runs from an ephemeral
-working directory with isolated home, target, and temporary directories. Its
-child environment is rebuilt from this toolchain contract and cannot inherit
-worker `HOME`, `CARGO_HOME`, `PATH`, Rust flags, wrappers, or Cargo config.
+paths and inherited search paths are rejected. The resolver prepends Strawberry
+Perl and appends `%SystemRoot%\\System32` so vendored OpenSSL can run
+`perl`/`nmake` without inheriting the ambient worker `PATH`. Cargo runs from an
+ephemeral working directory with isolated home, target, and temporary
+directories. Its child environment is rebuilt from this toolchain contract
+(plus `COMSPEC`/`PATHEXT` derived from `systemRoot`) and cannot inherit worker
+`HOME`, `CARGO_HOME`, `PATH`, Rust flags, wrappers, or Cargo config.
 
 The public-only, bounded `GROK_ACP_CATALOG_TRUSTED_KEYS` contract uses records
 in canonical `key-id=64-lowercase-hex` form. Records are ordered by key ID and
