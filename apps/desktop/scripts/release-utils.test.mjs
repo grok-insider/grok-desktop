@@ -256,7 +256,7 @@ test("creates isolated native build environments and deterministic public trust 
   const toolchainEnvironment = parseWindowsToolchainEnvironment(JSON.stringify({
     systemRoot: "C:\\Windows",
     visualCppInstallRoot: "C:\\BuildTools\\VC",
-    executablePaths: ["C:\\Rust\\bin", "C:\\BuildTools\\bin"],
+    executablePaths: ["C:\\Rust\\bin", "C:\\BuildTools\\bin", "C:\\Windows\\System32"],
     includePaths: ["C:\\BuildTools\\include"],
     libraryPaths: ["C:\\BuildTools\\lib"],
     librarySearchPaths: ["C:\\BuildTools\\libpath"],
@@ -278,7 +278,9 @@ test("creates isolated native build environments and deterministic public trust 
   assert.equal(daemonEnvironment.CARGO_HOME, layout.cargoHome);
   assert.equal(daemonEnvironment.CARGO_NET_OFFLINE, "true");
   assert.equal(daemonEnvironment.HOME, layout.homeDirectory);
-  assert.equal(daemonEnvironment.PATH, "C:\\Rust\\bin;C:\\BuildTools\\bin");
+  assert.equal(daemonEnvironment.PATH, "C:\\Rust\\bin;C:\\BuildTools\\bin;C:\\Windows\\System32");
+  assert.equal(daemonEnvironment.COMSPEC, "C:\\Windows\\System32\\cmd.exe");
+  assert.equal(daemonEnvironment.PATHEXT, ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC");
   assert.equal(daemonEnvironment.RUSTC, "C:\\Rust\\bin\\rustc.exe");
   assert.equal(daemonEnvironment.VCINSTALLDIR, "C:\\BuildTools\\VC");
   assert.equal(daemonEnvironment.VSCMD_ARG_TGT_ARCH, "x64");

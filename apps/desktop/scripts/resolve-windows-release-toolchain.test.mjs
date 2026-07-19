@@ -44,6 +44,7 @@ test("builds a complete MSVC toolchain layout for x64", () => {
   assert.equal(layout.toolchainEnvironment.visualCppInstallRoot, "C:\\BuildTools\\VC");
   assert.deepEqual(layout.toolchainEnvironment.executablePaths, [
     "C:\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64",
+    "C:\\Windows\\System32",
   ]);
   assert.ok(layout.toolchainEnvironment.includePaths.some((entry) => entry.endsWith("\\ucrt")));
   assert.ok(layout.toolchainEnvironment.libraryPaths.some((entry) => entry.includes("\\um\\x64")));
@@ -67,6 +68,7 @@ test("materialize path can include an explicit perl directory for OpenSSL vendor
       path.join(sdk, "Lib", sdkVersion, "ucrt", "x64"),
       path.join(sdk, "Lib", sdkVersion, "um", "x64"),
       path.join(root, "bin"),
+      path.join(root, "System32"),
       perlBin,
     ]) {
       await mkdir(directory, { recursive: true });
@@ -142,6 +144,7 @@ test("can materialize a skip-hydration cache directory layout for local unit use
       path.join(sdk, "Lib", sdkVersion, "ucrt", "x64"),
       path.join(sdk, "Lib", sdkVersion, "um", "x64"),
       path.join(root, "bin"),
+      path.join(root, "System32"),
     ]) {
       await mkdir(directory, { recursive: true });
     }
@@ -167,6 +170,7 @@ test("can materialize a skip-hydration cache directory layout for local unit use
     assert.equal(resolved.linkerPath, path.join(msvcBin, "link.exe"));
     assert.match(resolved.toolchainEnvironmentJSON, /visualCppInstallRoot/);
     assert.equal(resolved.cargoCache, path.join(root, "cargo-cache"));
+    assert.ok(resolved.toolchainEnvironment.executablePaths.includes(path.join(root, "System32")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

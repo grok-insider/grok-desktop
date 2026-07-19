@@ -169,12 +169,15 @@ export function buildMsvcLayout({
   const sdkLib = pathImpl.join(windowsSdkRoot, "Lib", windowsSdkVersion);
   const visualCppInstallRoot = pathImpl.join(visualStudioRoot, "VC");
 
+  // System32 must trail tool directories so MSVC/perl win PATH lookup while still
+  // exposing cmd.exe and other command-processor helpers nmake/OpenSSL require.
+  const system32 = pathImpl.join(systemRoot, "System32");
   return {
     linkerPath: pathImpl.join(vcToolsBin, "link.exe"),
     toolchainEnvironment: {
       systemRoot,
       visualCppInstallRoot,
-      executablePaths: [vcToolsBin],
+      executablePaths: [vcToolsBin, system32],
       includePaths: [
         vcInclude,
         pathImpl.join(sdkInclude, "ucrt"),
