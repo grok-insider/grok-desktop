@@ -36,11 +36,21 @@ jobs:
               }
               test "$(jq -r .status <<< "$check")" = completed
               test "$(jq -r .conclusion <<< "$check")" = success
+              # Prefer external_id (qualification workflow run). details_url may be
+              # rewritten by GitHub to /runs/<check-run-id>.
+              external_id="$(jq -r '.external_id // empty' <<< "$check")"
               details="$(jq -r '.details_url // empty' <<< "$check")"
-              case "$details" in
-                "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/"[1-9]*) ;;
-                *) echo "::error::Release qualification check has an invalid workflow binding."; exit 1;;
-              esac
+              summary="$(jq -r '.output.summary // empty' <<< "$check")"
+              if [[ "$external_id" =~ ^[1-9][0-9]*$ ]]; then
+                :
+              elif [[ "$summary" =~ qualification_workflow_run=([1-9][0-9]*) ]]; then
+                :
+              else
+                case "$details" in
+                  "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/"[1-9]*|"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/runs/"[1-9]*) ;;
+                  *) echo "::error::Release qualification check has an invalid workflow binding."; exit 1;;
+                esac
+              fi
               echo "OK: '$HEAD_REF' has protected exact-candidate qualification."
               ;;
             *)
