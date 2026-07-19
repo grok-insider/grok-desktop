@@ -152,7 +152,7 @@ jobs:
 
   windows:
     name: Build Windows x64 core
-    runs-on: [self-hosted, windows, x64]
+    runs-on: windows-latest
     timeout-minutes: 90
     environment:
       name: ${{ inputs.windows_environment }}
@@ -161,11 +161,6 @@ jobs:
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     env:
       GROK_WINDOWS_MAX_TESTED_VERSION: ${{ vars.GROK_WINDOWS_MAX_TESTED_VERSION }}
-      GROK_WINDOWS_CARGO_PATH: ${{ vars.GROK_WINDOWS_CARGO_PATH }}
-      GROK_WINDOWS_RUSTC_PATH: ${{ vars.GROK_WINDOWS_RUSTC_PATH }}
-      GROK_WINDOWS_LINKER_PATH: ${{ vars.GROK_WINDOWS_LINKER_PATH }}
-      GROK_WINDOWS_CARGO_CACHE: ${{ vars.GROK_WINDOWS_CARGO_CACHE }}
-      GROK_WINDOWS_TOOLCHAIN_ENV_JSON: ${{ vars.GROK_WINDOWS_TOOLCHAIN_ENV_JSON }}
       GROK_UPDATE_TRUSTED_KEYS_JSON: ${{ vars.GROK_UPDATE_TRUSTED_KEYS_JSON }}
       GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_PROVENANCE_EVIDENCE_ID }}
       GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID: ${{ vars.GROK_XAI_COMPONENT_REDISTRIBUTION_EVIDENCE_ID }}
@@ -182,8 +177,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install Rust toolchain for Windows MSVC release builds
+        shell: pwsh
+        run: |
+          rustup show
+          rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: release-windows-x64
       - run: pnpm install --frozen-lockfile
-      - name: Verify candidate source and qualified worker inputs
+      - name: Verify candidate source and hosted release inputs
         shell: pwsh
         run: |
           if ((git rev-parse HEAD) -ne "${{ inputs.source_sha }}") { throw "candidate source mismatch" }
@@ -198,7 +202,25 @@ jobs:
           )) {
             if ([Environment]::GetEnvironmentVariable($name)) { throw "unsigned Windows packaging rejects ambient signing input: $name" }
           }
+          node --input-type=module -e "import { readUnsignedCoreWindowsReleaseEnvironment } from './apps/desktop/scripts/release-utils.mjs'; readUnsignedCoreWindowsReleaseEnvironment(process.env);"
+          if ($LASTEXITCODE -ne 0) { throw "unsigned Windows release environment validation failed" }
           "RELEASE_CHANNEL=${{ inputs.channel }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Resolve hosted Windows release toolchain
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/resolve-windows-release-toolchain.mjs --arch x64
+          if ($LASTEXITCODE -ne 0) { throw "hosted Windows release toolchain resolution failed" }
+      - name: Confirm hosted toolchain exports
+        shell: pwsh
+        run: |
+          foreach ($name in @(
+            "GROK_WINDOWS_CARGO_PATH", "GROK_WINDOWS_RUSTC_PATH", "GROK_WINDOWS_LINKER_PATH",
+            "GROK_WINDOWS_CARGO_CACHE", "GROK_WINDOWS_TOOLCHAIN_ENV_JSON"
+          )) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) {
+              throw "hosted toolchain resolution did not export $name"
+            }
+          }
       - run: pnpm build
       - name: Build and stage source-pinned native runtime
         shell: pwsh
