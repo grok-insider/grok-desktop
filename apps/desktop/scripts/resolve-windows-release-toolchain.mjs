@@ -42,12 +42,12 @@ export async function resolveWindowsReleaseToolchain(options = {}) {
   }
 
   const cargoPath = await resolveRegularFile(
-    options.cargoPath ?? await whichExecutable("cargo.exe"),
+    options.cargoPath ?? await resolveRustupTool("cargo", options.allowNonWindows),
     "cargo",
     options.allowNonWindows,
   );
   const rustcPath = await resolveRegularFile(
-    options.rustcPath ?? await whichExecutable("rustc.exe"),
+    options.rustcPath ?? await resolveRustupTool("rustc", options.allowNonWindows),
     "rustc",
     options.allowNonWindows,
   );
@@ -273,6 +273,20 @@ export async function hydrateTrustedCargoCache({
   await mkdir(tmpDirectory, { recursive: true });
   await mkdir(homeDirectory, { recursive: true });
 
+  const fetchEnv = {
+    CARGO_HOME: fetchHome,
+    CARGO_TERM_COLOR: "never",
+    PATH: uniquePathList(pathEntries),
+    RUSTC: rustcPath,
+    SystemRoot: systemRoot,
+    TEMP: tmpDirectory,
+    TMP: tmpDirectory,
+    USERPROFILE: homeDirectory,
+    HOME: homeDirectory,
+  };
+  // Keep rustup metadata available if cargo is still a proxy shim.
+  if (process.env.RUSTUP_HOME) fetchEnv.RUSTUP_HOME = process.env.RUSTUP_HOME;
+  if (process.env.RUSTUP_TOOLCHAIN) fetchEnv.RUSTUP_TOOLCHAIN = process.env.RUSTUP_TOOLCHAIN;
   await runCommand(cargoPath, [
     "fetch",
     "--locked",
@@ -280,17 +294,7 @@ export async function hydrateTrustedCargoCache({
     "--target", target,
   ], {
     cwd: root,
-    env: {
-      CARGO_HOME: fetchHome,
-      CARGO_TERM_COLOR: "never",
-      PATH: uniquePathList(pathEntries),
-      RUSTC: rustcPath,
-      SystemRoot: systemRoot,
-      TEMP: tmpDirectory,
-      TMP: tmpDirectory,
-      USERPROFILE: homeDirectory,
-      HOME: homeDirectory,
-    },
+    env: fetchEnv,
   });
 
   await rm(cargoCache, { recursive: true, force: true });
@@ -389,6 +393,26 @@ async function canonicalizeExistingToolchainEnvironment(environment, allowNonWin
     libraryPaths: await directories(environment.libraryPaths),
     librarySearchPaths: await directories(environment.librarySearchPaths),
   };
+}
+
+/**
+ * Prefer the toolchain-backed cargo/rustc binary (`rustup which`) over the
+ * rustup proxy in ~/.cargo/bin. Isolated CARGO_HOME used for fetch must not
+ * break rustup's default-toolchain resolution.
+ */
+async function resolveRustupTool(name, _allowNonWindows) {
+  try {
+    const rustup = await whichExecutable(process.platform === "win32" ? "rustup.exe" : "rustup");
+    const stdout = await runCapture(rustup, ["which", name]);
+    const resolved = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+    if (resolved && path.isAbsolute(resolved) && await pathExists(resolved)) {
+      return resolved;
+    }
+  } catch {
+    // Fall through to PATH lookup for environments without rustup.
+  }
+  const fileName = process.platform === "win32" ? `${name}.exe` : name;
+  return whichExecutable(fileName);
 }
 
 async function whichExecutable(fileName) {
