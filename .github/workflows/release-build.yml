@@ -218,6 +218,15 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           cargo --version
           rustc --version
+      - name: Install Strawberry Perl for vendored OpenSSL builds
+        shell: pwsh
+        run: |
+          choco install strawberryperl --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Strawberry Perl installation failed" }
+          $perl = "C:\Strawberry\perl\bin\perl.exe"
+          if (-not (Test-Path -LiteralPath $perl)) { throw "Strawberry Perl is missing after install" }
+          & $perl -v
+          "Path=C:\Strawberry\perl\bin;$env:Path" | Out-File -FilePath $env:GITHUB_ENV -Append
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
