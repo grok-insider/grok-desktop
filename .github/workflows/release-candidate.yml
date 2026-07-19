@@ -64,10 +64,12 @@ jobs:
           case "$VERSION" in 0|*[!0-9.]*) exit 1;; esac
           test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
           gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR" > "$RUNNER_TEMP/release-pr.json"
-          base_sha="$(jq -r '.base.sha // empty' "$RUNNER_TEMP/release-pr.json")"
-          test "$base_sha" = "$GITHUB_SHA"
+          # Use the current master tip as base. GitHub's pr.base.sha can lag after
+          # promotions even when the release head already contains that tip.
+          base_sha="$GITHUB_SHA"
           git fetch --no-tags origin "$HEAD_SHA"
           test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          git merge-base --is-ancestor "$base_sha" "$HEAD_SHA"
           git diff --name-only "$base_sha" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
           git worktree add --detach "$RUNNER_TEMP/release-base" "$base_sha"
           git worktree add --detach "$RUNNER_TEMP/release-candidate" "$HEAD_SHA"
