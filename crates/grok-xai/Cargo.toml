@@ -13,7 +13,7 @@ async-trait.workspace = true
 base64 = "0.22.1"
 futures-util.workspace = true
 getrandom.workspace = true
-grok-application = { path = "../grok-application", version = "0.0.11" }
+grok-application = { path = "../grok-application", version = "0.0.12" }
 reqwest = { workspace = true, features = ["form"] }
 serde.workspace = true
 serde_json.workspace = true
