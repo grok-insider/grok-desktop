@@ -206,10 +206,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # pnpm --filter runs scripts with apps/desktop as cwd; use absolute paths.
+          assets_root="$GITHUB_WORKSPACE/release-assets"
           for target in linux:x64:AppImage:appimage win32:x64:exe:nsis-installer; do
             IFS=: read -r platform architecture extension artifact_kind <<< "$target"
-            artifact="release-assets/GrokDesktop-$RELEASE_CHANNEL-$architecture.$extension"
-            manifest="release-assets/GrokDesktop-$RELEASE_CHANNEL-$platform-$architecture.update.json"
+            artifact="$assets_root/GrokDesktop-$RELEASE_CHANNEL-$architecture.$extension"
+            manifest="$assets_root/GrokDesktop-$RELEASE_CHANNEL-$platform-$architecture.update.json"
+            test -f "$artifact"
             pnpm --filter @grok-desktop/desktop release:update-manifest \
               --artifact "$artifact" --architecture "$architecture" --channel "$RELEASE_CHANNEL" \
               --artifact-kind "$artifact_kind" --key-id "$UPDATE_KEY_ID" --out "$manifest" \
