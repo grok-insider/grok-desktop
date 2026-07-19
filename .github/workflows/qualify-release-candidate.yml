@@ -139,6 +139,8 @@ jobs:
           SOURCE_SHA: ${{ steps.candidate.outputs.source_sha }}
         run: |
           set -euo pipefail
+          # Give the check-runs API a moment to surface the just-published run.
+          sleep 5
           run_id="$(
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/guard-master.yml/runs?event=pull_request&per_page=100" \
               --jq ".workflow_runs[] | select(.head_sha == \"$SOURCE_SHA\" and .status == \"completed\") | .id" \
