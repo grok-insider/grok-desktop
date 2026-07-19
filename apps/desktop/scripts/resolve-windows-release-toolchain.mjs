@@ -77,6 +77,18 @@ export async function resolveWindowsReleaseToolchain(options = {}) {
   const linkerPath = await resolveRegularFile(
     layout.linkerPath, "link.exe", options.allowNonWindows,
   );
+  const perlDirectory = options.perlDirectory
+    ?? (options.allowNonWindows
+      ? undefined
+      : await discoverPerlDirectory(false));
+  if (perlDirectory) {
+    layout.toolchainEnvironment.executablePaths = uniquePathListEntries([
+      perlDirectory,
+      ...layout.toolchainEnvironment.executablePaths,
+    ]);
+  } else if (!options.allowNonWindows) {
+    throw new Error("perl was not found; vendored OpenSSL release builds require Strawberry Perl");
+  }
   const toolchainEnvironment = await canonicalizeExistingToolchainEnvironment(
     layout.toolchainEnvironment,
     options.allowNonWindows,
@@ -367,7 +379,7 @@ async function discoverWindowsSdkRoot() {
   throw new Error("Windows 10 SDK root was not found on this Windows image");
 }
 
-function uniquePathList(values) {
+function uniquePathListEntries(values) {
   const seen = new Set();
   const result = [];
   for (const value of values) {
@@ -377,8 +389,32 @@ function uniquePathList(values) {
     seen.add(key);
     result.push(value);
   }
+  return result;
+}
+
+function uniquePathList(values) {
+  const result = uniquePathListEntries(values);
   if (result.length < 1) throw new Error("toolchain PATH is empty");
   return result.join(path.win32.delimiter);
+}
+
+async function discoverPerlDirectory(allowNonWindows) {
+  const candidates = [
+    process.env.STRAWBERRY_PERL_PATH,
+    "C:\\Strawberry\\perl\\bin\\perl.exe",
+    "C:\\Strawberry\\perl\\bin\\perl.bat",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      return path.dirname(await resolveRegularFile(candidate, "perl", allowNonWindows));
+    }
+  }
+  try {
+    const perl = await whichExecutable(process.platform === "win32" ? "perl.exe" : "perl");
+    return path.dirname(await resolveRegularFile(perl, "perl", allowNonWindows));
+  } catch {
+    throw new Error("perl was not found; vendored OpenSSL release builds require Strawberry Perl");
+  }
 }
 
 async function canonicalizeExistingToolchainEnvironment(environment, allowNonWindows) {
