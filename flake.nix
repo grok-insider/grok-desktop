@@ -168,7 +168,7 @@
               };
               guestRunner = pkgs.buildGoModule {
                 pname = "grok-integration-runner";
-                version = "0.0.12";
+                version = "0.0.13";
                 src = self;
                 modRoot = "guest/runner";
                 subPackages = [

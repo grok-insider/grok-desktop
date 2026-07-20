@@ -2,6 +2,10 @@
 
 ## [0.0.13](https://github.com/grok-insider/grok-desktop/compare/v0.0.12...v0.0.13) (2026-07-20)
 
+### Highlights
+
+- Fixed release build to correctly locate update manifests when using pnpm workspace filters.
+
 
 ### Bug Fixes
 
