@@ -1,6 +1,6 @@
 {
   "name": "grok-desktop",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "private": true,
   "description": "A product-grade desktop workspace for official Grok and SpaceXAI services",
   "license": "AGPL-3.0-or-later",

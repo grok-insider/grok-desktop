@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.13](https://github.com/grok-insider/grok-desktop/compare/v0.0.12...v0.0.13) (2026-07-20)
+
+### Highlights
+
+- Fixed release build to correctly locate update manifests when using pnpm workspace filters.
+
+
+### Bug Fixes
+
+* **release:** use absolute paths for update-manifest under pnpm filter ([5934013](https://github.com/grok-insider/grok-desktop/commit/5934013ef20f11c17632112d31de9b0a07ba718b))
+* **release:** use absolute paths for update-manifest under pnpm filter ([90abf62](https://github.com/grok-insider/grok-desktop/commit/90abf626c824e599bb074f23d5762401b0e339be))
+
 ## [0.0.12](https://github.com/grok-insider/grok-desktop/compare/v0.0.11...v0.0.12) (2026-07-19)
 
 
